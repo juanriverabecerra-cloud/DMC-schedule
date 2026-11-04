@@ -1,0 +1,21 @@
+{
+  "name": "dmc-schedule",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DMC anesthesia resident schedule: rotations, call, daily OR assignments, duty-hour estimates and calendar feeds.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "@netlify/blobs": "^11.1.7",
+    "fflate": "^0.8.3",
+    "zod": "^4.6.7"
+  }
+}

@@ -1,0 +1,385 @@
+// Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
+// phone directory, people, settings and backups. Every call sends the admin key.
+import { h, icon, card, toast, notice, openSheet, avatar, classPill } from "../ui.js";
+import { api, local } from "../api.js";
+import { todayLocal, addDays, fmtDate, fmtTime, DOW_SHORT } from "../../core/dates.js";
+import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
+import { DEFAULT_SETTINGS, FILL_TAG_LABELS, mergeSettings } from "../../core/codes.js";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function downscale(file, max = 2000) {
+  let source;
+  try {
+    source = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    source = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  const w = source.width, hgt = source.height;
+  const scale = Math.min(1, max / Math.max(w, hgt));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(hgt * scale);
+  canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+}
+
+function fileButton(label, iconName, accept, onFile, { primary = false, capture } = {}) {
+  const input = h("input", { type: "file", accept, hidden: true, capture, onchange: (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); } });
+  return h("label", { class: `btn${primary ? " primary" : ""}`, style: { cursor: "pointer" } }, icon(iconName), label, input);
+}
+
+function adminLogin(ctx) {
+  const input = h("input", { class: "input", type: "password", placeholder: "Admin key", autocomplete: "off", "aria-label": "Admin key" });
+  const err = h("p", { class: "small", style: { color: "var(--gap)" } });
+  return h("form", { class: "card card-pad", onsubmit: async (e) => {
+    e.preventDefault();
+    const res = await fetch("/api/login", { method: "POST", headers: { "x-admin-key": input.value.trim() } }).then((r) => r.json()).catch(() => ({}));
+    if (!res.admin) { err.textContent = "That admin key didn't work."; return; }
+    local.set("adminKey", input.value.trim());
+    ctx.state.admin = true;
+    ctx.render();
+  } },
+  h("p", { class: "small muted", style: { marginTop: 0 } }, "Uploads and edits need the admin key (set as ADMIN_KEY in Netlify)."),
+  h("label", { class: "field" }, h("span", null, "Admin key"), input), err,
+  h("button", { class: "btn primary block", type: "submit" }, "Unlock admin"));
+}
+
+function summaryView(s) {
+  const lines = [];
+  if (s.months) for (const m of s.months) lines.push(`${m.month}: ${m.residents} residents${m.lastUpdated ? ` (sheet updated ${m.lastUpdated})` : ""}`);
+  if (s.ay) lines.push(`Academic year ${s.ay}–${s.ay + 1}: ${s.residents} residents`);
+  if (s.interns) lines.push(`${s.interns} interns from the PGY-1 sheet`);
+  if (s.added?.length) lines.push(`New people: ${s.added.join("; ")}`);
+  if (s.unknownCodes?.length) lines.push(`Codes the app doesn't know yet (shown as typed): ${s.unknownCodes.join(", ")}`);
+  return h("div", null,
+    notice("", "check", h("b", null, "Uploaded. "), lines.join(" · ")),
+    ...(s.warnings || []).map((w) => notice("warn", "alert", w)));
+}
+
+// ---------- daily sheet editor ----------
+
+const ROOM_FIELDS = [["or", "OR", "3.5em"], ["surgeon", "Surgeon"], ["time", "Time", "4.5em"], ["cases", "#", "3em"], ["mda", "MDA"], ["staff", "Resident/CRNA"], ["ja", "JA"], ["breaks", "Breaks"]];
+const list = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+
+function blankDaily() {
+  return { rooms: [], opsc: { rooms: "", mdas: [], residents: [] }, procedures: [], meyers: { rooms: "", mda: "" }, pat: [], ob: { mda: "", residents: [] }, night: [], notes: [], other: [], uncertain: [] };
+}
+
+function openEditor(ctx, date, initial, { source = "manual", onSaved } = {}) {
+  const data = JSON.parse(JSON.stringify({ ...blankDaily(), ...initial }));
+  if (!data.rooms.length) data.rooms = Array.from({ length: 6 }, () => ({ or: "", surgeon: "", time: "", cases: "", mda: "", staff: "", ja: "", breaks: "" }));
+  const match = createMatcher(ctx.model.people);
+  const nameOk = (text) => !text || isCrnaMark(text) || splitNames(text).every((n) => /resident|rotator/i.test(n) || match(n));
+
+  const roomsHolder = h("div");
+  function drawRooms() {
+    roomsHolder.replaceChildren(h("div", { class: "scrollx" }, h("table", { class: "edit" },
+      h("thead", null, h("tr", null, ROOM_FIELDS.map(([, label]) => h("th", null, label)), h("th"))),
+      h("tbody", null, data.rooms.map((room, i) => h("tr", null,
+        ROOM_FIELDS.map(([key, label, width]) => {
+          const isName = ["staff", "ja", "breaks"].includes(key);
+          const inp = h("input", { value: room[key] || "", "aria-label": `${label} row ${i + 1}`, style: width ? { width } : null, class: isName && !nameOk(room[key]) ? "bad" : "",
+            oninput: (e) => { room[key] = e.target.value; if (isName) e.target.className = nameOk(e.target.value) ? "" : "bad"; } });
+          return h("td", null, inp);
+        }),
+        h("td", null, h("button", { class: "iconbtn", style: { width: "32px", height: "32px" }, "aria-label": "Remove row", onclick: () => { data.rooms.splice(i, 1); drawRooms(); } }, icon("x"))),
+      ))))));
+  }
+  drawRooms();
+
+  const field = (label, value, onInput, placeholder = "") => h("label", { class: "field" }, h("span", null, label),
+    h("input", { class: "input", value, placeholder, oninput: (e) => onInput(e.target.value) }));
+
+  const procText = h("textarea", { class: "input", style: { minHeight: "80px" }, placeholder: "Cath lab | 1 | Clark" },
+    data.procedures.map((p) => `${p.name} | ${p.count} | ${p.mda}`).join("\n"));
+  const notesText = h("textarea", { class: "input", style: { minHeight: "70px" } }, data.notes.join("\n"));
+  const saveBtn = h("button", { class: "btn primary block" }, icon("check"), "Save daily sheet");
+
+  const body = h("div",
+    null,
+    data.uncertain?.length ? notice("warn", "alert", h("b", null, "Double-check: "), data.uncertain.join("; ")) : null,
+    source === "photo" ? notice("", "sparkle", "Read from the photo by Claude. Check names against the photo before saving; names that don't match a resident are outlined.") : null,
+    h("h4", { class: "card-title" }, "Operating rooms"),
+    roomsHolder,
+    h("button", { class: "btn sm", style: { margin: "6px 0 14px" }, onclick: () => { data.rooms.push({ or: "", surgeon: "", time: "", cases: "", mda: "", staff: "", ja: "", breaks: "" }); drawRooms(); } }, "+ Add room"),
+    h("p", { class: "tiny muted", style: { marginTop: "-8px" } }, "Resident/CRNA: \"X\" means a CRNA room; \"A/B\" means two residents. Separate list entries below with commas."),
+    h("div", { class: "grid2" },
+      field("OPSC rooms", data.opsc.rooms, (v) => { data.opsc.rooms = v; }),
+      field("OPSC MDAs", data.opsc.mdas.join(", "), (v) => { data.opsc.mdas = list(v); })),
+    field("OPSC residents", data.opsc.residents.join(", "), (v) => { data.opsc.residents = list(v); }),
+    h("label", { class: "field" }, h("span", null, "Procedure areas (name | count | MDA, one per line)"), procText),
+    h("div", { class: "grid2" },
+      field("Meyers lab rooms", data.meyers.rooms, (v) => { data.meyers.rooms = v; }),
+      field("Meyers lab MDA", data.meyers.mda, (v) => { data.meyers.mda = v; })),
+    field("PAT", data.pat.join(", "), (v) => { data.pat = list(v); }),
+    h("div", { class: "grid2" },
+      field("OB MDA", data.ob.mda, (v) => { data.ob.mda = v; }),
+      field("OB residents", data.ob.residents.join(", "), (v) => { data.ob.residents = list(v); })),
+    field("Night coverage", data.night.join(", "), (v) => { data.night = list(v); }),
+    h("label", { class: "field" }, h("span", null, "Notes (one per line)"), notesText),
+    saveBtn,
+  );
+
+  const close = openSheet(`Daily sheet · ${fmtDate(date)}`, body);
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    data.procedures = procText.value.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((x) => x[0]).map(([name, count = "", mda = ""]) => ({ name, count, mda }));
+    data.notes = notesText.value.split("\n").map((x) => x.trim()).filter(Boolean);
+    data.source = source;
+    try {
+      await api(`/api/daily/${date}`, { method: "PUT", body: data });
+      toast("Daily sheet saved");
+      close();
+      await ctx.reload();
+      onSaved?.();
+    } catch (err) {
+      toast(err.message);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+function dailySection(ctx, status) {
+  const { state } = ctx;
+  let date = state.adminDate || todayLocal();
+  const holder = h("div");
+  const progress = h("div");
+  const dateInput = h("input", { class: "input", type: "date", value: date, onchange: (e) => { date = e.target.value; state.adminDate = date; draw(); } });
+
+  async function readPhoto(file) {
+    progress.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), "Uploading photo…"));
+    try {
+      const blob = await downscale(file);
+      const res = await api(`/api/photo/${date}`, { method: "POST", body: blob, headers: { "content-type": "image/jpeg" } });
+      if (!res.queued) {
+        progress.replaceChildren(notice("warn", "info", res.reason || "Photo saved. Enter the sheet by hand."));
+        openEditor(ctx, date, ctx.model.ds.daily?.[date] || {}, { source: "manual", onSaved: draw });
+        return;
+      }
+      const started = Date.now();
+      for (;;) {
+        await sleep(3000);
+        const secs = Math.round((Date.now() - started) / 1000);
+        progress.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), `Reading the sheet with Claude… ${secs}s (usually under a minute)`));
+        const job = await api(`/api/job/${date}`);
+        if (job.status === "done") {
+          progress.replaceChildren();
+          openEditor(ctx, date, job.daily, { source: "photo", onSaved: draw });
+          return;
+        }
+        if (job.status === "error") throw new Error(job.error);
+        if (Date.now() - started > 5 * 60 * 1000) throw new Error("The reader is taking too long. Try again, or enter the sheet by hand.");
+      }
+    } catch (err) {
+      progress.replaceChildren(notice("gap", "alert", `Couldn't read the photo: ${err.message}`));
+    }
+  }
+
+  function draw() {
+    const existing = ctx.model.ds.daily?.[date];
+    holder.replaceChildren(
+      h("div", { style: { display: "flex", gap: "8px", marginBottom: "10px", flexWrap: "wrap" } },
+        h("div", { style: { flex: "1 1 160px", minWidth: 0 } }, dateInput),
+        h("button", { class: "btn sm", style: { height: "46px" }, onclick: () => { date = todayLocal(); dateInput.value = date; draw(); } }, "Today"),
+        h("button", { class: "btn sm", style: { height: "46px" }, onclick: () => { date = addDays(todayLocal(), 1); dateInput.value = date; draw(); } }, "Tomorrow")),
+      existing
+        ? notice("", "check", h("b", null, `${DOW_SHORT[new Date(`${date}T12:00:00`).getDay()]} ${date}: `), `${existing.rooms.length} rooms saved${existing.source === "photo" ? " (from photo)" : ""}.`)
+        : h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "No daily sheet saved for this date."),
+      h("div", { class: "btnrow" },
+        fileButton(status?.configured?.ai ? "Read a photo" : "Upload photo", "camera", "image/*", readPhoto, { primary: true }),
+        h("button", { class: "btn", onclick: () => openEditor(ctx, date, existing || {}, { onSaved: draw }) }, icon("edit"), existing ? "Edit" : "Enter by hand")),
+      status && !status.configured?.ai ? h("p", { class: "disclaimer" }, "Photo reading is off: add ANTHROPIC_API_KEY in Netlify to turn it on. Photos are still saved so residents can view them.") : null,
+      existing ? h("button", { class: "btn sm danger", style: { marginTop: "10px" }, onclick: async () => {
+        if (!confirm(`Delete the daily sheet for ${date}?`)) return;
+        await api(`/api/daily/${date}`, { method: "DELETE" });
+        await ctx.reload();
+        draw();
+      } }, "Delete this day's sheet") : null,
+      progress,
+    );
+  }
+  draw();
+  return card("Daily OR sheet", holder);
+}
+
+function uploadSection(ctx, title, help, path, extra) {
+  const out = h("div");
+  const ayInput = extra ? h("input", { class: "input", type: "number", min: "2020", max: "2100", placeholder: "e.g. 2026", style: { maxWidth: "140px" } }) : null;
+  const btn = fileButton("Choose .xlsx", "upload", ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", async (file) => {
+    out.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), `Reading ${file.name}…`));
+    const m = file.name.match(/(20\d\d)\s*[-–_ ]\s*(20\d\d)/);
+    if (ayInput && !ayInput.value && m) ayInput.value = m[1];
+    try {
+      const qs = new URLSearchParams({ name: file.name });
+      if (ayInput?.value) qs.set("ay", ayInput.value);
+      const res = await api(`${path}?${qs}`, { method: "POST", body: await file.arrayBuffer(), headers: { "content-type": "application/octet-stream" } });
+      out.replaceChildren(summaryView(res.summary));
+      await ctx.reload();
+    } catch (err) {
+      out.replaceChildren(notice("gap", "alert", err.message));
+    }
+  }, { primary: true });
+  return card(title, h("div", null,
+    h("p", { class: "small muted", style: { marginTop: 0 } }, help),
+    ayInput ? h("label", { class: "field" }, h("span", null, "Academic year starting July of (auto-filled from the file name)"), ayInput) : null,
+    btn, out));
+}
+
+function directorySection(ctx) {
+  const { model } = ctx;
+  const dir = model.ds.directory || { people: {}, places: [] };
+  const peopleText = h("textarea", { class: "input", style: { minHeight: "220px" } },
+    model.people.map((p) => `${p.last}, ${p.preferred || p.first}: ${dir.people?.[p.id]?.phone || ""}`).join("\n"));
+  const placesText = h("textarea", { class: "input", style: { minHeight: "100px" }, placeholder: "Harper OR front desk: 313-555-0100" },
+    (dir.places || []).map((p) => `${p.name}: ${p.phone}${p.note ? ` (${p.note})` : ""}`).join("\n"));
+  const out = h("div");
+  const save = h("button", { class: "btn primary block", onclick: async () => {
+    const match = createMatcher(model.people);
+    const people = {};
+    const unknown = [];
+    for (const line of peopleText.value.split("\n")) {
+      const i = line.lastIndexOf(":");
+      if (i < 0) continue;
+      const name = line.slice(0, i).trim(), phone = line.slice(i + 1).trim();
+      if (!phone) continue;
+      const id = match(name);
+      if (id) people[id] = { phone };
+      else unknown.push(name);
+    }
+    const places = placesText.value.split("\n").map((line) => {
+      const i = line.indexOf(":");
+      if (i < 0) return null;
+      const rest = line.slice(i + 1).trim();
+      const note = rest.match(/\(([^)]*)\)\s*$/)?.[1] || "";
+      return { name: line.slice(0, i).trim(), phone: rest.replace(/\([^)]*\)\s*$/, "").trim(), note };
+    }).filter((p) => p && p.name);
+    try {
+      await api("/api/directory", { method: "PUT", body: { people, places } });
+      out.replaceChildren(unknown.length ? notice("warn", "alert", `Saved, but these names didn't match anyone: ${unknown.join(", ")}`) : notice("", "check", `Saved ${Object.keys(people).length} residents and ${places.length} places.`));
+      await ctx.reload();
+    } catch (err) { out.replaceChildren(notice("gap", "alert", err.message)); }
+  } }, "Save directory");
+  return card("Directory", h("div", null,
+    h("p", { class: "small muted", style: { marginTop: 0 } }, "One per line as \"Name: phone\". These power the call and text buttons. Only people with the passcode can see them."),
+    h("label", { class: "field" }, h("span", null, "Residents"), peopleText),
+    h("label", { class: "field" }, h("span", null, "Places (OR desk, PACU, L&D, VA, CHM…)"), placesText),
+    save, out));
+}
+
+function peopleSection(ctx) {
+  const { model } = ctx;
+  const all = [...model.ds.people].sort((a, b) => (a.cls || "").localeCompare(b.cls || "") || a.last.localeCompare(b.last));
+  return card("People", h("ul", { class: "list" }, all.map((p) => {
+    const cls = h("select", { class: "input", style: { width: "92px", padding: "6px 8px", fontSize: "14px" }, "aria-label": `Class for ${p.last}` },
+      ["CA-1", "CA-2", "CA-3", "PGY-1"].map((c) => h("option", { value: c, selected: p.cls === c ? true : null }, c)));
+    cls.value = p.cls || "CA-1";
+    cls.addEventListener("change", async () => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { cls: cls.value } }); toast("Saved"); ctx.reload(); });
+    const hide = h("input", { type: "checkbox", checked: !p.hidden, "aria-label": `Show ${p.last}`, onchange: async (e) => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { hidden: !e.target.checked } }); toast(e.target.checked ? "Shown" : "Hidden"); ctx.reload(); } });
+    return h("li", { class: "row", style: { minHeight: "52px" } },
+      avatar(model, p.id, "sm"),
+      h("div", { class: "main" }, h("div", { class: "name" }, `${p.last}, ${p.preferred || p.first}`, p.hidden ? h("span", { class: "pill" }, "hidden") : null),
+        p.aliases?.length ? h("div", { class: "sub tiny" }, `Also: ${p.aliases.join("; ")}`) : null),
+      cls, h("label", { title: "Show in the app", style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px" } }, hide, "show"));
+  })), { pad: false, right: `${all.length}` });
+}
+
+const toHHMM = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const fromHHMM = (s) => { const [hh, mm] = String(s).split(":").map(Number); return hh * 60 + (mm || 0); };
+
+function settingsSection(ctx) {
+  const S = mergeSettings(ctx.model.ds.settings);
+  const start = h("input", { class: "input", type: "time", value: toHHMM(S.dayHours[0]) });
+  const end = h("input", { class: "input", type: "time", value: toHHMM(S.dayHours[1]) });
+  const late = h("input", { class: "input", type: "time", value: toHHMM(S.lateEnd) });
+  const codeHours = h("textarea", { class: "input", style: { minHeight: "80px" } },
+    Object.entries(S.codeHours).map(([c, [a, b]]) => `${c}: ${toHHMM(a)}-${toHHMM(b)}`).join("\n"));
+  const rules = S.staffing.map((r) => ({ ...r }));
+  const rulesList = h("ul", { class: "list" }, rules.map((r) => h("li", { class: "row", style: { minHeight: "48px", padding: "6px 0" } },
+    h("input", { type: "checkbox", checked: r.enabled !== false, "aria-label": r.label, onchange: (e) => { r.enabled = e.target.checked; } }),
+    h("div", { class: "main small" }, r.label, h("div", { class: "tiny muted" }, r.days.map((d) => DOW_SHORT[d]).join(" "))),
+    h("input", { class: "input", type: "number", min: "0", max: "9", value: r.min, style: { width: "64px", padding: "6px 8px" }, "aria-label": `Minimum for ${r.label}`, oninput: (e) => { r.min = Number(e.target.value) || 0; } }))));
+  const fills = h("textarea", { class: "input", style: { minHeight: "90px" } },
+    Object.entries(S.fillTags).map(([hex, tag]) => `${hex} = ${tag}`).join("\n"));
+  const out = h("div");
+  return card("Settings", h("div", null,
+    h("p", { class: "small muted", style: { marginTop: 0 } }, `Used for duty-hour estimates. A regular day is now ${fmtTime(S.dayHours[0])}–${fmtTime(S.dayHours[1])}.`),
+    h("div", { class: "grid2" }, h("label", { class: "field" }, h("span", null, "Regular day starts"), start), h("label", { class: "field" }, h("span", null, "Regular day ends"), end)),
+    h("label", { class: "field" }, h("span", null, "Late resident stays until"), late),
+    h("label", { class: "field" }, h("span", null, "Hours by code (CODE: HH:MM-HH:MM)"), codeHours),
+    h("h4", { class: "card-title", style: { marginTop: "14px" } }, "Expected staffing (coverage-gap checks)"),
+    rulesList,
+    h("label", { class: "field", style: { marginTop: "12px" } }, h("span", null, `Cell colors (HEX = ${Object.keys(FILL_TAG_LABELS).join(" | ")})`), fills),
+    h("div", { class: "btnrow" },
+      h("button", { class: "btn primary", onclick: async () => {
+        const ch = {};
+        for (const line of codeHours.value.split("\n")) {
+          const m = line.match(/^\s*([^:]+):\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+          if (m) ch[m[1].trim().toUpperCase()] = [fromHHMM(m[2]), fromHHMM(m[3]) <= fromHHMM(m[2]) ? fromHHMM(m[3]) + 1440 : fromHHMM(m[3])];
+        }
+        const ft = {};
+        for (const line of fills.value.split("\n")) {
+          const m = line.match(/^\s*#?([0-9a-f]{6})\s*=\s*(\w+)/i);
+          if (m && FILL_TAG_LABELS[m[2]]) ft[m[1].toUpperCase()] = m[2];
+        }
+        const settings = { dayHours: [fromHHMM(start.value), fromHHMM(end.value)], lateEnd: fromHHMM(late.value), codeHours: ch, staffing: rules, fillTags: ft };
+        try { await api("/api/settings", { method: "PUT", body: settings }); out.replaceChildren(notice("", "check", "Settings saved.")); await ctx.reload(); } catch (err) { out.replaceChildren(notice("gap", "alert", err.message)); }
+      } }, "Save settings"),
+      h("button", { class: "btn", onclick: async () => {
+        if (!confirm("Reset all settings to defaults?")) return;
+        await api("/api/settings", { method: "PUT", body: {} });
+        await ctx.reload();
+        toast("Settings reset");
+      } }, "Reset")),
+    out,
+    h("p", { class: "disclaimer" }, `Defaults: regular day ${fmtTime(DEFAULT_SETTINGS.dayHours[0])}–${fmtTime(DEFAULT_SETTINGS.dayHours[1])}, late until ${fmtTime(DEFAULT_SETTINGS.lateEnd)}.`)));
+}
+
+function backupSection(ctx) {
+  return card("Backup", h("div", null,
+    h("p", { class: "small muted", style: { marginTop: 0 } }, "Download everything (schedules, daily sheets, directory, settings) as one file, or restore from one. Keep backups private: they contain everyone's schedule."),
+    h("div", { class: "btnrow" },
+      h("button", { class: "btn", onclick: async () => {
+        const res = await api("/api/export", { raw: true });
+        const url = URL.createObjectURL(await res.blob());
+        const a = h("a", { href: url, download: `dmc-schedule-backup-${todayLocal()}.json` });
+        document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } }, icon("upload"), "Download backup"),
+      fileButton("Restore", "refresh", "application/json,.json", async (file) => {
+        if (!confirm("Replace everything on the server with this backup?")) return;
+        try { await api("/api/import", { method: "POST", body: JSON.parse(await file.text()) }); await ctx.reload(); toast("Restored"); } catch (err) { toast(err.message); }
+      }))));
+}
+
+export function renderAdmin(ctx) {
+  const root = h("div");
+  if (!local.get("adminKey")) { root.append(adminLogin(ctx)); return root; }
+  const statusHolder = h("div");
+  const dailyHolder = h("div");
+  root.append(statusHolder);
+  api("/api/status").then((status) => {
+    statusHolder.replaceChildren(
+      !status.configured.ai ? notice("warn", "info", "Photo reading is off until ANTHROPIC_API_KEY is set in Netlify.") : notice("", "sparkle", "Photo reading is on: upload the WhatsApp photo and review what Claude read before saving."),
+    );
+    dailyHolder.replaceChildren(dailySection(ctx, status));
+  }).catch(() => dailyHolder.replaceChildren(dailySection(ctx, null)));
+  root.append(
+    dailyHolder,
+    uploadSection(ctx, "Monthly call schedule", "The .xlsx the program coordinator emails each month. Re-uploading a month replaces it; other months are kept.", "/api/upload/call"),
+    uploadSection(ctx, "Annual rotations", "The yearly rotations-by-site .xlsx. Used for months that don't have a call sheet yet.", "/api/upload/rotations", true),
+    directorySection(ctx),
+    peopleSection(ctx),
+    settingsSection(ctx),
+    backupSection(ctx),
+    h("button", { class: "btn block sm", onclick: () => { local.del("adminKey"); ctx.state.admin = false; ctx.render(); } }, "Lock admin on this device"),
+  );
+  return root;
+}
+
+export { classPill };

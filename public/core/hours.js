@@ -1,0 +1,92 @@
+// Duty-hour ESTIMATES from scheduled shift times, checked against the ACGME limits:
+// 80 h/week averaged over 4 weeks, 1 day in 7 free (averaged over 4 weeks),
+// 24 h + 4 h transition maximum, 8 h off between shifts, 14 h off after 24 h of in-house call.
+import { addDays, toUTC, startOfWeek, range } from "./dates.js";
+
+const DAY = 1440;
+
+export function intervals(model, pid, from, to) {
+  const raw = [];
+  for (const date of range(addDays(from, -2), to)) {
+    const d = model.day(pid, date);
+    const base = toUTC(date) / 60000;
+    for (const s of d.shifts) raw.push({ start: base + s.start, end: base + s.end, kinds: [s.kind], dates: [date] });
+  }
+  raw.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const iv of raw) {
+    const last = merged[merged.length - 1];
+    if (last && iv.start <= last.end) {
+      last.end = Math.max(last.end, iv.end);
+      last.kinds.push(...iv.kinds);
+      last.dates.push(...iv.dates);
+    } else merged.push({ ...iv, kinds: [...iv.kinds], dates: [...iv.dates] });
+  }
+  return merged;
+}
+
+function overlap(iv, a, b) {
+  return Math.max(0, Math.min(iv.end, b) - Math.max(iv.start, a));
+}
+
+// Weekly summary (Sunday-Saturday) for every week touching [from, to].
+export function hoursReport(model, pid, from, to) {
+  const firstWeek = startOfWeek(addDays(from, -21)); // three earlier weeks feed the 4-week average
+  const lastDay = addDays(startOfWeek(to), 6);
+  const ivs = intervals(model, pid, firstWeek, lastDay);
+  const weeks = [];
+  for (let ws = firstWeek; ws <= lastDay; ws = addDays(ws, 7)) {
+    const a = toUTC(ws) / 60000, b = a + 7 * DAY;
+    const minutes = ivs.reduce((s, iv) => s + overlap(iv, a, b), 0);
+    let daysOff = 0, known = true;
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(ws, i);
+      const d = model.day(pid, date);
+      if (d.source !== "call") known = false;
+      const da = a + i * DAY;
+      if (!ivs.some((iv) => overlap(iv, da, da + DAY) > 0)) daysOff++;
+    }
+    weeks.push({ start: ws, end: addDays(ws, 6), hours: minutes / 60, daysOff, known });
+  }
+  for (let i = 0; i < weeks.length; i++) {
+    const window = weeks.slice(Math.max(0, i - 3), i + 1);
+    const full = window.length === 4 && window.every((w) => w.known);
+    weeks[i].avg4 = full ? window.reduce((s, w) => s + w.hours, 0) / 4 : null;
+    weeks[i].daysOff4 = full ? window.reduce((s, w) => s + w.daysOff, 0) : null;
+  }
+
+  const flags = [];
+  const inRange = (date) => date >= from && date <= lastDay;
+  for (const w of weeks) {
+    if (!w.known || !inRange(w.end)) continue;
+    if (w.hours > 80) flags.push({ level: "gap", date: w.start, text: `About ${Math.round(w.hours)} h scheduled the week of ${w.start.slice(5)}` });
+    if (w.avg4 !== null && w.avg4 > 80) flags.push({ level: "gap", date: w.start, text: `4-week average about ${Math.round(w.avg4)} h (limit 80)` });
+    if (w.daysOff4 !== null && w.daysOff4 < 4) flags.push({ level: "warn", date: w.start, text: `Only ${w.daysOff4} days off in the 4 weeks ending ${w.end.slice(5)} (need 4)` });
+  }
+  let nights = 0, nightStart = null;
+  for (let i = 0; i < ivs.length; i++) {
+    const iv = ivs[i];
+    const len = (iv.end - iv.start) / 60;
+    const date = iv.dates[0];
+    if (!inRange(date)) continue;
+    if (len > 28) flags.push({ level: "gap", date, text: `Continuous duty of about ${Math.round(len)} h starting ${date.slice(5)} (limit 24 + 4)` });
+    const next = ivs[i + 1];
+    if (next) {
+      const gap = (next.start - iv.end) / 60;
+      if (len >= 24 && gap < 14) flags.push({ level: "warn", date: next.dates[0], text: `Only ${Math.round(gap)} h off after 24-h call before ${next.dates[0].slice(5)}` });
+      else if (gap < 8) flags.push({ level: "warn", date: next.dates[0], text: `Only ${Math.round(gap)} h off before the shift on ${next.dates[0].slice(5)}` });
+    }
+    if (iv.kinds.includes("night")) {
+      nights = nightStart && (iv.start - ivs[i - 1]?.start) <= DAY + 60 ? nights + 1 : 1;
+      if (nights === 1) nightStart = date;
+      if (nights === 7) flags.push({ level: "info", date: nightStart, text: `More than 6 nights in a row starting ${nightStart.slice(5)}` });
+    } else { nights = 0; nightStart = null; }
+  }
+  return { weeks: weeks.filter((w) => w.end >= from && w.start <= to), flags, intervals: ivs };
+}
+
+export function weekHours(model, pid, date) {
+  const ws = startOfWeek(date);
+  const rep = hoursReport(model, pid, ws, addDays(ws, 6));
+  return rep.weeks.find((w) => w.start === ws) || null;
+}

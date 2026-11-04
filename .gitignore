@@ -1,0 +1,18 @@
+node_modules/
+.netlify/
+.localdata/
+.env
+.DS_Store
+
+# Schedules contain residents' names and assignments: never commit them.
+*.xlsx
+*.xls
+*.csv
+*.jpg
+*.jpeg
+*.heic
+data/
+backups/
+
+# Local editor/agent config
+.claude/
