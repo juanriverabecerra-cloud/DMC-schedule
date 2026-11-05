@@ -1,11 +1,32 @@
 // Pieces shared by several screens: OR assignment details, the day sheet, upcoming events,
 // and the calendar subscription card.
-import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice } from "../ui.js";
+import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip } from "../ui.js";
 import { fmtDate, fmtRange, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT } from "../../core/dates.js";
 import { headline, siteName } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api } from "../api.js";
+
+// Call chips under an OR row: the room phone, its MDA and the residents in it.
+export function roomCallChips(ctx, room, { residents = false } = {}) {
+  const { model } = ctx;
+  const dir = model.dir;
+  const chips = [];
+  const rm = dir.room(room.or);
+  if (rm) chips.push(callChip(dir, `OR ${room.or}`, rm.numbers));
+  for (const part of String(room.mda || "").split("/")) {
+    const s = dir.staff(part);
+    if (s) chips.push(callChip(dir, s.last || s.name, s.numbers));
+  }
+  if (residents) {
+    for (const x of room.staffIds || []) {
+      const r = x.id && dir.resident(x.id);
+      if (r) chips.push(callChip(dir, model.person(x.id).last, r.numbers));
+    }
+  }
+  const list = chips.filter(Boolean);
+  return list.length ? h("div", { class: "callchips" }, list) : null;
+}
 
 export function roomSummary(room) {
   return [room.surgeon, room.time, room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ");
@@ -32,15 +53,21 @@ export function assignmentList(ctx, d) {
         room.breaks ? h("span", null, "Breaks ", h("b", null, room.breakIds.map((s) => (s.id ? model.name(s.id) : s.name)).join(", "))) : null,
       ].filter(Boolean).flatMap((x, i) => (i ? [" · ", x] : [x]))),
       extra ? h("div", { class: "tiny muted", style: { marginTop: "2px" } }, extra) : null,
+      roomCallChips(ctx, room),
     ),
   );
   for (const r of d.roles) {
     if (r.kind === "room") items.push(roomRow(r.room));
-    if (r.kind === "breaks") for (const room of r.rooms) items.push(roomRow(room, "You give breaks here"));
+    if (r.kind === "breaks") for (const room of r.rooms) items.push(roomRow(room, d.alsoBreaks ? "Also giving breaks here" : "You give breaks here"));
     if (r.kind === "ja") for (const room of r.rooms) items.push(roomRow(room, "You're the junior attending"));
     if (r.kind === "opsc") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, `OPSC${r.roomCount ? ` · ${r.roomCount} rooms` : ""}`), r.mdas?.length ? h("div", { class: "sub" }, `MDAs: ${r.mdas.join(", ")}`) : null)));
     if (r.kind === "ob") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "OB @ Hutzel"), r.mda ? h("div", { class: "sub" }, `MDA: ${r.mda}`) : null)));
-    if (r.kind === "pat") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "PAT clinic"))));
+    if (r.kind === "pat") {
+      const pat = model.dir.place(/^pat clinic/i);
+      items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "PAT clinic"),
+        d.alsoBreaks ? h("div", { class: "sub" }, "Your post today; you're also pulled for breaks below") : null,
+        pat ? h("div", { class: "callchips" }, callChip(model.dir, "PAT clinic", pat.numbers)) : null)));
+    }
     if (r.kind === "night") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "Night coverage"))));
   }
   return items;

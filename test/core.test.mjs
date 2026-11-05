@@ -163,3 +163,61 @@ test("saved sheets use reference-list spelling and report what changed", () => {
   assert.deepEqual(daily.ob.residents, ["Outside Resident"]);
   assert.deepEqual(changes.map((c) => `${c.from}>${c.to}`).sort(), ["Garsia>Garcia-Lopez", "PAT>Van Tran", "PO>Ortiz"]);
 });
+
+test("PAT resident pulled for breaks stays in PAT", () => {
+  const ds = dataset();
+  setDaily(ds, "2026-11-03", { rooms: [{ or: "5", surgeon: "Surgeon A", staff: "Doe", breaks: "PAT" }], pat: ["Van Tran"] });
+  const m = createModel(ds);
+  const d = m.day("van-tran-kim", "2026-11-03");
+  assert.equal(d.alsoBreaks, true);
+  assert.equal(d.roles[0].kind, "pat");
+  assert.equal(m.boardGroup(d), "PAT");
+  assert.match(headline(d), /^PAT clinic · breaks OR 5$/);
+});
+
+import { parseDirectoryText, buildDirectory, createDirectory, dialDigits } from "../public/core/directory.js";
+import { headline } from "../public/core/model.js";
+
+const DIR_TEXT = `## Dialing
+Ext 5xxxx = 313-555-xxxx
+## Residents
+Doe, Jane | 313-555-0101 | Pager 7001
+Leed, Ana | 313-555-0102
+New, Intern | Pager 80001 | PGY-1
+Nobody, Here | 313-555-0199
+## Anesthesiologists — Harper
+Smith, Alex | Cisco 313-555-0201 | Cell 248-555-0202
+Patel, Raj | Cisco 313-555-0203
+## Anesthesiologists — Sinai-Grace
+Patel, Mira | Cisco 313-555-0204
+## Harper OR rooms
+OR 5 | Ext 51234
+OR 18 | Ext 31234
+## OPSC rooms
+OPSC OR 2 | 555-0300
+## Anesthesia lines
+Resident board runner | 313-555-0400
+On-call fellow | Pager 9999`;
+
+test("directory: parsing, extensions, rooms, residents and attendings", () => {
+  const parsed = parseDirectoryText(DIR_TEXT);
+  assert.equal(parsed.warnings.length, 0);
+  const added = [];
+  const built = buildDirectory(parsed, people, { upsert: (name, cls) => { if (!cls) return null; added.push(`${name}|${cls}`); return "new-intern"; } });
+  assert.deepEqual(added, ["New, Intern|PGY-1"]);
+  assert.deepEqual(built.unmatched, ["Nobody, Here"]);
+  assert.equal(built.people["doe-jane"].numbers[1].kind, "pager");
+  const ds = { ...dataset(), directory: built };
+  const m = createModel(ds);
+  const dir = m.dir;
+  assert.equal(m.phone("doe-jane"), "3135550101");
+  assert.equal(dir.dial(dir.room(5).numbers[0]), "3135551234");
+  assert.equal(dir.dial(dir.room(18).numbers[0]), null); // no rule for 3xxxx
+  assert.equal(dir.dial(dir.opscRoom(2).numbers[0]), "3135550300"); // 7 digits get 313
+  assert.equal(dir.staff("Patel").name, "Patel, Raj"); // the Harper list wins on a Harper sheet
+  assert.equal(dir.staff("Patel", { site: "sinai" }).name, "Patel, Mira");
+  assert.equal(dir.staff("Smyth").name, "Smith, Alex");
+  assert.equal(dialDigits({ kind: "pager", value: "9999" }, built.dialing), null);
+  assert.deepEqual(dir.search("board").map((c) => c.name), ["Resident board runner"]);
+  assert.deepEqual(dir.search("1234").map((c) => c.name), ["OR 5", "OR 18"]);
+});

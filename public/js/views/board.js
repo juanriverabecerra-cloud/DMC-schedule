@@ -2,7 +2,7 @@ import { h, icon, personRow, emptyState, segmented, openSheet, notice } from "..
 import { BOARD_ORDER, headline } from "../../core/model.js";
 import { fmtDate } from "../../core/dates.js";
 import { local } from "../api.js";
-import { roomSummary } from "./common.js";
+import { roomSummary, roomCallChips } from "./common.js";
 
 const HIDE_BY_DEFAULT = new Set(["Off", "Vacation", "Post-call", "No schedule"]);
 
@@ -37,7 +37,8 @@ export function openDailySheet(ctx, date) {
         room.crna ? "CRNA" : room.staffIds.map(nm).join(" & "),
         room.ja ? `JA ${room.jaIds.map(nm).join(", ")}` : null,
         room.breaks ? `Breaks ${room.breakIds.map(nm).join(", ")}` : null,
-      ].filter(Boolean).join(" · "))))))));
+      ].filter(Boolean).join(" · ")),
+      roomCallChips(ctx, room, { residents: true })))))));
   const s = dl.sheet;
   const lines = [
     s.opsc?.residents?.length || s.opsc?.mdas?.length ? ["OPSC", `${s.opsc.rooms ? `${s.opsc.rooms} rooms · ` : ""}MDAs ${s.opsc.mdas.join(", ")} · ${dl.opsc.map(nm).join(", ")}`] : null,

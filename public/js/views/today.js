@@ -5,6 +5,7 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { dayGaps } from "../../core/gaps.js";
 import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet } from "./common.js";
+import { quickContacts, contactRow } from "./call.js";
 
 function shortCode(d) {
   if (d.call === "NF") return "NF";
@@ -138,6 +139,11 @@ export function renderToday(ctx) {
   const mates = teammates(ctx, d);
   if (mates.length) {
     root.append(card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }));
+  }
+
+  const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key)).slice(0, 5);
+  if (quick.length) {
+    root.append(card("Quick call", h("ul", { class: "list" }, quick.map((x) => contactRow(ctx, x))), { pad: false, right: h("a", { href: "#/call" }, "All numbers ›") }));
   }
 
   const mini = tonightMini(ctx);

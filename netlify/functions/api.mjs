@@ -147,9 +147,9 @@ export default async function handler(req) {
 
     if (path === "/api/directory" && method === "PUT") {
       const ds = await loadDataset(st);
-      setDirectory(ds, await req.json());
+      const summary = setDirectory(ds, await req.json());
       await st.setJSON("dataset", ds);
-      return json({ ok: true, updatedAt: ds.updatedAt });
+      return json({ ok: true, summary, updatedAt: ds.updatedAt });
     }
 
     if (path === "/api/settings" && method === "PUT") {

@@ -14,7 +14,8 @@ What it shows:
 - **Hours**: estimated weekly hours for everyone against ACGME limits (80 h/4-week average, 1 day off in 7, 24+4, rest between shifts).
 - **Gaps**: missing late/NF/24-hr/12-hr/cardiac coverage, the call sheet's own "coverage needed" rows, and conflicts with the daily sheet.
 - **Swap finder**: for any call shift, same-class residents who are free and would stay under the hour limits.
-- **Calendar feed**: subscribe once in Apple or Google Calendar and every shift arrives with its OR details and who's on.
+- **Calendar feed**: subscribe once in Apple or Google Calendar and every shift arrives with its OR details, room phone, MDA's number and who's on.
+- **Call**: one-tap calling for residents, attendings (Cisco and cell), OR rooms, units and service lines. "Right now" lists who you're likely to need today (your room, your MDA, your JA, the board runners). Every OR card in the app has call chips for the room and its MDA. Pagers and hospital-only extensions copy to the clipboard.
 
 It installs to the home screen ("Add to Home Screen") and works offline with the last-loaded schedule.
 
@@ -44,6 +45,20 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
   - A role written in a name cell, such as "PAT" in the Breaks column, becomes that day's PAT resident: the name in the sheet's PAT box, or else whoever the call sheet has on PAT (including someone covering PAT).
   - Once tomorrow's sheet is in, everyone's Today screen shows a "Tomorrow" card with their room, start time and MDA.
 - **Monthly**: upload the call schedule `.xlsx` when it's emailed. Re-uploading a month replaces it.
+- **Phone directory**: **Admin → Directory → Import .txt**, review, **Save**. Keep the file private; it is never part of this repository. Format:
+
+  ```
+  ## Dialing
+  Ext 5xxxx = 313-745-xxxx
+  ## Residents
+  Last, First | 313-555-0100 | Pager 1234
+  ## Anesthesiologists — Harper
+  Last, First | Cisco 313-555-0101 | Cell 248-555-0102
+  ## Harper OR rooms
+  OR 15 | Ext 51234
+  ```
+
+  "Residents" match the roster (a new name with "| PGY-1" is added), "Anesthesiologists …" sections are matched to the MDAs on the daily sheet (the site in the title breaks ties, e.g. Harper vs. Sinai-Grace), "Harper OR rooms" and "OPSC rooms" power the room buttons, and "Dialing" rules turn 5-digit extensions into numbers a cell phone can call.
 - **Yearly**: upload the new rotations file in June.
 
 ## How the call sheet is read

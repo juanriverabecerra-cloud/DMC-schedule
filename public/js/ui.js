@@ -78,7 +78,8 @@ export function classPill(cls) {
 }
 
 export function telHref(phone) {
-  return `tel:${String(phone).replace(/[^\d+]/g, "")}`;
+  const d = String(phone).replace(/[^\d]/g, "");
+  return `tel:${d.length === 10 ? `+1${d}` : d}`;
 }
 
 export function smsHref(phone, body) {
@@ -86,12 +87,37 @@ export function smsHref(phone, body) {
   return body ? `sms:${num}?&body=${encodeURIComponent(body)}` : `sms:${num}`;
 }
 
-export function contactActions(phone) {
+// Call button for a row; `text` adds a text-message button (only for cell numbers).
+export function contactActions(phone, { text = false } = {}) {
   if (!phone) return null;
   return h("div", { class: "actions" },
-    h("a", { href: smsHref(phone), "aria-label": "Text", onclick: (e) => e.stopPropagation() }, icon("message")),
+    text ? h("a", { href: smsHref(phone), "aria-label": "Text", onclick: (e) => e.stopPropagation() }, icon("message")) : null,
     h("a", { href: telHref(phone), "aria-label": "Call", onclick: (e) => e.stopPropagation() }, icon("phone")),
   );
+}
+
+// One number as an action: dialable numbers call, extensions without a dialing rule and
+// pagers copy (they only work from a hospital phone or the paging system).
+export function numberButton(dir, num, { compact = false } = {}) {
+  const dial = dir.dial(num);
+  const label = num.kind === "pager" ? `Pager ${num.value}` : num.kind === "ext" && !dial ? `Ext ${num.value}` : compact ? (num.label && !["Phone", "Ext"].includes(num.label) ? num.label : "Call") : dir.text(num);
+  if (dial) {
+    return h("a", { class: `numbtn${compact ? " compact" : ""}`, href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) },
+      icon("phone"), h("span", null, label), !compact && num.label && !["Phone", "Ext"].includes(num.label) ? h("small", null, num.label) : null);
+  }
+  return h("button", { class: `numbtn copy${compact ? " compact" : ""}`, type: "button", title: num.kind === "pager" ? "Copy pager number" : "Dial from a hospital phone — tap to copy",
+    onclick: (e) => { e.stopPropagation(); copyText(num.value); } },
+  icon(num.kind === "pager" ? "message" : "link"), h("span", null, label), !compact && num.kind !== "pager" ? h("small", null, "hospital phone") : null);
+}
+
+// Small inline chip that calls a place or person, e.g. "OR 15" or an MDA.
+export function callChip(dir, text, numbers) {
+  const num = dir.primary(numbers) || numbers?.[0];
+  if (!num) return null;
+  const dial = dir.dial(num);
+  return dial
+    ? h("a", { class: "chip callchip", href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) }, icon("phone"), text)
+    : h("button", { class: "chip callchip muted", type: "button", onclick: (e) => { e.stopPropagation(); copyText(num.value); }, title: `${dir.text(num)} — copy` }, icon(num.kind === "pager" ? "message" : "link"), text);
 }
 
 // Status chips for one resident-day.

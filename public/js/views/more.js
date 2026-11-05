@@ -1,4 +1,4 @@
-import { h, icon, card, avatar, classPill, contactActions, segmented, telHref } from "../ui.js";
+import { h, icon, card, avatar, classPill, segmented, telHref } from "../ui.js";
 import { local } from "../api.js";
 import { monthKey, fmtMonth } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
@@ -49,21 +49,12 @@ export function renderMore(ctx) {
 
   if (me && me.cls !== "PGY-1") root.append(subscribeCard(ctx, state.me));
 
-  const places = model.ds.directory?.places || [];
-  const withPhones = model.people.filter((p) => model.phone(p.id));
-  if (places.length || withPhones.length) {
-    root.append(card("Directory", h("ul", { class: "list" },
-      places.map((pl) => h("li", { class: "row" },
-        h("div", { class: "main" }, h("div", { class: "name" }, pl.name), h("div", { class: "sub" }, [pl.phone, pl.note].filter(Boolean).join(" · "))),
-        contactActions(pl.phone))),
-      withPhones.map((p) => h("li", { class: "row tap", onclick: () => ctx.go(`p/${p.id}`) },
-        avatar(model, p.id),
-        h("div", { class: "main" }, h("div", { class: "name" }, model.name(p.id), classPill(p.cls)), h("div", { class: "sub" }, model.phone(p.id))),
-        contactActions(model.phone(p.id)))),
-    ), { pad: false }));
-  } else {
-    root.append(card("Directory", h("p", { class: "small muted", style: { margin: 0 } }, "No phone numbers yet. An admin can add residents' and key locations' numbers in Admin › Directory.")));
-  }
+  const dirCount = model.dir.all().length;
+  root.append(h("section", { class: "card" }, h("ul", { class: "list" },
+    h("li", { class: "row tap", onclick: () => ctx.go("call") },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("phone")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Phone directory"), h("div", { class: "sub" }, dirCount ? `${dirCount} people, rooms and units with one-tap calling` : "No numbers loaded yet (Admin › Directory)")),
+      icon("right")))));
 
   root.append(card("What the colors mean", h("ul", { class: "list" }, LEGEND.map(([cls, label, text]) =>
     h("li", { class: "row", style: { minHeight: "48px" } }, h("span", { class: `chip ${cls}`, style: { minWidth: "112px", justifyContent: "center" } }, label), h("div", { class: "main small muted" }, text)))), { pad: false }));

@@ -1,4 +1,4 @@
-import { h, icon, card, avatar, classPill, contactActions, dayChips, emptyState, telHref, smsHref } from "../ui.js";
+import { h, icon, card, avatar, classPill, dayChips, emptyState, telHref, smsHref, numberButton } from "../ui.js";
 import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
@@ -58,7 +58,7 @@ export function renderPerson(ctx, pid) {
   const p = model.person(pid);
   if (!p) return emptyState("user", "Not found", "This person isn't in the schedule.");
   const root = h("div");
-  const phone = model.phone(pid);
+  const contact = model.dir.resident(pid);
   const d = model.day(pid, state.date);
 
   root.append(h("section", { class: "card card-pad", style: { display: "flex", gap: "14px", alignItems: "center" } },
@@ -67,8 +67,7 @@ export function renderPerson(ctx, pid) {
       h("div", { style: { fontSize: "20px", fontWeight: 700 } }, model.name(pid)),
       h("div", { class: "muted small", style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
         classPill(p.cls), model.rotationFor(pid, monthKey(state.date)) || ""),
-      phone ? h("div", { class: "small", style: { marginTop: "4px" } }, phone) : null),
-    phone ? h("div", { class: "row", style: { padding: 0, border: 0, minHeight: 0 } }, contactActions(phone)) : null,
+      contact ? h("div", { class: "numrow" }, contact.numbers.map((n) => numberButton(model.dir, n))) : null),
   ));
 
   root.append(h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },

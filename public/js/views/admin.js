@@ -4,6 +4,7 @@ import { h, icon, card, toast, notice, openSheet, avatar, classPill } from "../u
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, DOW_SHORT } from "../../core/dates.js";
 import { roleWord } from "../../core/model.js";
+import { formatDirectoryText } from "../../core/directory.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
 import { DEFAULT_SETTINGS, FILL_TAG_LABELS, mergeSettings } from "../../core/codes.js";
 
@@ -265,43 +266,43 @@ function uploadSection(ctx, title, help, path, extra) {
 
 function directorySection(ctx) {
   const { model } = ctx;
-  const dir = model.ds.directory || { people: {}, places: [] };
-  const peopleText = h("textarea", { class: "input", style: { minHeight: "220px" } },
-    model.people.map((p) => `${p.last}, ${p.preferred || p.first}: ${dir.people?.[p.id]?.phone || ""}`).join("\n"));
-  const placesText = h("textarea", { class: "input", style: { minHeight: "100px" }, placeholder: "Harper OR front desk: 313-555-0100" },
-    (dir.places || []).map((p) => `${p.name}: ${p.phone}${p.note ? ` (${p.note})` : ""}`).join("\n"));
+  const text = h("textarea", { class: "input", style: { minHeight: "320px" }, spellcheck: "false", "aria-label": "Directory" },
+    formatDirectoryText(model.ds, model.people));
   const out = h("div");
-  const save = h("button", { class: "btn primary block", onclick: async () => {
-    const match = createMatcher(model.people);
-    const people = {};
-    const unknown = [];
-    for (const line of peopleText.value.split("\n")) {
-      const i = line.lastIndexOf(":");
-      if (i < 0) continue;
-      const name = line.slice(0, i).trim(), phone = line.slice(i + 1).trim();
-      if (!phone) continue;
-      const id = match(name);
-      if (id) people[id] = { phone };
-      else unknown.push(name);
-    }
-    const places = placesText.value.split("\n").map((line) => {
-      const i = line.indexOf(":");
-      if (i < 0) return null;
-      const rest = line.slice(i + 1).trim();
-      const note = rest.match(/\(([^)]*)\)\s*$/)?.[1] || "";
-      return { name: line.slice(0, i).trim(), phone: rest.replace(/\([^)]*\)\s*$/, "").trim(), note };
-    }).filter((p) => p && p.name);
+  const save = h("button", { class: "btn primary", onclick: async () => {
+    save.disabled = true;
     try {
-      await api("/api/directory", { method: "PUT", body: { people, places } });
-      out.replaceChildren(unknown.length ? notice("warn", "alert", `Saved, but these names didn't match anyone: ${unknown.join(", ")}`) : notice("", "check", `Saved ${Object.keys(people).length} residents and ${places.length} places.`));
+      const res = await api("/api/directory", { method: "PUT", body: { text: text.value } });
+      const s = res.summary;
+      out.replaceChildren(
+        notice("", "check", h("b", null, "Saved. "), `${s.residents} residents, ${s.staff} attendings, ${s.places} places and pagers, ${s.dialing} dialing rules.`),
+        s.added.length ? notice("", "user", `Added to the roster: ${s.added.join(", ")}`) : null,
+        s.unmatched.length ? notice("warn", "alert", `These residents didn't match anyone (add a class like "| PGY-1" to add them): ${s.unmatched.join(", ")}`) : null,
+        ...(s.warnings || []).map((w) => notice("warn", "alert", w)));
       await ctx.reload();
-    } catch (err) { out.replaceChildren(notice("gap", "alert", err.message)); }
-  } }, "Save directory");
+    } catch (err) {
+      out.replaceChildren(notice("gap", "alert", err.message));
+    } finally {
+      save.disabled = false;
+    }
+  } }, icon("check"), "Save directory");
+  const load = fileButton("Import .txt", "upload", ".txt,text/plain", async (file) => {
+    text.value = await file.text();
+    out.replaceChildren(notice("", "info", `Loaded ${file.name}. Review it, then Save.`));
+  });
+  const download = h("button", { class: "btn", onclick: () => {
+    const url = URL.createObjectURL(new Blob([text.value], { type: "text/plain" }));
+    const a = h("a", { href: url, download: "dmc-directory.txt" });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } }, "Download");
   return card("Directory", h("div", null,
-    h("p", { class: "small muted", style: { marginTop: 0 } }, "One per line as \"Name: phone\". These power the call and text buttons. Only people with the passcode can see them."),
-    h("label", { class: "field" }, h("span", null, "Residents"), peopleText),
-    h("label", { class: "field" }, h("span", null, "Places (OR desk, PACU, L&D, VA, CHM…)"), placesText),
-    save, out));
+    h("p", { class: "small muted", style: { marginTop: 0 } },
+      "Everything callable in the app comes from this text. One entry per line, \"Name | number | number\"; start a section with \"## Title\". Label numbers Cisco, Cell, Ext or Pager. Sections named \"Residents\" match the roster, \"Anesthesiologists …\" are the MDAs on the daily sheet, \"Harper OR rooms\" and \"OPSC rooms\" power the room buttons, and \"Dialing\" turns extensions into numbers a cell can call."),
+    text,
+    h("div", { class: "btnrow", style: { marginTop: "10px" } }, save, load, download),
+    out,
+    h("p", { class: "disclaimer" }, "Only people with the passcode see these numbers. Never put this file in the GitHub repository.")));
 }
 
 function peopleSection(ctx) {

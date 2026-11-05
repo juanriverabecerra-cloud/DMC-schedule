@@ -1,4 +1,4 @@
-import { h, icon, personRow, emptyState, notice, append } from "../ui.js";
+import { h, icon, personRow, emptyState, notice, append, numberButton, callChip } from "../ui.js";
 import { fmtDate, addDays, dow } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 
@@ -17,6 +17,9 @@ export function renderTonight(ctx) {
   if (!model.hasCall(date)) return emptyState("moon", "No call sheet for this month", "Ask an admin to upload it.");
   const t = model.tonight(date);
   const root = h("div");
+  const lines = [[/^resident board runner/i, "Resident BR"], [/^mda board runner/i, "MDA BR"], [/^harper or main desk/i, "OR desk"], [/^pacu harper/i, "PACU"], [/^mda ob$/i, "MDA OB"]]
+    .map(([re, label]) => { const p = model.dir.place(re); return p ? callChip(model.dir, label, p.numbers) : null; }).filter(Boolean);
+  if (lines.length) root.append(h("div", { class: "callchips", style: { margin: "0 2px 12px" } }, lines));
   const where = (d) => [d.rotation || d.label, d.roles.length ? headline(d) : ""].filter(Boolean).join(" · ");
   const holiday = model.roster(date).some((d) => d.status === "holiday");
   if (holiday) root.append(notice("", "info", "Holiday: coverage is provided by the CRNAs."));
@@ -38,8 +41,10 @@ export function renderTonight(ctx) {
   if (dl) {
     const mdas = new Map();
     const add = (name, where) => {
-      const key = String(name).replace(/\([^)]*\)/g, "").trim();
-      if (key) mdas.set(key, [...new Set([...(mdas.get(key) || []), where])]);
+      for (const part of String(name).split("/")) {
+        const key = part.replace(/\([^)]*\)/g, "").trim();
+        if (key) mdas.set(key, [...new Set([...(mdas.get(key) || []), where])]);
+      }
     };
     for (const room of dl.rooms) if (room.mda) add(room.mda, room.or);
     for (const p of dl.sheet.procedures || []) if (p.mda && p.count !== "0") add(p.mda, p.name);
@@ -49,9 +54,15 @@ export function renderTonight(ctx) {
     if (mdas.size) {
       root.append(h("section", { class: "card" },
         h("div", { class: "card-pad", style: { paddingBottom: "4px" } }, h("h3", { class: "card-title" }, "Attendings (MDA) today", h("span", { class: "right muted" }, "daily sheet"))),
-        h("ul", { class: "list" }, [...mdas].map(([name, where]) => h("li", { class: "row" },
-          h("div", { class: "avatar" }, name.slice(0, 2).toUpperCase()),
-          h("div", { class: "main" }, h("div", { class: "name" }, name), h("div", { class: "sub" }, where.map((w) => (/^\d+$/.test(w) ? `OR ${w}` : w)).join(", "))))))));
+        h("ul", { class: "list" }, [...mdas].map(([name, where]) => {
+          const staff = model.dir.staff(name);
+          return h("li", { class: "row contact" },
+            h("div", { class: "avatar" }, name.slice(0, 2).toUpperCase()),
+            h("div", { class: "main" },
+              h("div", { class: "name" }, staff?.name || name),
+              h("div", { class: "sub" }, where.map((w) => (/^\d+$/.test(w) ? `OR ${w}` : w)).join(", ")),
+              staff ? h("div", { class: "numrow" }, staff.numbers.map((n) => numberButton(model.dir, n, { compact: true }))) : null));
+        }))));
     }
   } else if (date === addDays(state.today, 1)) {
     root.append(h("p", { class: "disclaimer" }, "Tomorrow's room assignments usually come out this evening; attendings show up here once they're posted."));

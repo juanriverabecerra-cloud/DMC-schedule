@@ -320,3 +320,33 @@ table.edit input.bad { border-color: var(--warn); background: color-mix(in srgb,
   .view { padding-top: 20px; }
   .hero h2 { font-size: 28px; }
 }
+
+/* ---------- calling ---------- */
+.numrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.numbtn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 10px; border: 0; cursor: pointer;
+  font-size: 13.5px; font-weight: 650; color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); white-space: nowrap;
+}
+.numbtn svg { width: 16px; height: 16px; }
+.numbtn small { font-size: 11px; font-weight: 600; color: var(--muted); }
+.numbtn.copy { color: var(--muted); background: var(--surface-2); }
+.numbtn.compact { height: 30px; padding: 0 10px; font-size: 13px; }
+.chip.callchip { --c: var(--accent); text-decoration: none; border: 0; cursor: pointer; }
+.chip.callchip.muted { --c: var(--muted); }
+.chip.callchip svg { width: 13px; height: 13px; }
+.callchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.roomgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+.roomtile {
+  border: 0; border-radius: 12px; padding: 8px 4px 7px; min-height: 62px; cursor: pointer; text-decoration: none; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent);
+}
+.roomtile b { font-size: 18px; line-height: 1; }
+.roomtile span { font-size: 10.5px; font-weight: 650; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 3px; }
+.roomtile i { position: absolute; top: 4px; right: 6px; font-size: 9px; font-style: normal; color: var(--faint); font-weight: 700; text-transform: uppercase; }
+.roomtile.ext { background: var(--surface-2); color: var(--text); }
+details.card.group > summary { list-style: none; cursor: pointer; }
+details.card.group > summary::-webkit-details-marker { display: none; }
+details.card.group[open] > summary { border-bottom: 1px solid var(--border); }
+.row.contact { align-items: flex-start; }
+.row.contact .avatar { margin-top: 2px; }

@@ -3,6 +3,7 @@
 import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, mergeSettings } from "./codes.js";
 import { dow, monthKey, parts, addMonths } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
+import { createDirectory } from "./directory.js";
 
 const VAC_RE = /^vac(ation)?\b/i;
 const OFF_RE = /^(loa|off)\b/i;
@@ -16,6 +17,7 @@ export const ROLE_WORDS = {
   "board runner": "BD",
 };
 export const roleWord = (name) => ROLE_WORDS[String(name ?? "").trim().toLowerCase()] || null;
+const KEEP_POST = new Set(Object.values(ROLE_WORDS));
 
 export const BOARD_ORDER = [
   "Harper Main OR", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
@@ -255,6 +257,13 @@ export function createModel(ds) {
     const info = baseDay(pid, date);
     const dl = daily(date);
     if (dl) info.roles = dl.roles.get(pid) || [];
+    // Someone whose own post is PAT (or NORA / board runner) and who is also pulled for breaks
+    // stays in that post; the breaks are an extra duty, listed after it.
+    const post = info.status === "work" && (KEEP_POST.has(info.code) || info.roles.some((r) => r.kind === "pat"));
+    if (post && info.roles.some((r) => r.kind === "breaks") && info.roles.every((r) => r.kind === "breaks" || r.kind === "pat")) {
+      info.alsoBreaks = true;
+      info.roles = [...info.roles.filter((r) => r.kind === "pat"), ...info.roles.filter((r) => r.kind === "breaks")];
+    }
     cache.set(key, info);
     return info;
   }
@@ -270,6 +279,7 @@ export function createModel(ds) {
     if (d.status === "unknown") return "No schedule";
     if (d.call === "NF") return "Night float";
     if (d.call === "H1" || d.call === "H2") return "On call";
+    if (d.alsoBreaks) return d.roles.some((r) => r.kind === "pat") ? "PAT" : (BOARD_ORDER.includes(d.group) ? d.group : "Other");
     if (d.roles.some((r) => r.kind === "room" || r.kind === "breaks" || r.kind === "ja")) return "Harper Main OR";
     if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
     if (d.roles.some((r) => r.kind === "ob")) return "Obstetrics";
@@ -304,8 +314,10 @@ export function createModel(ds) {
     return Object.entries(m.coverage).filter(([, v]) => v[d]).map(([label, v]) => ({ label, value: v[d] }));
   }
 
+  // Digits of the resident's first dialable number ("" if none).
   function phone(pid) {
-    return ds.directory?.people?.[pid]?.phone || "";
+    const r = api.dir.resident(pid);
+    return r?.primary ? api.dir.dial(r.primary) : "";
   }
 
   function name(pid) {
@@ -324,16 +336,23 @@ export function createModel(ds) {
     return [];
   }
 
-  return {
+  const api = {
     ds, S, people, byId, months, match,
     person: (id) => byId.get(id),
     name, phone, rotationFor, day, roster, daily, tonight, boardGroup, holidays, coverageNeeded, hasCall, internPat,
     site: (id) => SITES[id] || null,
   };
+  api.dir = createDirectory(ds, api);
+  return api;
 }
 
 // A short line describing what someone is doing, using the daily sheet when there is one.
 export function headline(d) {
+  if (d.alsoBreaks) {
+    const br = d.roles.find((r) => r.kind === "breaks");
+    const post = d.roles.some((r) => r.kind === "pat") ? "PAT clinic" : d.label;
+    return `${post} · breaks OR ${br.rooms.map((x) => x.or).join(", ")}`;
+  }
   const room = d.roles.find((r) => r.kind === "room");
   if (room) return `OR ${room.or}${room.room.surgeon ? ` · ${room.room.surgeon}` : ""}`;
   const br = d.roles.find((r) => r.kind === "breaks");

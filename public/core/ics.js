@@ -4,6 +4,7 @@
 import { addDays, range, fmtRange, fmtDate, monthDates, addMonths, monthKey } from "./dates.js";
 import { SITES } from "./codes.js";
 import { headline } from "./model.js";
+import { prettyDigits } from "./directory.js";
 
 const VTIMEZONE = [
   "BEGIN:VTIMEZONE", "TZID:America/Detroit",
@@ -55,12 +56,27 @@ function runs(dates) {
 
 function withPhone(model, pid) {
   const ph = model.phone(pid);
-  return ph ? `${model.name(pid)} (${ph})` : model.name(pid);
+  return ph ? `${model.name(pid)} (${prettyDigits(ph)})` : model.name(pid);
 }
 
-function roomLine(r) {
-  const bits = [r.surgeon, r.time, r.cases ? `${r.cases} case${r.cases === "1" ? "" : "s"}` : "", r.mda ? `MDA ${r.mda}` : ""].filter(Boolean);
-  return `OR ${r.or}${bits.length ? ` – ${bits.join(", ")}` : ""}`;
+// "(313) 745-2594", "ext 37856" or "" for a list of directory numbers.
+function phoneOf(model, numbers) {
+  const num = model.dir.primary(numbers) || numbers?.[0];
+  if (!num) return "";
+  const dial = model.dir.dial(num);
+  return dial ? prettyDigits(dial) : num.kind === "pager" ? `pager ${num.value}` : `ext ${num.value}`;
+}
+
+function roomLine(model, r) {
+  const rm = model.dir.room(r.or);
+  const mdas = String(r.mda || "").split("/").map((n) => n.trim()).filter(Boolean).map((n) => {
+    const s = model.dir.staff(n);
+    const ph = s ? phoneOf(model, s.numbers) : "";
+    return ph ? `${n} ${ph}` : n;
+  }).join(" / ");
+  const bits = [r.surgeon, r.time, r.cases ? `${r.cases} case${r.cases === "1" ? "" : "s"}` : "", mdas ? `MDA ${mdas}` : ""].filter(Boolean);
+  const roomPhone = rm ? phoneOf(model, rm.numbers) : "";
+  return `OR ${r.or}${roomPhone ? ` (${roomPhone})` : ""}${bits.length ? ` – ${bits.join(", ")}` : ""}`;
 }
 
 export function dayDescription(model, d, appUrl) {
@@ -73,13 +89,13 @@ export function dayDescription(model, d, appUrl) {
   const names = (list) => list.map((x) => (x.id ? withPhone(model, x.id) : x.name)).join(", ");
   for (const r of d.roles) {
     if (r.kind === "room") {
-      lines.push(`Daily sheet: ${roomLine(r.room)}`);
+      lines.push(`Daily sheet: ${roomLine(model, r.room)}`);
       if (r.with.length) lines.push(`With: ${names(r.with)}`);
       if (r.room.jaIds.length) lines.push(`JA: ${names(r.room.jaIds)}`);
       if (r.room.breakIds.length) lines.push(`Breaks: ${names(r.room.breakIds)}`);
     } else if (r.kind === "breaks" || r.kind === "ja") {
       lines.push(`Daily sheet: ${r.kind === "ja" ? "Junior attending" : "Breaks"} for`);
-      for (const room of r.rooms) lines.push(`  ${roomLine(room)}${room.crna ? " (CRNA)" : room.staffIds.length ? ` (${names(room.staffIds)})` : ""}`);
+      for (const room of r.rooms) lines.push(`  ${roomLine(model, room)}${room.crna ? " (CRNA)" : room.staffIds.length ? ` (${names(room.staffIds)})` : ""}`);
     } else if (r.kind === "opsc") lines.push(`Daily sheet: OPSC${r.mdas?.length ? ` – MDAs ${r.mdas.join(", ")}` : ""}`);
     else if (r.kind === "ob") lines.push(`Daily sheet: OB${r.mda ? ` – MDA ${r.mda}` : ""}`);
     else if (r.kind === "pat") lines.push("Daily sheet: PAT");
