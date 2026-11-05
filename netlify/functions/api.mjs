@@ -98,12 +98,22 @@ export default async function handler(req) {
 
     const daily = path.match(/^\/api\/daily\/(\d{4}-\d{2}-\d{2})$/);
     if (daily && method === "PUT") {
+      const date = daily[1];
       const ds = await loadDataset(st);
       const body = await req.json();
-      const hasPhoto = !!(await st.getBytes(`photo/${daily[1]}`));
-      const saved = setDaily(ds, daily[1], { ...body, hasPhoto });
+      // A photo read from the inbox is filed under the date it was saved for.
+      if (/^[\w-]{6,64}$/.test(body.photo || "")) {
+        const img = await st.getBytes(`inbox/${body.photo}`);
+        if (img) {
+          await st.setBytes(`photo/${date}`, img.data, img.contentType);
+          await st.delete(`inbox/${body.photo}`);
+          await st.delete(`job/${body.photo}`);
+        }
+      }
+      const hasPhoto = !!(await st.getBytes(`photo/${date}`));
+      const { daily: saved, changes } = setDaily(ds, date, { ...body, hasPhoto });
       await st.setJSON("dataset", ds);
-      return json({ ok: true, daily: saved, updatedAt: ds.updatedAt });
+      return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt });
     }
     if (daily && method === "DELETE") {
       const ds = await loadDataset(st);
@@ -113,23 +123,24 @@ export default async function handler(req) {
       return json({ ok: true, updatedAt: ds.updatedAt });
     }
 
-    if (photo && method === "POST") {
-      const date = photo[1];
+    // Daily-sheet photo: no date needed up front; the reader finds the date printed on the sheet.
+    if (path === "/api/photo" && method === "POST") {
       const type = req.headers.get("content-type") || "image/jpeg";
       if (!/^image\/(jpeg|png|webp|gif)$/.test(type)) return fail(415, "Upload a JPEG, PNG, WebP or GIF image");
-      await st.setBytes(`photo/${date}`, await bytesOf(req), type);
-      if (!configured().ai) return json({ ok: true, queued: false, reason: "ANTHROPIC_API_KEY is not set, so the photo was saved but not read." });
-      await st.setJSON(`job/${date}`, { status: "queued", queuedAt: new Date().toISOString() });
+      const id = `${todayLocal()}-${crypto.randomUUID().slice(0, 8)}`;
+      await st.setBytes(`inbox/${id}`, await bytesOf(req), type);
+      if (!configured().ai) return json({ ok: true, id, queued: false });
+      await st.setJSON(`job/${id}`, { status: "queued", queuedAt: new Date().toISOString() });
       const r = await fetch(`${origin(req)}/bg/parse-photo`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-admin-key": req.headers.get("x-admin-key") },
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ id }),
       });
-      if (!r.ok && r.status !== 202) return json({ ok: true, queued: false, reason: `Could not start the reader (${r.status}).` });
-      return json({ ok: true, queued: true });
+      if (!r.ok && r.status !== 202) return json({ ok: true, id, queued: false });
+      return json({ ok: true, id, queued: true });
     }
 
-    const job = path.match(/^\/api\/job\/(\d{4}-\d{2}-\d{2})$/);
+    const job = path.match(/^\/api\/job\/([\w-]{6,64})$/);
     if (job && method === "GET") {
       return json((await st.getJSON(`job/${job[1]}`)) || { status: "none" });
     }

@@ -1,5 +1,5 @@
 import { h, icon, card, avatar, classPill, contactActions, dayChips, emptyState, telHref, smsHref } from "../ui.js";
-import { monthKey, monthDates, addMonths, fmtMonth, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
+import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
 import { hoursReport } from "../../core/hours.js";
@@ -72,7 +72,7 @@ export function renderPerson(ctx, pid) {
   ));
 
   root.append(h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
-    h("div", { class: "eyebrow" }, state.date === state.today ? "Today" : state.date),
+    h("div", { class: "eyebrow" }, state.date === state.today ? `Today · ${fmtDate(state.date, "long")}` : fmtDate(state.date, "long")),
     h("h2", { style: { fontSize: "20px" } }, headline(d)),
     h("div", { class: "subtitle" }, [d.rotation || d.label, SITES[d.site]?.short].filter(Boolean).join(" · ")),
     h("div", { class: "chips" }, dayChips(d))));

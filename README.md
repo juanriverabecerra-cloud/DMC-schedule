@@ -39,7 +39,10 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
 
 ## Every day / every month
 
-- **Daily**: save the WhatsApp photo, then **Admin → Daily OR sheet → Read a photo**. Check what Claude read (names that don't match a resident are outlined) and **Save**. Without an API key, use **Enter by hand**.
+- **Daily**: the sheet is posted the evening before. Save the WhatsApp photo, then **Admin → Daily OR sheet → Read a photo**. You don't pick a date: the app files the sheet under the date printed on it, or tomorrow if no date can be read, and you can change it in the review screen. Check what Claude read and **Save**. Without an API key, use **Enter by hand**.
+  - Resident names are always saved in the reference-list (roster) spelling: misspellings and initials are fixed on save, and the app tells you what it changed.
+  - A role written in a name cell, such as "PAT" in the Breaks column, becomes that day's PAT resident: the name in the sheet's PAT box, or else whoever the call sheet has on PAT (including someone covering PAT).
+  - Once tomorrow's sheet is in, everyone's Today screen shows a "Tomorrow" card with their room, start time and MDA.
 - **Monthly**: upload the call schedule `.xlsx` when it's emailed. Re-uploading a month replaces it.
 - **Yearly**: upload the new rotations file in June.
 

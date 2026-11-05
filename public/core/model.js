@@ -8,6 +8,15 @@ const VAC_RE = /^vac(ation)?\b/i;
 const OFF_RE = /^(loa|off)\b/i;
 const CALL_SET = new Set(["H1", "H2", "NF", "10-7"]);
 
+// Role words written in a name cell of the daily sheet (e.g. Breaks: "PAT") mean whoever
+// holds that role that day.
+export const ROLE_WORDS = {
+  "pat": "PAT", "pat resident": "PAT",
+  "nora": "NORA", "nora resident": "NORA",
+  "board runner": "BD",
+};
+export const roleWord = (name) => ROLE_WORDS[String(name ?? "").trim().toLowerCase()] || null;
+
 export const BOARD_ORDER = [
   "Harper Main OR", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
   "Basic Anesthesia", "Board Runner", "Junior Attending", "9-ICU", "Obstetrics", "VA", "Pediatrics", "Regional",
@@ -182,10 +191,29 @@ export function createModel(ds) {
     const roles = new Map();
     const unmatched = [];
     const add = (id, role) => { if (!roles.has(id)) roles.set(id, []); roles.get(id).push(role); };
-    const resolve = (text, where) => splitNames(text).filter((n) => !isCrnaMark(n)).map((name) => {
+    // Who holds a role today: for PAT, the sheet's own PAT box first, then the call sheet.
+    const roleIds = (code) => {
+      if (code === "PAT") {
+        const listed = (sheet.pat || []).flatMap(splitNames).filter((n) => !roleWord(n))
+          .map((n) => match(n, { prefer })).filter((id) => id && byId.get(id)?.cls !== "PGY-1");
+        if (listed.length) return [...new Set(listed)];
+      }
+      return people.filter((p) => {
+        if (p.cls === "PGY-1") return false;
+        const b = baseDay(p.id, date);
+        return b.status === "work" && b.code === code;
+      }).map((p) => p.id);
+    };
+    const resolve = (text, where) => splitNames(text).filter((n) => !isCrnaMark(n)).flatMap((name) => {
+      const role = roleWord(name);
+      if (role) {
+        const ids = roleIds(role);
+        if (!ids.length) { unmatched.push({ name, where }); return [{ name, id: null }]; }
+        return ids.map((id) => ({ name, id, role }));
+      }
       const id = match(name, { prefer });
       if (!id) unmatched.push({ name, where });
-      return { name, id };
+      return [{ name, id }];
     });
 
     const rooms = sheet.rooms.map((r) => ({

@@ -70,16 +70,16 @@ export function dayDescription(model, d, appUrl) {
   if (d.late) lines.push("Late resident: finish at your site, then help at Harper until 6p.");
   if (d.covering) lines.push(`Covering: ${d.raw}`);
   if (d.changed) lines.push("Recently changed on the call sheet.");
+  const names = (list) => list.map((x) => (x.id ? withPhone(model, x.id) : x.name)).join(", ");
   for (const r of d.roles) {
     if (r.kind === "room") {
       lines.push(`Daily sheet: ${roomLine(r.room)}`);
-      const others = r.with.map((x) => x.name);
-      if (others.length) lines.push(`With: ${others.join(", ")}`);
-      if (r.room.ja) lines.push(`JA: ${r.room.ja}`);
-      if (r.room.breaks) lines.push(`Breaks: ${r.room.breaks}`);
+      if (r.with.length) lines.push(`With: ${names(r.with)}`);
+      if (r.room.jaIds.length) lines.push(`JA: ${names(r.room.jaIds)}`);
+      if (r.room.breakIds.length) lines.push(`Breaks: ${names(r.room.breakIds)}`);
     } else if (r.kind === "breaks" || r.kind === "ja") {
       lines.push(`Daily sheet: ${r.kind === "ja" ? "Junior attending" : "Breaks"} for`);
-      for (const room of r.rooms) lines.push(`  ${roomLine(room)}${room.staff && !/^x$/i.test(room.staff) ? ` (${room.staff})` : room.crna ? " (CRNA)" : ""}`);
+      for (const room of r.rooms) lines.push(`  ${roomLine(room)}${room.crna ? " (CRNA)" : room.staffIds.length ? ` (${names(room.staffIds)})` : ""}`);
     } else if (r.kind === "opsc") lines.push(`Daily sheet: OPSC${r.mdas?.length ? ` – MDAs ${r.mdas.join(", ")}` : ""}`);
     else if (r.kind === "ob") lines.push(`Daily sheet: OB${r.mda ? ` – MDA ${r.mda}` : ""}`);
     else if (r.kind === "pat") lines.push("Daily sheet: PAT");

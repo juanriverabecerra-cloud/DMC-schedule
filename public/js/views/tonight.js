@@ -53,8 +53,8 @@ export function renderTonight(ctx) {
           h("div", { class: "avatar" }, name.slice(0, 2).toUpperCase()),
           h("div", { class: "main" }, h("div", { class: "name" }, name), h("div", { class: "sub" }, where.map((w) => (/^\d+$/.test(w) ? `OR ${w}` : w)).join(", "))))))));
     }
-  } else if (date >= state.today) {
-    root.append(h("p", { class: "disclaimer" }, "The daily OR sheet for this day isn't in yet; attendings and room details appear once it's uploaded."));
+  } else if (date === addDays(state.today, 1)) {
+    root.append(h("p", { class: "disclaimer" }, "Tomorrow's room assignments usually come out this evening; attendings show up here once they're posted."));
   }
 
   if (wd === 5 || wd === 6) root.append(h("p", { class: "disclaimer" }, "Weekend: anyone not listed is off unless the call sheet says otherwise."));

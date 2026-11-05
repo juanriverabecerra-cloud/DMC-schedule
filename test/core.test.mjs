@@ -47,6 +47,8 @@ function dataset() {
     "lee-sam": { rotation: "VA", days: { 1: { t: "NF" }, 2: { t: "NF" }, 3: { t: "NF" }, 7: { t: "H1" }, 9: { t: "PC", b: 1 } } },
     "leed-ana": { rotation: "Cardiac", days: { 2: { t: "HC", f: "FF00FF" }, 3: { t: "Vac" }, 4: { f: "FAE2D5" } } },
     "ortiz-paul": { rotation: "Elective", days: { 1: { t: "10-7" }, 2: { t: "10-7" } } },
+    "van-tran-kim": { rotation: "PAT", days: { 3: { t: "PAT" }, 4: { t: "Vac" }, 5: { t: "Vac" } } },
+    "garcia-lopez-maria": { rotation: "Neuro", days: { 5: { t: "PAT", b: 1 } } },
   };
   return {
     people,
@@ -128,4 +130,36 @@ test("calendar feed is valid iCalendar with folded lines", () => {
   assert.ok(ics.includes("DTEND;TZID=America/Detroit:20261107T060000"));
   assert.ok(ics.includes("SUMMARY:Rotation: OPSC"));
   for (const line of ics.split("\r\n")) assert.ok(new TextEncoder().encode(line).length <= 75, line);
+});
+
+test("\"PAT\" in a name cell becomes that day's PAT resident", () => {
+  const ds = dataset();
+  // 11/3: the call sheet has Van Tran on PAT; the sheet's PAT box is empty.
+  setDaily(ds, "2026-11-03", { rooms: [{ or: "5", surgeon: "Surgeon A", staff: "Doe", breaks: "PAT" }] });
+  // 11/5: Van Tran is on vacation and Garcia-Lopez covers PAT (bold on the call sheet).
+  setDaily(ds, "2026-11-05", { rooms: [{ or: "7", surgeon: "Surgeon B", staff: "Lee", breaks: "PAT" }] });
+  const m = createModel(ds);
+  assert.equal(m.daily("2026-11-03").rooms[0].breakIds[0].id, "van-tran-kim");
+  assert.equal(m.daily("2026-11-05").rooms[0].breakIds[0].id, "garcia-lopez-maria");
+  assert.equal(m.day("garcia-lopez-maria", "2026-11-05").roles[0].kind, "breaks");
+});
+
+test("the sheet's own PAT box wins over the call sheet", () => {
+  const ds = dataset();
+  setDaily(ds, "2026-11-03", { rooms: [{ or: "5", staff: "Doe", breaks: "PAT" }], pat: ["Ortiz"] });
+  assert.equal(createModel(ds).daily("2026-11-03").rooms[0].breakIds[0].id, "ortiz-paul");
+});
+
+test("saved sheets use reference-list spelling and report what changed", () => {
+  const ds = dataset();
+  const { daily, changes } = setDaily(ds, "2026-11-03", {
+    rooms: [{ or: "5", surgeon: "Surgeon A", staff: "Garsia/Leed", ja: "PO", breaks: "PAT" }, { or: "6", staff: "X" }],
+    ob: { mda: "Attending C", residents: ["Outside Resident"] },
+  });
+  assert.equal(daily.rooms[0].staff, "Garcia-Lopez/Leed");
+  assert.equal(daily.rooms[0].ja, "Ortiz");
+  assert.equal(daily.rooms[0].breaks, "Van Tran");
+  assert.equal(daily.rooms[1].staff, "X");
+  assert.deepEqual(daily.ob.residents, ["Outside Resident"]);
+  assert.deepEqual(changes.map((c) => `${c.from}>${c.to}`).sort(), ["Garsia>Garcia-Lopez", "PAT>Van Tran", "PO>Ortiz"]);
 });

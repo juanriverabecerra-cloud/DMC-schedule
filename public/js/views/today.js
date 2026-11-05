@@ -114,10 +114,25 @@ export function renderToday(ctx) {
     d.call === "24" ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "24-hour call tonight (6a–6a), same as H1.") : null,
   ));
 
+  const tomorrow = addDays(state.today, 1);
   const rooms = assignmentList(ctx, d);
-  if (rooms.length) root.append(card("Today's OR sheet", h("ul", { class: "list" }, rooms), { pad: false }));
-  else if (model.hasCall(state.date) && d.status === "work" && !model.daily(state.date) && state.date >= state.today && ["harper", "opsc", "hutzel"].includes(d.site)) {
-    root.append(h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "The daily OR sheet for this day isn't in yet."));
+  if (rooms.length) root.append(card(state.date === tomorrow ? "Tomorrow's OR sheet" : "OR sheet", h("ul", { class: "list" }, rooms), { pad: false }));
+  else if (state.date === tomorrow && !model.daily(tomorrow) && d.status === "work" && ["harper", "opsc", "hutzel"].includes(d.site)) {
+    root.append(h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "Tomorrow's room assignments usually come out this evening."));
+  }
+
+  // The sheet is posted the evening before: surface tomorrow's assignment while looking at today.
+  if (state.date === state.today && model.daily(tomorrow)) {
+    const t = model.day(pid, tomorrow);
+    if (t.roles.length) {
+      const first = t.roles.find((r) => r.room || r.rooms);
+      const room = first?.room || first?.rooms?.[0];
+      root.append(h("section", { class: "card hero", vars: { "--rot": t.color }, onclick: () => ctx.setDate(tomorrow), style: { cursor: "pointer" } },
+        h("div", { class: "eyebrow" }, `Tomorrow · ${fmtDate(tomorrow, "long")}`),
+        h("h2", { style: { fontSize: "20px" } }, headline(t)),
+        room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.mda ? `MDA ${room.mda}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ")) : null,
+        h("div", { class: "chips" }, dayChips(t, { withTime: false }))));
+    }
   }
 
   const mates = teammates(ctx, d);

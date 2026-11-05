@@ -2,7 +2,8 @@
 // phone directory, people, settings and backups. Every call sends the admin key.
 import { h, icon, card, toast, notice, openSheet, avatar, classPill } from "../ui.js";
 import { api, local } from "../api.js";
-import { todayLocal, addDays, fmtDate, fmtTime, DOW_SHORT } from "../../core/dates.js";
+import { todayLocal, addDays, diffDays, fmtDate, fmtTime, DOW_SHORT } from "../../core/dates.js";
+import { roleWord } from "../../core/model.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
 import { DEFAULT_SETTINGS, FILL_TAG_LABELS, mergeSettings } from "../../core/codes.js";
 
@@ -71,11 +72,26 @@ function blankDaily() {
   return { rooms: [], opsc: { rooms: "", mdas: [], residents: [] }, procedures: [], meyers: { rooms: "", mda: "" }, pat: [], ob: { mda: "", residents: [] }, night: [], notes: [], other: [], uncertain: [] };
 }
 
-function openEditor(ctx, date, initial, { source = "manual", onSaved } = {}) {
+// Sheets are posted the day before they apply: use the date printed on the sheet when it's
+// plausible, otherwise tomorrow.
+function sheetDate(printed, today) {
+  const ok = /^\d{4}-\d{2}-\d{2}$/.test(printed || "") && diffDays(today, printed) >= -3 && diffDays(today, printed) <= 10;
+  return ok ? { date: printed, fromSheet: true } : { date: addDays(today, 1), fromSheet: false };
+}
+
+function openEditor(ctx, initialDate, initial, { source = "manual", photoId = null, dateNote = "", onSaved } = {}) {
+  let date = initialDate;
   const data = JSON.parse(JSON.stringify({ ...blankDaily(), ...initial }));
   if (!data.rooms.length) data.rooms = Array.from({ length: 6 }, () => ({ or: "", surgeon: "", time: "", cases: "", mda: "", staff: "", ja: "", breaks: "" }));
-  const match = createMatcher(ctx.model.people);
-  const nameOk = (text) => !text || isCrnaMark(text) || splitNames(text).every((n) => /resident|rotator/i.test(n) || match(n));
+  const match = createMatcher(ctx.state.model.people);
+  const nameOk = (text) => !text || isCrnaMark(text) || splitNames(text).every((n) => roleWord(n) || /resident|rotator/i.test(n) || match(n));
+
+  const dateHint = h("p", { class: "tiny muted", style: { margin: "6px 0 0" } });
+  const showHint = () => {
+    dateHint.textContent = [dateNote, ctx.state.model.ds.daily?.[date] ? "Saving replaces the sheet already saved for this day." : ""].filter(Boolean).join(" ");
+  };
+  const dateInput = h("input", { class: "input", type: "date", value: date, "aria-label": "Sheet date", onchange: (e) => { if (e.target.value) { date = e.target.value; showHint(); } } });
+  showHint();
 
   const roomsHolder = h("div");
   function drawRooms() {
@@ -96,19 +112,20 @@ function openEditor(ctx, date, initial, { source = "manual", onSaved } = {}) {
   const field = (label, value, onInput, placeholder = "") => h("label", { class: "field" }, h("span", null, label),
     h("input", { class: "input", value, placeholder, oninput: (e) => onInput(e.target.value) }));
 
-  const procText = h("textarea", { class: "input", style: { minHeight: "80px" }, placeholder: "Cath lab | 1 | Clark" },
+  const procText = h("textarea", { class: "input", style: { minHeight: "80px" }, placeholder: "Cath lab | 1 | Name" },
     data.procedures.map((p) => `${p.name} | ${p.count} | ${p.mda}`).join("\n"));
   const notesText = h("textarea", { class: "input", style: { minHeight: "70px" } }, data.notes.join("\n"));
   const saveBtn = h("button", { class: "btn primary block" }, icon("check"), "Save daily sheet");
 
   const body = h("div",
     null,
+    h("label", { class: "field" }, h("span", null, "Sheet date"), dateInput, dateHint),
     data.uncertain?.length ? notice("warn", "alert", h("b", null, "Double-check: "), data.uncertain.join("; ")) : null,
-    source === "photo" ? notice("", "sparkle", "Read from the photo by Claude. Check names against the photo before saving; names that don't match a resident are outlined.") : null,
+    source === "photo" ? notice("", "sparkle", "Read from the photo by Claude. Names are matched to the resident list when you save; anything outlined doesn't match a resident yet.") : null,
     h("h4", { class: "card-title" }, "Operating rooms"),
     roomsHolder,
     h("button", { class: "btn sm", style: { margin: "6px 0 14px" }, onclick: () => { data.rooms.push({ or: "", surgeon: "", time: "", cases: "", mda: "", staff: "", ja: "", breaks: "" }); drawRooms(); } }, "+ Add room"),
-    h("p", { class: "tiny muted", style: { marginTop: "-8px" } }, "Resident/CRNA: \"X\" means a CRNA room; \"A/B\" means two residents. Separate list entries below with commas."),
+    h("p", { class: "tiny muted", style: { marginTop: "-8px" } }, "Resident/CRNA: \"X\" means a CRNA room; \"A/B\" means two residents. \"PAT\" in a name cell becomes that day's PAT resident. Separate list entries below with commas."),
     h("div", { class: "grid2" },
       field("OPSC rooms", data.opsc.rooms, (v) => { data.opsc.rooms = v; }),
       field("OPSC MDAs", data.opsc.mdas.join(", "), (v) => { data.opsc.mdas = list(v); })),
@@ -126,15 +143,16 @@ function openEditor(ctx, date, initial, { source = "manual", onSaved } = {}) {
     saveBtn,
   );
 
-  const close = openSheet(`Daily sheet · ${fmtDate(date)}`, body);
+  const close = openSheet("Daily OR sheet", body);
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
     data.procedures = procText.value.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((x) => x[0]).map(([name, count = "", mda = ""]) => ({ name, count, mda }));
     data.notes = notesText.value.split("\n").map((x) => x.trim()).filter(Boolean);
     data.source = source;
     try {
-      await api(`/api/daily/${date}`, { method: "PUT", body: data });
-      toast("Daily sheet saved");
+      const res = await api(`/api/daily/${date}`, { method: "PUT", body: { ...data, photo: photoId } });
+      const fixes = [...new Set((res.changes || []).map((c) => `${c.from} → ${c.to}`))];
+      toast(`Saved for ${fmtDate(date)}${fixes.length ? ` · ${fixes.slice(0, 3).join(", ")}${fixes.length > 3 ? "…" : ""}` : ""}`);
       close();
       await ctx.reload();
       onSaved?.();
@@ -146,62 +164,76 @@ function openEditor(ctx, date, initial, { source = "manual", onSaved } = {}) {
 }
 
 function dailySection(ctx, status) {
-  const { state } = ctx;
-  let date = state.adminDate || todayLocal();
   const holder = h("div");
   const progress = h("div");
-  const dateInput = h("input", { class: "input", type: "date", value: date, onchange: (e) => { date = e.target.value; state.adminDate = date; draw(); } });
+  const spinner = (text) => h("div", { style: { display: "flex", gap: "10px", alignItems: "center", marginTop: "10px" } }, h("div", { class: "spinner" }), text);
+  const daily = (date) => ctx.state.model.ds.daily?.[date];
 
   async function readPhoto(file) {
-    progress.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), "Uploading photo…"));
+    const tomorrow = addDays(todayLocal(), 1);
+    progress.replaceChildren(spinner("Uploading photo…"));
+    let id = null;
     try {
       const blob = await downscale(file);
-      const res = await api(`/api/photo/${date}`, { method: "POST", body: blob, headers: { "content-type": "image/jpeg" } });
+      const res = await api("/api/photo", { method: "POST", body: blob, headers: { "content-type": "image/jpeg" } });
+      id = res.id;
       if (!res.queued) {
-        progress.replaceChildren(notice("warn", "info", res.reason || "Photo saved. Enter the sheet by hand."));
-        openEditor(ctx, date, ctx.model.ds.daily?.[date] || {}, { source: "manual", onSaved: draw });
+        progress.replaceChildren();
+        openEditor(ctx, tomorrow, daily(tomorrow) || {}, { photoId: id, dateNote: "Photo attached. Check the date and type in the sheet.", onSaved: draw });
         return;
       }
       const started = Date.now();
       for (;;) {
         await sleep(3000);
         const secs = Math.round((Date.now() - started) / 1000);
-        progress.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), `Reading the sheet with Claude… ${secs}s (usually under a minute)`));
-        const job = await api(`/api/job/${date}`);
+        progress.replaceChildren(spinner(`Reading the sheet with Claude… ${secs}s (usually under a minute)`));
+        const job = await api(`/api/job/${id}`);
         if (job.status === "done") {
           progress.replaceChildren();
-          openEditor(ctx, date, job.daily, { source: "photo", onSaved: draw });
+          const { date, fromSheet } = sheetDate(job.daily.date, todayLocal());
+          openEditor(ctx, date, job.daily, {
+            source: "photo", photoId: id, onSaved: draw,
+            dateNote: fromSheet ? "Date read from the sheet." : "No date could be read on the sheet, so it's set to tomorrow.",
+          });
           return;
         }
         if (job.status === "error") throw new Error(job.error);
-        if (Date.now() - started > 5 * 60 * 1000) throw new Error("The reader is taking too long. Try again, or enter the sheet by hand.");
+        if (Date.now() - started > 5 * 60 * 1000) throw new Error("The reader is taking too long.");
       }
     } catch (err) {
-      progress.replaceChildren(notice("gap", "alert", `Couldn't read the photo: ${err.message}`));
+      progress.replaceChildren(notice("gap", "alert", `Couldn't read the photo: ${err.message} `,
+        id ? h("a", { href: "#", onclick: (e) => { e.preventDefault(); openEditor(ctx, tomorrow, daily(tomorrow) || {}, { photoId: id, onSaved: draw }); } }, "Type it in instead") : null));
     }
   }
 
-  function draw() {
-    const existing = ctx.model.ds.daily?.[date];
-    holder.replaceChildren(
-      h("div", { style: { display: "flex", gap: "8px", marginBottom: "10px", flexWrap: "wrap" } },
-        h("div", { style: { flex: "1 1 160px", minWidth: 0 } }, dateInput),
-        h("button", { class: "btn sm", style: { height: "46px" }, onclick: () => { date = todayLocal(); dateInput.value = date; draw(); } }, "Today"),
-        h("button", { class: "btn sm", style: { height: "46px" }, onclick: () => { date = addDays(todayLocal(), 1); dateInput.value = date; draw(); } }, "Tomorrow")),
-      existing
-        ? notice("", "check", h("b", null, `${DOW_SHORT[new Date(`${date}T12:00:00`).getDay()]} ${date}: `), `${existing.rooms.length} rooms saved${existing.source === "photo" ? " (from photo)" : ""}.`)
-        : h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "No daily sheet saved for this date."),
-      h("div", { class: "btnrow" },
-        fileButton(status?.configured?.ai ? "Read a photo" : "Upload photo", "camera", "image/*", readPhoto, { primary: true }),
-        h("button", { class: "btn", onclick: () => openEditor(ctx, date, existing || {}, { onSaved: draw }) }, icon("edit"), existing ? "Edit" : "Enter by hand")),
-      status && !status.configured?.ai ? h("p", { class: "disclaimer" }, "Photo reading is off: add ANTHROPIC_API_KEY in Netlify to turn it on. Photos are still saved so residents can view them.") : null,
-      existing ? h("button", { class: "btn sm danger", style: { marginTop: "10px" }, onclick: async () => {
-        if (!confirm(`Delete the daily sheet for ${date}?`)) return;
+  function dayRow(date, label) {
+    const existing = daily(date);
+    return h("li", { class: "row", style: { padding: "8px 0", minHeight: "52px" } },
+      h("div", { class: "main" },
+        h("div", { class: "name" }, `${label} · ${fmtDate(date)}`),
+        h("div", { class: "sub" }, existing ? `${existing.rooms.length} rooms${existing.source === "photo" ? " · from photo" : ""}` : "Not posted yet")),
+      h("button", { class: "btn sm", onclick: () => openEditor(ctx, date, existing || {}, { onSaved: draw }) }, existing ? "Edit" : "Add"),
+      existing ? h("button", { class: "iconbtn", "aria-label": `Delete the sheet for ${date}`, onclick: async () => {
+        if (!confirm(`Delete the daily sheet for ${fmtDate(date)}?`)) return;
         await api(`/api/daily/${date}`, { method: "DELETE" });
         await ctx.reload();
         draw();
-      } }, "Delete this day's sheet") : null,
+      } }, icon("x")) : null);
+  }
+
+  function draw() {
+    const today = todayLocal();
+    const tomorrow = addDays(today, 1);
+    holder.replaceChildren(
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Upload the WhatsApp photo when it's posted. The date comes from the sheet itself, so the evening-before sheet is filed under tomorrow automatically."),
+      h("div", { class: "btnrow" },
+        fileButton(status?.configured?.ai ? "Read a photo" : "Upload photo", "camera", "image/*", readPhoto, { primary: true }),
+        h("button", { class: "btn", onclick: () => openEditor(ctx, tomorrow, daily(tomorrow) || {}, { onSaved: draw }) }, icon("edit"), "Enter by hand")),
       progress,
+      h("ul", { class: "list", style: { marginTop: "10px" } }, dayRow(tomorrow, "Tomorrow"), dayRow(today, "Today")),
+      h("label", { class: "field", style: { marginTop: "8px" } }, h("span", null, "Another day"),
+        h("input", { class: "input", type: "date", onchange: (e) => e.target.value && openEditor(ctx, e.target.value, daily(e.target.value) || {}, { onSaved: draw }) })),
+      status && !status.configured?.ai ? h("p", { class: "disclaimer" }, "Photo reading is off: add ANTHROPIC_API_KEY in Netlify to turn it on. Photos are still attached so residents can view them.") : null,
     );
   }
   draw();
