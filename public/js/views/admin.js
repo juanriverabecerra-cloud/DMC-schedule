@@ -2,7 +2,8 @@
 // phone directory, people, settings and backups. Every call sends the admin key.
 import { h, icon, card, toast, notice, openSheet, avatar, classPill } from "../ui.js";
 import { api, local } from "../api.js";
-import { todayLocal, addDays, diffDays, fmtDate, fmtTime, DOW_SHORT } from "../../core/dates.js";
+import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
+import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
 import { roleWord } from "../../core/model.js";
 import { formatDirectoryText } from "../../core/directory.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
@@ -241,6 +242,192 @@ function dailySection(ctx, status) {
   return card("Daily OR sheet", holder);
 }
 
+// ---------- didactics (monthly conference schedule) ----------
+
+const peopleText = (people) => (people || []).map((p) => [p.name, p.role, p.topic || "", p.start != null && p.start !== "" ? `${clock(typeof p.start === "number" ? p.start : parseClock(p.start))}-${clock(typeof p.end === "number" ? p.end : parseClock(p.end))}` : ""]
+  .join(" | ").replace(/( \| )+$/, "")).join("\n");
+function parsePeople(text) {
+  return text.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((x) => x[0]).map(([name, role = "presenter", topic = "", slot = ""]) => {
+    const [start = "", end = ""] = slot.split(/\s*[-–]\s*/);
+    return { name, role: ROLES[role.toLowerCase()] ? role.toLowerCase() : "presenter", topic, start, end };
+  });
+}
+const toClock = (v) => (typeof v === "number" ? clock(v) : v || "");
+
+function guessMonth() {
+  const t = todayLocal();
+  return Number(t.slice(8, 10)) >= 15 ? addMonths(t.slice(0, 7), 1) : t.slice(0, 7);
+}
+
+function openDidacticsEditor(ctx, initialMonth, initial, { source = "manual", pdfId = null, onSaved } = {}) {
+  let month = initialMonth;
+  const data = JSON.parse(JSON.stringify(initial || {}));
+  data.events = (data.events || []).map((e) => ({ ...e, start: toClock(e.start), end: toClock(e.end),
+    people: (e.people || []).map((p) => ({ ...p, start: toClock(p.start), end: toClock(p.end) })) }));
+  data.zoom = data.zoom || [];
+  const match = createMatcher(ctx.state.model.people);
+
+  const monthHint = h("p", { class: "tiny muted", style: { margin: "6px 0 0" } });
+  const showHint = () => { monthHint.textContent = ctx.state.model.ds.didactics?.[month] ? "Saving replaces this month's schedule." : ""; };
+  const monthInput = h("input", { class: "input", type: "month", value: month, "aria-label": "Month", onchange: (e) => { if (e.target.value) { month = e.target.value; showHint(); } } });
+  showHint();
+  const locInput = h("input", { class: "input", value: data.location || "", placeholder: "Main Auditorium", oninput: (e) => { data.location = e.target.value; } });
+
+  const zoomHolder = h("div");
+  function drawZoom() {
+    zoomHolder.replaceChildren(...data.zoom.map((z, i) => h("div", { class: "card card-pad", style: { margin: "0 0 8px" } },
+      h("div", { class: "grid2" },
+        h("label", { class: "field" }, h("span", null, "Key (wednesday, monday, friday…)"), h("input", { class: "input", value: z.key || "", oninput: (e) => { z.key = e.target.value; } })),
+        h("label", { class: "field" }, h("span", null, "Label"), h("input", { class: "input", value: z.label || "", oninput: (e) => { z.label = e.target.value; } }))),
+      h("label", { class: "field" }, h("span", null, "Zoom link"), h("input", { class: "input", value: z.url || "", oninput: (e) => { z.url = e.target.value; } })),
+      h("div", { class: "grid2" },
+        h("label", { class: "field" }, h("span", null, "Meeting ID"), h("input", { class: "input", value: z.meetingId || "", oninput: (e) => { z.meetingId = e.target.value; } })),
+        h("label", { class: "field" }, h("span", null, "Passcode"), h("input", { class: "input", value: z.passcode || "", oninput: (e) => { z.passcode = e.target.value; } }))),
+      h("label", { class: "field" }, h("span", null, "Dial-in numbers (comma-separated)"), h("input", { class: "input", value: (z.phones || []).join(", "), oninput: (e) => { z.phones = e.target.value.split(",").map((x) => x.trim()).filter(Boolean); } })),
+      h("button", { class: "btn sm danger", onclick: () => { data.zoom.splice(i, 1); drawZoom(); drawEvents(); } }, "Remove this Zoom room"))));
+  }
+
+  const eventsHolder = h("div");
+  function drawEvents() {
+    const zoomKeys = data.zoom.map((z) => z.key).filter(Boolean);
+    eventsHolder.replaceChildren(...data.events.map((e, i) => {
+      const unknown = h("p", { class: "tiny", style: { color: "var(--warn)", margin: "4px 0 0" } });
+      const check = (text) => {
+        const bad = parsePeople(text).filter((p) => OWN_ROLES.has(p.role) && !/^\s*dr\.?\s/i.test(p.name) && !match(cleanPersonName(p.name))).map((p) => p.name);
+        unknown.textContent = bad.length ? `Not on the resident list: ${bad.join(", ")}` : "";
+      };
+      const ppl = h("textarea", { class: "input", style: { minHeight: "70px" }, placeholder: "Doe | examinee | | 06:00-06:30\nDr. Smith | moderator", oninput: (ev) => { e.people = parsePeople(ev.target.value); check(ev.target.value); } }, peopleText(e.people));
+      check(ppl.value);
+      const sel = (opts, value, onChange) => h("select", { class: "input", onchange: (ev) => onChange(ev.target.value) }, opts.map(([v, label]) => h("option", { value: v, selected: v === value }, label)));
+      const summary = `${e.date ? `${DOW_SHORT[new Date(`${e.date}T12:00:00`).getDay()]} ${e.date.slice(5)}` : "New"} · ${e.start || "?"} · ${KINDS[e.kind]?.label || "Session"}${e.title ? ` · ${e.title}` : ""}`;
+      return h("details", { class: "card card-pad edit-event", open: !e.date },
+        h("summary", null, summary),
+        h("div", { class: "grid3" },
+          h("label", { class: "field" }, h("span", null, "Date"), h("input", { class: "input", type: "date", value: e.date || "", oninput: (ev) => { e.date = ev.target.value; } })),
+          h("label", { class: "field" }, h("span", null, "Start"), h("input", { class: "input", type: "time", value: e.start || "", oninput: (ev) => { e.start = ev.target.value; } })),
+          h("label", { class: "field" }, h("span", null, "End"), h("input", { class: "input", type: "time", value: e.end || "", oninput: (ev) => { e.end = ev.target.value; } }))),
+        h("div", { class: "grid2" },
+          h("label", { class: "field" }, h("span", null, "Kind"), sel(Object.entries(KINDS).map(([k, v]) => [k, v.label]), e.kind || "other", (v) => { e.kind = v; })),
+          h("label", { class: "field" }, h("span", null, "Series"), sel(Object.entries(SERIES), e.series || "other", (v) => { e.series = v; }))),
+        h("label", { class: "field" }, h("span", null, "Title"), h("input", { class: "input", value: e.title || "", oninput: (ev) => { e.title = ev.target.value; } })),
+        h("div", { class: "grid2" },
+          h("label", { class: "field" }, h("span", null, "Room (blank = default)"), h("input", { class: "input", value: e.location || "", oninput: (ev) => { e.location = ev.target.value; } })),
+          h("label", { class: "field" }, h("span", null, "Zoom"), sel([["", "None"], ...zoomKeys.map((k) => [k, data.zoom.find((z) => z.key === k)?.label || k])], e.zoom || "", (v) => { e.zoom = v; }))),
+        h("div", { class: "btnrow", style: { margin: "4px 0 8px" } },
+          ...[["virtual", "Virtual only"], ["cancelled", "Cancelled"], ["cme", "CME"]].map(([k, label]) => h("label", { class: "checkline", style: { margin: 0 } },
+            h("input", { type: "checkbox", checked: !!e[k], onchange: (ev) => { e[k] = ev.target.checked; } }), h("span", null, label)))),
+        h("label", { class: "field" }, h("span", null, "People: name | role | topic | own time slot (one per line). Roles: presenter, examinee, moderator, faculty, examiner"), ppl, unknown),
+        h("label", { class: "field" }, h("span", null, "Objectives"), h("textarea", { class: "input", style: { minHeight: "50px" }, oninput: (ev) => { e.objectives = ev.target.value; } }, e.objectives || "")),
+        h("button", { class: "btn sm danger", onclick: () => { data.events.splice(i, 1); drawEvents(); } }, "Remove session"));
+    }));
+  }
+  drawZoom();
+  drawEvents();
+
+  const notesText = h("textarea", { class: "input", style: { minHeight: "50px" } }, (data.notes || []).join("\n"));
+  const saveBtn = h("button", { class: "btn primary block" }, icon("check"), "Save didactics");
+  const body = h("div", null,
+    h("div", { class: "grid2" },
+      h("label", { class: "field" }, h("span", null, "Month"), monthInput, monthHint),
+      h("label", { class: "field" }, h("span", null, "Default room"), locInput)),
+    data.uncertain?.length ? notice("warn", "alert", h("b", null, "Double-check: "), data.uncertain.join("; ")) : null,
+    source === "pdf" ? notice("", "sparkle", "Read from the PDF by Claude. Resident names are matched to the roster when you save.") : null,
+    h("h4", { class: "card-title" }, `Sessions (${data.events.length})`),
+    eventsHolder,
+    h("button", { class: "btn sm", style: { margin: "6px 0 14px" }, onclick: () => { data.events.push({ date: "", start: "", end: "", kind: "lecture", series: "other", title: "", people: [] }); drawEvents(); } }, "+ Add session"),
+    h("h4", { class: "card-title" }, "Zoom rooms"),
+    zoomHolder,
+    h("button", { class: "btn sm", style: { margin: "6px 0 14px" }, onclick: () => { data.zoom.push({ key: "", label: "", url: "", phones: [], meetingId: "", passcode: "" }); drawZoom(); drawEvents(); } }, "+ Add Zoom room"),
+    h("label", { class: "field" }, h("span", null, "Notes for residents (one per line)"), notesText),
+    saveBtn);
+
+  const close = openSheet("Didactics", body);
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    data.notes = notesText.value.split("\n").map((x) => x.trim()).filter(Boolean);
+    try {
+      const res = await api(`/api/didactics/${month}`, { method: "PUT", body: { data: { ...data, month }, pdf: pdfId } });
+      const n = res.didactics.events.length;
+      const fixes = [...new Set((res.changes || []).map((c) => `${c.from} → ${c.to}`))];
+      toast(`Saved ${n} sessions for ${fmtMonth(month)}${fixes.length ? ` · ${fixes.slice(0, 3).join(", ")}${fixes.length > 3 ? "…" : ""}` : ""}`);
+      close();
+      await ctx.reload();
+      onSaved?.();
+    } catch (err) {
+      toast(err.message);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+function didacticsSection(ctx, status) {
+  const holder = h("div");
+  const progress = h("div");
+  const spinner = (text) => h("div", { style: { display: "flex", gap: "10px", alignItems: "center", marginTop: "10px" } }, h("div", { class: "spinner" }), text);
+  const stored = () => ctx.state.model.ds.didactics || {};
+
+  async function readPdf(file) {
+    progress.replaceChildren(spinner("Uploading PDF…"));
+    let id = null;
+    try {
+      const res = await api("/api/didactics/pdf", { method: "POST", body: file, headers: { "content-type": "application/pdf" } });
+      id = res.id;
+      if (!res.queued) {
+        progress.replaceChildren();
+        const m = guessMonth();
+        openDidacticsEditor(ctx, m, stored()[m] || {}, { pdfId: id, onSaved: draw });
+        return;
+      }
+      const started = Date.now();
+      for (;;) {
+        await sleep(3000);
+        const secs = Math.round((Date.now() - started) / 1000);
+        progress.replaceChildren(spinner(`Reading the schedule with Claude… ${secs}s (usually under a minute)`));
+        const job = await api(`/api/job/${id}`);
+        if (job.status === "done") {
+          progress.replaceChildren();
+          const m = /^\d{4}-\d{2}$/.test(job.didactics?.month || "") ? job.didactics.month : guessMonth();
+          openDidacticsEditor(ctx, m, job.didactics, { source: "pdf", pdfId: id, onSaved: draw });
+          return;
+        }
+        if (job.status === "error") throw new Error(job.error);
+        if (Date.now() - started > 5 * 60 * 1000) throw new Error("The reader is taking too long.");
+      }
+    } catch (err) {
+      progress.replaceChildren(notice("gap", "alert", `Couldn't read the PDF: ${err.message} `,
+        id ? h("a", { href: "#", onclick: (e) => { e.preventDefault(); openDidacticsEditor(ctx, guessMonth(), {}, { pdfId: id, onSaved: draw }); } }, "Type it in instead") : null));
+    }
+  }
+
+  function draw() {
+    const months = Object.keys(stored()).sort().reverse();
+    holder.replaceChildren(
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Upload the monthly conference-schedule PDF when it's emailed. Claude reads the sessions, presenters, mock-oral slots and Zoom details; check them and save. Residents see it under More › Didactics, on Today, on their profile and in their calendar."),
+      h("div", { class: "btnrow" },
+        fileButton(status?.configured?.ai ? "Read a PDF" : "Upload PDF", "upload", "application/pdf", readPdf, { primary: true }),
+        h("button", { class: "btn", onclick: () => openDidacticsEditor(ctx, guessMonth(), stored()[guessMonth()] || {}, { onSaved: draw }) }, icon("edit"), "Enter by hand")),
+      progress,
+      months.length ? h("ul", { class: "list", style: { marginTop: "10px" } }, months.map((m) => {
+        const d = stored()[m];
+        return h("li", { class: "row", style: { padding: "8px 0", minHeight: "52px" } },
+          h("div", { class: "main" },
+            h("div", { class: "name" }, fmtMonth(m)),
+            h("div", { class: "sub" }, `${d.events.filter((e) => !e.cancelled).length} sessions${d.hasPdf ? " · PDF attached" : ""}`)),
+          h("button", { class: "btn sm", onclick: () => openDidacticsEditor(ctx, m, d, { onSaved: draw }) }, "Edit"),
+          h("button", { class: "iconbtn", "aria-label": `Delete didactics for ${fmtMonth(m)}`, onclick: async () => {
+            if (!confirm(`Delete the ${fmtMonth(m)} conference schedule?`)) return;
+            await api(`/api/didactics/${m}`, { method: "DELETE" });
+            await ctx.reload();
+            draw();
+          } }, icon("x")));
+      })) : null,
+      status && !status.configured?.ai ? h("p", { class: "disclaimer" }, "PDF reading is off: add ANTHROPIC_API_KEY in Netlify to turn it on. Without it, the PDF is still attached for residents and you can type the sessions in.") : null,
+    );
+  }
+  draw();
+  return card("Didactics", holder);
+}
+
 function uploadSection(ctx, title, help, path, extra) {
   const out = h("div");
   const ayInput = extra ? h("input", { class: "input", type: "number", min: "2020", max: "2100", placeholder: "e.g. 2026", style: { maxWidth: "140px" } }) : null;
@@ -395,17 +582,20 @@ export function renderAdmin(ctx) {
   if (!local.get("adminKey")) { root.append(adminLogin(ctx)); return root; }
   const statusHolder = h("div");
   const dailyHolder = h("div");
+  const didHolder = h("div");
   root.append(statusHolder);
   api("/api/status").then((status) => {
     statusHolder.replaceChildren(
-      !status.configured.ai ? notice("warn", "info", "Photo reading is off until ANTHROPIC_API_KEY is set in Netlify.") : notice("", "sparkle", "Photo reading is on: upload the WhatsApp photo and review what Claude read before saving."),
+      !status.configured.ai ? notice("warn", "info", "Photo and PDF reading are off until ANTHROPIC_API_KEY is set in Netlify.") : notice("", "sparkle", "Photo and PDF reading are on: upload the WhatsApp photo or the conference PDF and review what Claude read before saving."),
     );
     dailyHolder.replaceChildren(dailySection(ctx, status));
-  }).catch(() => dailyHolder.replaceChildren(dailySection(ctx, null)));
+    didHolder.replaceChildren(didacticsSection(ctx, status));
+  }).catch(() => { dailyHolder.replaceChildren(dailySection(ctx, null)); didHolder.replaceChildren(didacticsSection(ctx, null)); });
   root.append(
     dailyHolder,
     uploadSection(ctx, "Monthly call schedule", "The .xlsx the program coordinator emails each month. Re-uploading a month replaces it; other months are kept.", "/api/upload/call"),
     uploadSection(ctx, "Annual rotations", "The yearly rotations-by-site .xlsx. Used for months that don't have a call sheet yet.", "/api/upload/rotations", true),
+    didHolder,
     directorySection(ctx),
     peopleSection(ctx),
     settingsSection(ctx),

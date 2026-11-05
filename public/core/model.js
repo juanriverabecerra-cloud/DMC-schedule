@@ -4,6 +4,7 @@ import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCo
 import { dow, monthKey, parts, addMonths } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
+import { createDidactics } from "./didactics.js";
 
 const VAC_RE = /^vac(ation)?\b/i;
 const OFF_RE = /^(loa|off)\b/i;
@@ -346,6 +347,7 @@ export function createModel(ds) {
     site: (id) => SITES[id] || null,
   };
   api.dir = createDirectory(ds, api);
+  api.didactics = createDidactics(ds, api);
   return api;
 }
 

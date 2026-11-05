@@ -13,6 +13,7 @@ import { renderCall } from "./views/call.js";
 import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
 import { renderAdmin } from "./views/admin.js";
+import { renderDidactics } from "./views/didactics.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
 
 const state = {
@@ -109,8 +110,8 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", hours: "Duty hours", gaps: "Coverage gaps", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = ["p", "gaps", "admin", "hours"].includes(r.name);
+    const titles = { call: "Call", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
+    const back = ["p", "gaps", "admin", "hours", "didactics"].includes(r.name);
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
@@ -127,7 +128,7 @@ function tabbar(r) {
   const gapsSoon = state.model ? [0, 1, 2].some((i) => dayGaps(state.model, addDays(state.today, i)).some((g) => g.level === "gap")) : false;
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && ["gaps", "admin", "hours"].includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && ["gaps", "admin", "hours", "didactics"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label, id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null)));
   nav.replaceChildren(inner);
@@ -152,6 +153,7 @@ export function render() {
     else if (r.name === "hours") content = renderHours(ctx());
     else if (r.name === "call") content = renderCall(ctx());
     else if (r.name === "gaps") content = renderGaps(ctx(), r.arg);
+    else if (r.name === "didactics") content = renderDidactics(ctx());
     else if (r.name === "more") content = renderMore(ctx());
     else if (r.name === "admin") content = renderAdmin(ctx());
     else if (r.name === "p" && r.arg) content = renderPerson(ctx(), r.arg);

@@ -5,6 +5,7 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { dayGaps } from "../../core/gaps.js";
 import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet } from "./common.js";
+import { didacticsTodayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 
 function shortCode(d) {
@@ -136,6 +137,9 @@ export function renderToday(ctx) {
         h("div", { class: "chips" }, dayChips(t, { withTime: false }))));
     }
   }
+
+  const did = didacticsTodayCard(ctx);
+  if (did) root.append(did);
 
   const mates = teammates(ctx, d);
   if (mates.length) {

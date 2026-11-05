@@ -5,6 +5,7 @@ A phone-first web app for DMC anesthesia residents that combines the three sched
 1. **Annual rotations** (`.xlsx`, one sheet per class): what rotation everyone is on each month.
 2. **Monthly call schedule** (`.xlsx`): daily codes and colors (H1, H2, NF, 10-7, late, cardiac call, vacation).
 3. **Daily OR sheet** (photo from WhatsApp): room, surgeon, start time, MDA, JA and breaks.
+4. **Didactics** (monthly conference-schedule PDF): Wednesday conference, Monday board review, Friday mock orals.
 
 What it shows:
 
@@ -15,6 +16,7 @@ What it shows:
 - **Gaps**: missing late/NF/24-hr/12-hr/cardiac coverage, the call sheet's own "coverage needed" rows, and conflicts with the daily sheet.
 - **Swap finder**: for any call shift, same-class residents who are free and would stay under the hour limits.
 - **Calendar feed**: subscribe once in Apple or Google Calendar and every shift arrives with its OR details, room phone, MDA's number and who's on.
+- **Didactics**: the month's conferences as an agenda, with "Next up", one-tap **Join Zoom** and **Dial in** (it dials, then enters the meeting ID and passcode), filters (Wednesday, Monday, mock orals, mine), objectives and the original PDF. Residents see their own presentations and mock-oral slots on Today and on their profile, with a heads-up when they're on vacation, post-call, coming off nights or at another site that day. Sessions go into the calendar feed with the Zoom link (mock orals only for the residents examined); each resident can leave didactics out of their feed.
 - **Call**: one-tap calling for residents, attendings (Cisco and cell), OR rooms, units and service lines. "Right now" lists who you're likely to need today (your room, your MDA, your JA, the board runners). Every OR card in the app has call chips for the room and its MDA. Pagers and hospital-only extensions copy to the clipboard.
 
 It installs to the home screen ("Add to Home Screen") and works offline with the last-loaded schedule.
@@ -32,7 +34,7 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
    |---|---|
    | `APP_PASSCODE` | Shared passcode residents type once on their phone. |
    | `ADMIN_KEY` | Long random string for uploads and edits; keep it to yourself. Generate one with `openssl rand -base64 24`. |
-   | `ANTHROPIC_API_KEY` | Optional. Turns on reading the daily photo with Claude (`claude-opus-5-5`), roughly 5–15¢ per photo. Get it at console.anthropic.com and set a monthly spend limit. |
+   | `ANTHROPIC_API_KEY` | Optional. Turns on reading the daily photo and the monthly didactics PDF with Claude (`claude-opus-5-5`), roughly 5–15¢ each. Get it at console.anthropic.com and set a monthly spend limit. |
    | `CAL_SECRET` | Optional. Signs calendar links (defaults to `ADMIN_KEY`). Changing it breaks everyone's existing calendar links. |
 
 3. **Deploys → Trigger deploy** so the functions pick up the variables.
@@ -45,6 +47,7 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
   - A role written in a name cell, such as "PAT" in the Breaks column, becomes that day's PAT resident: the name in the sheet's PAT box, or else whoever the call sheet has on PAT (including someone covering PAT).
   - Once tomorrow's sheet is in, everyone's Today screen shows a "Tomorrow" card with their room, start time and MDA.
 - **Monthly**: upload the call schedule `.xlsx` when it's emailed. Re-uploading a month replaces it.
+- **Monthly didactics**: **Admin → Didactics → Read a PDF** with the conference schedule. Claude reads the sessions, presenters, mock-oral slots and Zoom details (with `ANTHROPIC_API_KEY`); review and **Save**. Resident names are saved in roster spelling. Without the key the PDF is still attached and you can enter sessions by hand. In the editor, people are one per line: `Name | role | topic | 06:00-06:30` (roles: presenter, examinee, moderator, faculty, examiner).
 - **Phone directory**: **Admin → Directory → Import .txt**, review, **Save**. Keep the file private; it is never part of this repository. Format:
 
   ```
@@ -98,4 +101,4 @@ npm run icons   # regenerate the app icons
 
 - `public/`: the app (no build step). `public/core/` holds the schedule logic shared with the server: day resolution, hours, gaps, swaps and the iCalendar feed.
 - `lib/`: server-only code: the `.xlsx` reader, parsers, storage, auth and the photo reader.
-- `netlify/functions/`: `api.mjs` (all API routes and `/cal/*.ics` feeds) and `parse-photo-background.mjs` (photo reading, up to 15 minutes).
+- `netlify/functions/`: `api.mjs` (all API routes and `/cal/*.ics` feeds), `parse-photo-background.mjs` and `parse-didactics-background.mjs` (photo and PDF reading, up to 15 minutes each).

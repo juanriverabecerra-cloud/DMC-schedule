@@ -5,6 +5,7 @@ import { addDays, range, fmtRange, fmtDate, monthDates, addMonths, monthKey } fr
 import { SITES } from "./codes.js";
 import { headline } from "./model.js";
 import { prettyDigits, numberTag } from "./directory.js";
+import { eventHeadline, residentsOf, facultyOf, relevantTo, zoomDialDigits, ROLES, OWN_ROLES } from "./didactics.js";
 
 const VTIMEZONE = [
   "BEGIN:VTIMEZONE", "TZID:America/Detroit",
@@ -127,7 +128,30 @@ function summaryFor(d) {
   return head;
 }
 
-export function buildIcs(model, pid, { from, to, appUrl = "", calName } = {}) {
+function didacticsDescription(e, appUrl) {
+  const lines = [`${fmtRange(e.start, e.end)} · ${eventHeadline(e)}`];
+  if (e.title && !eventHeadline(e).includes(e.title)) lines.push(e.title);
+  const res = residentsOf(e);
+  if (res.length) {
+    lines.push("", ...res.map((p) => `${p.start != null ? `${fmtRange(p.start, p.end ?? e.end)} ` : ""}${p.display}${p.topic ? `: ${p.topic}` : ""}`));
+  }
+  const fac = facultyOf(e);
+  if (fac.length) lines.push("", ...fac.map((p) => `${ROLES[p.role] || "Faculty"}: ${p.display}`));
+  if (e.place) lines.push("", `Where: ${e.place}`);
+  const z = e.zoomLink;
+  if (z) {
+    lines.push("", `Zoom: ${z.url || ""}`.trim());
+    if (z.meetingId) lines.push(`Meeting ID ${z.meetingId}${z.passcode ? ` · Passcode ${z.passcode}` : ""}`);
+    const dial = zoomDialDigits(z);
+    if (dial) lines.push(`One-tap dial-in: ${dial}`);
+  }
+  if (e.objectives) lines.push("", e.objectives);
+  if (e.note) lines.push("", e.note);
+  if (appUrl) lines.push("", `${appUrl}#/didactics`);
+  return lines.join("\n");
+}
+
+export function buildIcs(model, pid, { from, to, appUrl = "", calName, didactics = true } = {}) {
   const p = model.person(pid);
   const stamp = utcStamp(model.ds.updatedAt);
   const out = [
@@ -168,6 +192,25 @@ export function buildIcs(model, pid, { from, to, appUrl = "", calName } = {}) {
         `SUMMARY:${esc(summaryFor(d))}`,
         `LOCATION:${esc(SITES[d.site]?.name || "")}`,
         `DESCRIPTION:${esc(`${fmtRange(s.start, s.end)} · ${dayDescription(model, d, appUrl)}`)}`,
+      ]);
+    }
+  }
+  if (didactics && model.didactics?.has) {
+    for (const e of model.didactics.between(from, to)) {
+      if (!relevantTo(e, pid) || e.start == null) continue;
+      const mine = e.people.find((p) => p.pid === pid && OWN_ROLES.has(p.role));
+      const start = mine?.start ?? e.start, end = mine?.end ?? e.end;
+      const summary = mine?.role === "examinee" ? `Your mock oral${facultyOf(e)[0] ? ` · ${facultyOf(e)[0].display}` : ""}`
+        : mine ? `You present: ${mine.topic || eventHeadline(e)}` : eventHeadline(e);
+      event(`${pid}-did-${e.id}`, [
+        `DTSTART;TZID=America/Detroit:${localStamp(e.date, start)}`,
+        `DTEND;TZID=America/Detroit:${localStamp(e.date, end)}`,
+        `SUMMARY:${esc(summary)}`,
+        `LOCATION:${esc(e.place || "")}`,
+        ...(e.zoomLink?.url ? [`URL:${e.zoomLink.url}`] : []),
+        `DESCRIPTION:${esc(didacticsDescription(e, appUrl))}`,
+        `CATEGORIES:Didactics`,
+        ...(mine ? [] : ["TRANSP:TRANSPARENT"]),
       ]);
     }
   }

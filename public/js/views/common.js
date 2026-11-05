@@ -5,7 +5,7 @@ import { fmtDate, fmtRange, addDays, relDay, monthKey, fmtMonth, diffDays, dow, 
 import { headline, siteName } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
-import { api } from "../api.js";
+import { api, local } from "../api.js";
 
 // Call chips under an OR row: the room phone, its MDA and the residents in it.
 export function roomCallChips(ctx, room, { residents = false } = {}) {
@@ -179,26 +179,37 @@ export function openDaySheet(ctx, pid, date) {
 
 export function subscribeCard(ctx, pid) {
   const holder = h("div");
+  let feed = null;
+  const withDid = () => local.get("calDidactics", true);
+  const suffix = () => (withDid() ? "" : "?d=0");
+  function showLinks() {
+    const url = feed.url + suffix(), webcal = feed.webcal + suffix();
+    const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
+    holder.replaceChildren(
+      h("div", { class: "btnrow", style: { marginBottom: "8px" } },
+        h("a", { class: "btn primary", href: webcal }, icon("calendar"), "Apple / Outlook"),
+        h("a", { class: "btn", href: google, target: "_blank", rel: "noopener" }, "Google Calendar")),
+      h("button", { class: "btn block sm", onclick: () => copyText(url) }, icon("link"), "Copy feed link"),
+      h("p", { class: "disclaimer" }, "Your calendar app re-checks the feed on its own. Apple refreshes about hourly. Google can take up to a day, so new daily sheets may show up late there. Anyone with this link can see the feed, so share it only with people you trust."),
+    );
+  }
   const btn = h("button", { class: "btn block", onclick: async () => {
     btn.disabled = true;
     try {
-      const { url, webcal } = await api(`/api/caltoken/${pid}`);
-      const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-      holder.replaceChildren(
-        h("div", { class: "btnrow", style: { marginBottom: "8px" } },
-          h("a", { class: "btn primary", href: webcal }, icon("calendar"), "Apple / Outlook"),
-          h("a", { class: "btn", href: google, target: "_blank", rel: "noopener" }, "Google Calendar")),
-        h("button", { class: "btn block sm", onclick: () => copyText(url) }, icon("link"), "Copy feed link"),
-        h("p", { class: "disclaimer" }, "Your calendar app re-checks the feed on its own. Apple refreshes about hourly. Google can take up to a day, so new daily sheets may show up late there. Anyone with this link can see the feed, so share it only with people you trust."),
-      );
+      feed = await api(`/api/caltoken/${pid}`);
+      showLinks();
     } catch (err) {
       toast(err.message);
       btn.disabled = false;
     }
   } }, icon("calendar"), "Add to my calendar");
   holder.append(btn);
+  const toggle = ctx.model.didactics?.has ? h("label", { class: "checkline" },
+    h("input", { type: "checkbox", checked: withDid(), onchange: (e) => { local.set("calDidactics", e.target.checked); if (feed) showLinks(); } }),
+    h("span", null, "Include didactics: conferences, board review, and your own presentations and mock orals (with Zoom links). Changing this after subscribing needs a new subscription.")) : null;
   return card("Calendar", h("div", null,
     h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "Subscribe once and every shift, OR assignment and who's on tonight shows up in your phone's calendar."),
+    toggle,
     holder));
 }
 

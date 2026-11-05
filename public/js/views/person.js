@@ -4,6 +4,7 @@ import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
 import { hoursReport } from "../../core/hours.js";
 import { openDaySheet, subscribeCard } from "./common.js";
+import { didacticsPersonCard } from "./didactics.js";
 
 function cellCode(d) {
   if (d.call === "NF") return "NF";
@@ -126,6 +127,9 @@ export function renderPerson(ctx, pid) {
         h("div", { class: "main" }, r));
     })), { pad: false }));
   }
+
+  const did = didacticsPersonCard(ctx, pid);
+  if (did) root.append(did);
 
   if (p.cls !== "PGY-1") root.append(subscribeCard(ctx, pid));
   if (state.me !== pid) {

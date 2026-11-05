@@ -11,7 +11,10 @@ process.env.APP_PASSCODE ||= "dev";
 process.env.ADMIN_KEY ||= "devadmin";
 
 const { default: api } = await import("../netlify/functions/api.mjs");
-const { default: background } = await import("../netlify/functions/parse-photo-background.mjs");
+const backgrounds = {
+  "/bg/parse-photo": (await import("../netlify/functions/parse-photo-background.mjs")).default,
+  "/bg/parse-didactics": (await import("../netlify/functions/parse-didactics-background.mjs")).default,
+};
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -29,8 +32,9 @@ http.createServer(async (req, res) => {
       const body = chunks.length ? Buffer.concat(chunks) : undefined;
       const request = new Request(url, { method: req.method, headers: req.headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : body });
       if (url.pathname.startsWith("/bg/")) {
-        res.writeHead(202).end();
-        background(request).catch((e) => console.error("background:", e));
+        const background = backgrounds[url.pathname];
+        res.writeHead(background ? 202 : 404).end();
+        background?.(request).catch((e) => console.error("background:", e));
         return;
       }
       const response = await api(request);

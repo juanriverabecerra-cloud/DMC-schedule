@@ -282,3 +282,70 @@ Smith, Alex | 248-555-0202`;
   assert.equal(numberText(ana.mobile), "Mobile (248) 555-0112");
   assert.deepEqual(m.dir.search("mobile").map((c) => c.name).sort(), ["Ana Leed", "Jane Doe", "Smith, Alex"].sort());
 });
+
+const DIDACTICS = {
+  month: "2026-11",
+  location: "Main Auditorium",
+  zoom: [{ key: "wednesday", label: "Wednesday Zoom", url: "https://example.zoom.us/j/111", phones: ["800-555-0100"], meetingId: "111 222 333", passcode: "4444" }],
+  events: [
+    { date: "2026-11-04", start: "06:00", end: "06:30", series: "wednesday", kind: "pbld", title: "Problem Based Learning Discussion (PBLD)", people: [{ name: "Dr. Lee", role: "faculty" }], zoom: "wednesday" },
+    { date: "2026-11-04", start: "06:30", end: "07:30", series: "wednesday", kind: "grand-rounds", title: "Airway Fires", people: [{ name: "J. DOE", role: "presenter" }], zoom: "wednesday", cme: true },
+    { date: "2026-11-03", start: "17:00", end: "18:00", series: "other", kind: "board-review", title: "Review", people: [{ name: "Leed", role: "presenter", topic: "Acid-base" }, { name: "Dr. Smith", role: "moderator" }], virtual: true },
+    { date: "2026-11-06", start: "06:10", end: "06:45", series: "friday", kind: "mock-oral", title: "Mock Oral Board Examination", people: [{ name: "Dr. Smith", role: "examiner" }, { name: "Ortiz", role: "examinee", start: "06:00", end: "06:30" }, { name: "KVT", role: "examinee", start: "6:30am", end: "7:00am" }] },
+    { date: "2026-11-25", start: "06:00", end: "07:30", series: "wednesday", kind: "none", title: "No Lecture" },
+    { date: "2026-12-01", start: "06:00", kind: "lecture", title: "Wrong month" },
+  ],
+};
+
+test("didactics: cleaning, roster names, assignments, conflicts and the calendar", async () => {
+  const { setDidactics } = await import("../lib/dataset.js");
+  const { zoomTelHref, eventHeadline, residentsOf, relevantTo, parseClock } = await import("../public/core/didactics.js");
+  assert.equal(parseClock("5:00 PM"), 1020);
+  assert.equal(parseClock("6:30am"), 390);
+  const ds = { ...dataset() };
+  const { didactics, changes } = setDidactics(ds, "2026-11", DIDACTICS);
+  assert.equal(didactics.events.length, 5); // December row dropped
+  assert.deepEqual(changes.map((c) => `${c.from}>${c.to}`).sort(), ["J. DOE>Doe", "KVT>Van Tran"]);
+  const m = createModel(ds);
+  const D = m.didactics;
+  const wed = D.on("2026-11-04");
+  assert.equal(eventHeadline(wed[0]), "PBLD · Dr. Lee");
+  assert.equal(wed[0].people[0].pid, null); // "Dr. Lee" is faculty, not resident Lee
+  assert.equal(eventHeadline(wed[1]), "Grand Rounds: Airway Fires");
+  assert.equal(wed[1].place, "Main Auditorium");
+  assert.equal(D.on("2026-11-03")[0].place, "Virtual (Zoom)");
+  const mock = D.on("2026-11-06")[0];
+  assert.deepEqual(residentsOf(mock).map((p) => [p.pid, p.start]), [["ortiz-paul", 360], ["van-tran-kim", 390]]);
+  assert.equal(relevantTo(mock, "ortiz-paul"), true);
+  assert.equal(relevantTo(mock, "doe-jane"), false); // mock orals only for those examined
+  assert.deepEqual(D.forPerson("doe-jane", "2026-11-01", "2026-11-30").map((a) => [a.event.date, a.role]), [["2026-11-04", "presenter"]]);
+  assert.equal(D.conflict("leed-ana", "2026-11-03", 1020), "You're on vacation that day");
+  assert.equal(zoomTelHref(wed[0].zoomLink), "tel:+18005550100,,111222333%23,,,,*4444%23");
+  assert.equal(D.upcoming("2026-11-25", 0).length, 0); // the cancelled week is skipped
+
+  const ics = buildIcs(m, "doe-jane", { from: "2026-11-01", to: "2026-11-30" });
+  assert.match(ics, /SUMMARY:You present: Grand Rounds: Airway Fires/);
+  assert.match(ics, /SUMMARY:PBLD · Dr. Lee/);
+  assert.match(ics, /URL:https:\/\/example.zoom.us\/j\/111/);
+  assert.doesNotMatch(ics, /Mock orals/);
+  assert.match(buildIcs(m, "ortiz-paul", { from: "2026-11-01", to: "2026-11-30" }), /SUMMARY:Your mock oral · Dr. Smith/);
+  assert.doesNotMatch(buildIcs(m, "doe-jane", { from: "2026-11-01", to: "2026-11-30", didactics: false }), /Airway Fires/);
+
+  // Saving the stored month again (as the editor does) keeps everything, slots included.
+  const before = JSON.stringify(ds.didactics["2026-11"].events);
+  setDidactics(ds, "2026-11", ds.didactics["2026-11"]);
+  assert.equal(JSON.stringify(ds.didactics["2026-11"].events), before);
+});
+
+test("didactics reader sends the PDF to Claude and returns the parsed schedule", async () => {
+  const { readDidacticsPdf } = await import("../lib/didactics-parse.js");
+  let sent;
+  const client = { beta: { messages: { stream: (params) => { sent = params; return { finalMessage: async () => ({ stop_reason: "end_turn", model: "claude-opus-5-5", usage: {}, parsed_output: DIDACTICS }) }; } } } };
+  const out = await readDidacticsPdf({ bytes: new Uint8Array([37, 80, 68, 70]), today: "2026-11-05", residents: [{ last: "Doe", name: "Jane Doe", cls: "CA-1" }], client });
+  assert.equal(out.didactics.month, "2026-11");
+  assert.equal(sent.model, "claude-opus-5-5");
+  assert.equal(sent.output_config.format.type, "json_schema");
+  const [doc, text] = sent.messages[0].content;
+  assert.deepEqual([doc.type, doc.source.type, doc.source.media_type, doc.source.data], ["document", "base64", "application/pdf", "JVBERg=="]);
+  assert.match(text.text, /Doe: Jane Doe, CA-1/);
+});

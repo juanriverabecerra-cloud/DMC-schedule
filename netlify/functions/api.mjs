@@ -2,7 +2,7 @@
 import { openStore } from "../../lib/store.js";
 import { isAdmin, isViewer, calToken, pidFromToken, configured, env } from "../../lib/auth.js";
 import {
-  normalizeDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, setDirectory, setSettings,
+  normalizeDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, setDirectory, setSettings, setDidactics, deleteDidactics,
 } from "../../lib/dataset.js";
 import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
@@ -43,7 +43,7 @@ export default async function handler(req) {
       const pid = pidFromToken(cal[1], ds.people);
       if (!pid) return new Response("Not found", { status: 404 });
       const model = createModel(ds);
-      const ics = buildIcs(model, pid, { ...feedRange(model, todayLocal()), appUrl: `${origin(req)}/` });
+      const ics = buildIcs(model, pid, { ...feedRange(model, todayLocal()), appUrl: `${origin(req)}/`, didactics: url.searchParams.get("d") !== "0" });
       return new Response(ics, { headers: { "content-type": "text/calendar; charset=utf-8", "cache-control": "public, max-age=900", "content-disposition": "inline; filename=dmc-schedule.ics" } });
     }
 
@@ -80,6 +80,13 @@ export default async function handler(req) {
     }
 
     // ---- admin only below ----
+    const didPdf = path.match(/^\/api\/didactics\/(\d{4}-\d{2})\/pdf$/);
+    if (didPdf && method === "GET") {
+      const pdf = await st.getBytes(`didactics-pdf/${didPdf[1]}`);
+      if (!pdf) return fail(404, "No PDF for that month");
+      return new Response(pdf.data, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename=conference-schedule-${didPdf[1]}.pdf`, "cache-control": "private, max-age=3600" } });
+    }
+
     if (!isAdmin(req)) return fail(403, "Admin key required");
 
     if (path === "/api/upload/call" && method === "POST") {
@@ -138,6 +145,49 @@ export default async function handler(req) {
       });
       if (!r.ok && r.status !== 202) return json({ ok: true, id, queued: false });
       return json({ ok: true, id, queued: true });
+    }
+
+    // Monthly conference schedule (PDF): read in the background, reviewed, then saved by month.
+    if (path === "/api/didactics/pdf" && method === "POST") {
+      const type = (req.headers.get("content-type") || "").split(";")[0];
+      if (type !== "application/pdf") return fail(415, "Upload the conference schedule as a PDF");
+      const id = `did-${todayLocal()}-${crypto.randomUUID().slice(0, 8)}`;
+      await st.setBytes(`inbox/${id}`, await bytesOf(req), type);
+      if (!configured().ai) return json({ ok: true, id, queued: false });
+      await st.setJSON(`job/${id}`, { status: "queued", queuedAt: new Date().toISOString() });
+      const r = await fetch(`${origin(req)}/bg/parse-didactics`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-key": req.headers.get("x-admin-key") },
+        body: JSON.stringify({ id }),
+      });
+      if (!r.ok && r.status !== 202) return json({ ok: true, id, queued: false });
+      return json({ ok: true, id, queued: true });
+    }
+
+    const did = path.match(/^\/api\/didactics\/(\d{4}-\d{2})$/);
+    if (did && method === "PUT") {
+      const month = did[1];
+      const body = await req.json();
+      if (/^[\w-]{6,64}$/.test(body.pdf || "")) {
+        const pdf = await st.getBytes(`inbox/${body.pdf}`);
+        if (pdf) {
+          await st.setBytes(`didactics-pdf/${month}`, pdf.data, "application/pdf");
+          await st.delete(`inbox/${body.pdf}`);
+          await st.delete(`job/${body.pdf}`);
+        }
+      }
+      const ds = await loadDataset(st);
+      const hasPdf = !!(await st.getBytes(`didactics-pdf/${month}`));
+      const { didactics, changes } = setDidactics(ds, month, body.data || body, { hasPdf });
+      await st.setJSON("dataset", ds);
+      return json({ ok: true, didactics, changes, updatedAt: ds.updatedAt });
+    }
+    if (did && method === "DELETE") {
+      const ds = await loadDataset(st);
+      deleteDidactics(ds, did[1]);
+      await st.delete(`didactics-pdf/${did[1]}`);
+      await st.setJSON("dataset", ds);
+      return json({ ok: true, updatedAt: ds.updatedAt });
     }
 
     const job = path.match(/^\/api\/job\/([\w-]{6,64})$/);
