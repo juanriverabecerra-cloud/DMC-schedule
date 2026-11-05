@@ -391,3 +391,30 @@ details.card.group[open] > summary { border-bottom: 1px solid var(--border); }
 @media (max-width: 420px) {
   .session-people, .session-faculty, .session .zoomrow, .session .notice, .session-more { margin-left: 0; }
 }
+
+/* Today: the day's didactics */
+.didday-head { font-size: 14px; margin: -2px 0 6px; }
+.didday.done .dayses { opacity: .55; }
+.dayses { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+.dayses:first-of-type { border-top: 0; }
+.dayses .timecol { display: flex; flex-direction: column; min-width: 52px; color: var(--text); }
+.dayses .timecol span { font-size: 12px; font-weight: 500; color: var(--muted); }
+.dayses .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.dayses .name { font-weight: 650; line-height: 1.3; }
+.dayses.done { opacity: .55; }
+.dayses.mine { box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; margin-left: -8px; }
+.dayses .who { font-size: 13.5px; margin-top: 3px; }
+.dayses .who a, .slot { color: inherit; text-decoration: none; font-weight: 600; }
+.dayses .who a.me, .slot.me { color: var(--accent); }
+.dayses .facrow { margin-top: 4px; }
+.slots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.slot { font-size: 13px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); }
+.about { margin-top: 6px; }
+.about summary { cursor: pointer; font-size: 13px; font-weight: 650; color: var(--muted); }
+.about p { margin: 6px 0 0; }
+.zoompanel { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.zoompanel .zoomrow { margin-top: 0; }
+.zp-code { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 8px; padding: 8px 10px; border: 0; border-radius: 10px;
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; text-align: left; }
+.zp-code span { flex: 1; color: var(--text); }
+.zp-code svg { width: 16px; height: 16px; }

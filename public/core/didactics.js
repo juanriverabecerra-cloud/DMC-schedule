@@ -242,6 +242,6 @@ export const facultyOf = (e) => e.people.filter((p) => !p.pid);
 // sessions; mock orals only go to the residents examined.
 export function relevantTo(e, pid) {
   if (e.cancelled) return false;
-  if (e.kind === "mock-oral") return e.people.some((p) => p.pid === pid);
+  if (e.kind === "mock-oral") return !pid || e.people.some((p) => p.pid === pid);
   return true;
 }

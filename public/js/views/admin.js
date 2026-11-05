@@ -464,6 +464,7 @@ function directorySection(ctx) {
       out.replaceChildren(
         notice("", "check", h("b", null, "Saved. "), `${s.residents} residents, ${s.staff} attendings, ${s.places} places and pagers, ${s.dialing} dialing rules.`),
         s.added.length ? notice("", "user", `Added to the roster: ${s.added.join(", ")}`) : null,
+        s.removed?.length ? notice("", "user", `No longer listed and no schedule, so removed: ${s.removed.join(", ")}`) : null,
         s.unmatched.length ? notice("warn", "alert", `These residents didn't match anyone (add a class like "| PGY-1" to add them): ${s.unmatched.join(", ")}`) : null,
         ...(s.warnings || []).map((w) => notice("warn", "alert", w)));
       await ctx.reload();
@@ -501,11 +502,15 @@ function peopleSection(ctx) {
     cls.value = p.cls || "CA-1";
     cls.addEventListener("change", async () => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { cls: cls.value } }); toast("Saved"); ctx.reload(); });
     const hide = h("input", { type: "checkbox", checked: !p.hidden, "aria-label": `Show ${p.last}`, onchange: async (e) => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { hidden: !e.target.checked } }); toast(e.target.checked ? "Shown" : "Hidden"); ctx.reload(); } });
+    const remove = h("button", { class: "iconbtn", "aria-label": `Remove ${p.last} from the app`, title: "Left the program: remove", onclick: async () => {
+      if (!confirm(`Remove ${p.preferred || p.first} ${p.last} from the app?\n\nTheir call-sheet rows, planned rotations and phone numbers are deleted. If a file you upload later lists them, they'll be added back.`)) return;
+      try { await api(`/api/people/${p.id}`, { method: "DELETE" }); toast(`Removed ${p.last}`); await ctx.reload(); ctx.render(); } catch (err) { toast(err.message); }
+    } }, icon("x"));
     return h("li", { class: "row", style: { minHeight: "52px" } },
       avatar(model, p.id, "sm"),
       h("div", { class: "main" }, h("div", { class: "name" }, `${p.last}, ${p.preferred || p.first}`, p.hidden ? h("span", { class: "pill" }, "hidden") : null),
         p.aliases?.length ? h("div", { class: "sub tiny" }, `Also: ${p.aliases.join("; ")}`) : null),
-      cls, h("label", { title: "Show in the app", style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px" } }, hide, "show"));
+      cls, h("label", { title: "Show in the app", style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px" } }, hide, "show"), remove);
   })), { pad: false, right: `${all.length}` });
 }
 

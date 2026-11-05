@@ -3,7 +3,7 @@
 import { h, icon, card, notice, emptyState, segmented, avatar, copyText, toast, numberButton } from "../ui.js";
 import { local } from "../api.js";
 import { fmtDate, fmtRange, fmtTime, fmtMonth, monthKey, addDays, relDay, nowMinutesLocal, DOW_SHORT, dow } from "../../core/dates.js";
-import { KINDS, ROLES, eventHeadline, isGenericTitle, residentsOf, facultyOf, zoomTelHref, relevantTo } from "../../core/didactics.js";
+import { KINDS, ROLES, SERIES, eventHeadline, isGenericTitle, residentsOf, facultyOf, zoomTelHref, relevantTo } from "../../core/didactics.js";
 
 const KIND_CHIP = { pbld: "senior", lecture: "call24", "grand-rounds": "cardiac", mm: "warn", "board-review": "night", "mock-oral": "ob", "journal-club": "call12", simulation: "call12", other: "info", none: "pc" };
 
@@ -68,59 +68,112 @@ export function sessionCard(ctx, e, { me = ctx.state.me, showDate = false } = {}
   );
 }
 
-// Compact line for the Today card.
-function sessionLine(ctx, e, me) {
-  const mine = mineOf(e, me);
+// Where a session stands right now (only when looking at today).
+function statusOf(e, now, mine) {
+  if (e.start == null) return null;
   const start = mine?.start ?? e.start;
-  return h("li", { class: "row tap", onclick: () => ctx.go("didactics") },
-    h("div", { class: "timecol" }, start != null ? fmtTime(start) : "—"),
-    h("div", { class: "main" },
-      h("div", { class: "name" }, mine ? (mine.role === "examinee" ? "Your mock oral" : `You present: ${mine.topic || eventHeadline(e)}`) : eventHeadline(e)),
-      h("div", { class: "sub" }, [e.place, residentsOf(e).length && !mine ? residentsOf(e).map((p) => p.display).join(", ") : null].filter(Boolean).join(" · "))),
-    e.zoomLink?.url ? h("a", { class: "iconbtn", href: e.zoomLink.url, target: "_blank", rel: "noopener", "aria-label": "Join Zoom", onclick: (ev) => ev.stopPropagation() }, icon("video")) : null);
+  const end = mine?.end ?? e.end ?? start + 60;
+  if (now >= end) return { kind: "done", text: "Ended" };
+  if (now >= start) return { kind: "live", text: "Live now" };
+  const mins = start - now;
+  if (mins <= 90) return { kind: "soon", text: `In ${mins} min` };
+  return null;
+}
+const STATUS_CHIP = { live: "gap", soon: "warn", done: "pc" };
+
+// Zoom for a block of sessions: join, one-tap dial-in, and the ID/passcode to copy.
+function zoomPanel(z) {
+  const code = [z.meetingId ? `ID ${z.meetingId}` : null, z.passcode ? `Passcode ${z.passcode}` : null].filter(Boolean).join(" · ");
+  return h("div", { class: "zoompanel" },
+    zoomButtons(z),
+    code ? h("button", { class: "zp-code", type: "button", title: "Copy meeting ID and passcode", onclick: () => copyText(`${z.meetingId}${z.passcode ? ` / ${z.passcode}` : ""}`) },
+      icon("video"), h("span", null, code), icon("link")) : null);
 }
 
-// Today screen: sessions for the day shown (or tomorrow morning once today's are over),
-// plus your next assignment in the coming two weeks.
-export function didacticsTodayCard(ctx) {
+// One session inside the Today card: time, what it is, who, and what it's about.
+function daySession(ctx, e, { me, now, isToday }) {
+  const { model } = ctx;
+  const mine = mineOf(e, me);
+  const st = isToday ? statusOf(e, now, mine) : null;
+  const k = KINDS[e.kind] || KINDS.other;
+  const res = residentsOf(e);
+  const fac = facultyOf(e);
+  // A generic printed title adds nothing next to the kind chip; say what the session is instead.
+  const title = !isGenericTitle(e) ? e.title
+    : e.kind === "board-review" ? (res.length ? "Resident presentations" : null)
+    : k.long !== k.label ? k.long : null;
+  const conflict = mine ? model.didactics.conflict(me, e.date, mine.start ?? e.start) : null;
+  const who = [];
+  if (e.kind === "mock-oral") {
+    if (res.length) who.push(h("div", { class: "slots" }, res.map((p) => h("a", { class: `slot${p.pid === me ? " me" : ""}`, href: `#/p/${p.pid}` },
+      h("b", null, p.start != null ? fmtRange(p.start, p.end ?? e.end) : ""), ` ${p.display}`))));
+  } else if (res.length) {
+    who.push(h("div", { class: "who" }, h("span", { class: "muted" }, res.length > 1 ? "Presenting: " : "Presenter: "),
+      ...res.flatMap((p, i) => [i ? ", " : "", h("a", { href: `#/p/${p.pid}`, class: p.pid === me ? "me" : "" }, p.display), p.topic ? h("span", { class: "muted" }, ` (${p.topic})`) : ""])));
+  }
+  for (const p of fac) {
+    who.push(h("div", { class: "facrow" },
+      h("span", { class: "muted small" }, `${p.role === "presenter" ? "Speaker" : ROLES[p.role] || "Faculty"}:`),
+      h("b", { class: "small" }, p.display),
+      p.staff?.numbers?.length ? numberButton(model.dir, model.dir.primary(p.staff.numbers) || p.staff.numbers[0], { compact: true }) : null));
+  }
+  return h("div", { class: `dayses${mine ? " mine" : ""}${st?.kind === "done" ? " done" : ""}` },
+    h("div", { class: "timecol" }, e.start != null ? fmtTime(mine?.start ?? e.start) : "—",
+      e.end != null ? h("span", null, fmtTime(mine?.end ?? e.end)) : null),
+    h("div", { class: "main" },
+      h("div", { class: "chips" }, kindChip(e), e.cme ? h("span", { class: "chip info" }, "CME") : null,
+        st ? h("span", { class: `chip ${STATUS_CHIP[st.kind]}${st.kind === "live" ? " solid" : ""}`, vars: st.kind === "live" ? { "--c": "var(--gap)" } : null }, st.text) : null,
+        youBadge(mine, e)),
+      title ? h("div", { class: "name" }, title) : null,
+      ...who,
+      conflict ? h("div", { class: "tiny", style: { color: "var(--warn)", marginTop: "4px" } }, conflict) : null,
+      e.objectives || e.audience ? h("details", { class: "about" }, h("summary", null, "What it's about"),
+        e.audience ? h("p", { class: "small muted" }, `For: ${e.audience}`) : null,
+        e.objectives ? h("p", { class: "small" }, e.objectives) : null) : null));
+}
+
+// Today screen: the day's sessions, only on days that have didactics. Everything needed to
+// get on the call (Zoom, dial-in, ID and passcode) and to know what each session is about.
+export function didacticsDayCard(ctx) {
   const { model, state } = ctx;
   const D = model.didactics;
   if (!D?.has) return null;
   const me = state.me;
-  const isToday = state.date === state.today;
+  const date = state.date;
+  const all = D.on(date);
+  if (!all.length) return null;
+  const isToday = date === state.today;
   const now = isToday ? nowMinutesLocal() : 0;
-  let date = state.date;
-  let list = D.on(date).filter((e) => !e.cancelled && relevantTo(e, me) && (!isToday || (e.end ?? 1440) > now));
-  let when = isToday ? "Today" : relDay(date, state.today);
-  if (!list.length && isToday && now >= 12 * 60) {
-    date = addDays(state.today, 1);
-    list = D.on(date).filter((e) => !e.cancelled && relevantTo(e, me));
-    when = "Tomorrow";
-  }
-  const next = me ? D.forPerson(me, state.today, addDays(state.today, 14)).find((a) => !list.includes(a.event)) : null;
-  if (!list.length && !next) return null;
+  const sessions = all.filter((e) => !e.cancelled && relevantTo(e, me));
 
-  const body = h("div");
-  if (list.length) {
-    const first = list[0];
-    body.append(
-      h("div", { class: "tiny muted", style: { margin: "0 0 2px" } }, `${when} · ${first.place || ""}`),
-      h("ul", { class: "list" }, list.map((e) => sessionLine(ctx, e, me))),
-    );
-    const z = list.find((e) => e.zoomLink)?.zoomLink;
-    if (z) body.append(zoomButtons(z, { compact: true }));
+  if (!sessions.length) {
+    const off = all.filter((e) => e.cancelled);
+    if (!off.length) return null;
+    const what = off[0].series !== "other" && SERIES[off[0].series] ? SERIES[off[0].series] : "didactics";
+    const reason = off[0].title && !/^no (lecture|session)/i.test(off[0].title) ? ` (${off[0].title})` : "";
+    return card("Didactics", h("p", { class: "small muted", style: { margin: 0 } },
+      `No ${what} ${isToday ? "today" : `on ${fmtDate(date)}`}${reason}.`),
+    { right: h("a", { href: "#/didactics", class: "small" }, "All ›") });
   }
-  if (next) {
-    const e = next.event;
-    const conflict = D.conflict(me, e.date, next.start);
-    body.append(h("div", { class: "assign", onclick: () => ctx.go("didactics") },
-      icon("book"),
-      h("div", { class: "main" },
-        h("div", { class: "name" }, next.role === "examinee" ? `Your mock oral · ${relDay(e.date, state.today)} ${fmtTime(next.start)}` : `You present ${relDay(e.date, state.today)} · ${eventHeadline(e)}`),
-        h("div", { class: "sub" }, [next.topic, next.role === "examinee" ? facultyOf(e)[0]?.display : null, e.place].filter(Boolean).join(" · ")),
-        conflict ? h("div", { class: "tiny", style: { color: "var(--warn)" } }, conflict) : null)));
-  }
-  return card("Didactics", body, { right: h("a", { href: "#/didactics", class: "small" }, "All") });
+
+  // Header: when (including everyone's own slots) and where, and whether it's on now.
+  const starts = sessions.flatMap((e) => [e.start, ...e.people.map((p) => p.start)]).filter((x) => x != null);
+  const ends = sessions.flatMap((e) => [e.end ?? (e.start != null ? e.start + 60 : null), ...e.people.map((p) => p.end)]).filter((x) => x != null);
+  const places = [...new Set(sessions.map((e) => e.place).filter(Boolean))];
+  const live = isToday ? sessions.map((e) => statusOf(e, now, mineOf(e, me))).find((x) => x && x.kind !== "done") : null;
+  const allDone = isToday && sessions.every((e) => statusOf(e, now, mineOf(e, me))?.kind === "done");
+  const zooms = [...new Map(sessions.filter((e) => e.zoomLink).map((e) => [e.zoomLink.key, e.zoomLink])).values()];
+
+  const body = h("div", { class: `didday${allDone ? " done" : ""}` },
+    h("div", { class: "didday-head" },
+      starts.length ? h("b", null, `${fmtTime(Math.min(...starts))}–${fmtTime(Math.max(...ends))}`) : null,
+      places.length ? h("span", null, ` · ${places.join(" / ")}`) : null),
+    ...sessions.map((e) => daySession(ctx, e, { me, now, isToday })),
+    ...(allDone ? [] : zooms.map(zoomPanel)),
+  );
+  const right = live ? h("span", { class: `chip ${STATUS_CHIP[live.kind]}${live.kind === "live" ? " solid" : ""}`, vars: live.kind === "live" ? { "--c": "var(--gap)" } : null }, live.text)
+    : allDone ? h("span", { class: "chip pc" }, "Done for today") : h("a", { href: "#/didactics", class: "small" }, "All ›");
+  return card(isToday ? "Didactics today" : `Didactics · ${relDay(date, state.today)}`, body, { right });
 }
 
 // One of a resident's own assignments as a list row.

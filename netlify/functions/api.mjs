@@ -2,7 +2,7 @@
 import { openStore } from "../../lib/store.js";
 import { isAdmin, isViewer, calToken, pidFromToken, configured, env } from "../../lib/auth.js";
 import {
-  normalizeDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, setDirectory, setSettings, setDidactics, deleteDidactics,
+  normalizeDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, setDirectory, setSettings, setDidactics, deleteDidactics, removePerson,
 } from "../../lib/dataset.js";
 import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
@@ -219,6 +219,13 @@ export default async function handler(req) {
       ds.updatedAt = new Date().toISOString();
       await st.setJSON("dataset", ds);
       return json({ ok: true, person: p, updatedAt: ds.updatedAt });
+    }
+    if (person && method === "DELETE") {
+      const ds = await loadDataset(st);
+      const p = removePerson(ds, person[1]);
+      if (!p) return fail(404, "No such person");
+      await st.setJSON("dataset", ds);
+      return json({ ok: true, removed: p.id, updatedAt: ds.updatedAt });
     }
 
     if (path === "/api/export" && method === "GET") {

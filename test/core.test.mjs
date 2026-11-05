@@ -349,3 +349,22 @@ test("didactics reader sends the PDF to Claude and returns the parsed schedule",
   assert.deepEqual([doc.type, doc.source.type, doc.source.media_type, doc.source.data], ["document", "base64", "application/pdf", "JVBERg=="]);
   assert.match(text.text, /Doe: Jane Doe, CA-1/);
 });
+
+test("people who left: directory cleanup and removing someone", async () => {
+  const { setDirectory, removePerson } = await import("../lib/dataset.js");
+  const ds = { ...dataset(), people: people.map((p) => ({ ...p })), log: [] };
+  // An intern added from an older card, with no schedule anywhere.
+  setDirectory(ds, { text: "## Residents\nGone, Former | Pager 80001 | PGY-1\nDoe, Jane | Cisco 313-555-0101" });
+  assert.ok(ds.people.some((p) => p.last === "Gone"));
+  const s = setDirectory(ds, { text: "## Residents\nDoe, Jane | Cisco 313-555-0101" });
+  assert.deepEqual(s.removed, ["Gone, Former"]);
+  assert.ok(!ds.people.some((p) => p.last === "Gone"));
+  assert.ok(ds.people.some((p) => p.id === "lee-sam")); // not listed, but on the call sheet: kept
+  // Removing someone also drops their call-sheet rows, rotations and numbers.
+  assert.equal(removePerson(ds, "doe-jane").id, "doe-jane");
+  assert.equal(ds.months["2026-11"].rows["doe-jane"], undefined);
+  assert.equal(ds.rotations["doe-jane"], undefined);
+  assert.equal(ds.directory.people["doe-jane"], undefined);
+  assert.equal(createModel(ds).person("doe-jane"), undefined);
+  assert.equal(removePerson(ds, "nobody"), null);
+});
