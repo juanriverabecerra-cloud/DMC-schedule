@@ -1,6 +1,7 @@
 // DOM helpers and shared components. Text always goes in through text nodes, never innerHTML.
 import { fmtRange } from "../core/dates.js";
 import { siteName, headline } from "../core/model.js";
+import { prettyDigits, numberTag } from "../core/directory.js";
 
 export function h(tag, props, ...children) {
   const el = document.createElement(tag);
@@ -97,13 +98,21 @@ export function contactActions(phone, { text = false } = {}) {
 }
 
 // One number as an action: dialable numbers call, extensions without a dialing rule and
-// pagers copy (they only work from a hospital phone or the paging system).
+// pagers copy (they only work from a hospital phone or the paging system). The kind of phone
+// (Cisco, Mobile, Vocera) is always shown; a mobile also gets a text button.
 export function numberButton(dir, num, { compact = false } = {}) {
   const dial = dir.dial(num);
-  const label = num.kind === "pager" ? `Pager ${num.value}` : num.kind === "ext" && !dial ? `Ext ${num.value}` : compact ? (num.label && !["Phone", "Ext"].includes(num.label) ? num.label : "Call") : dir.text(num);
+  const tag = numberTag(num);
+  const label = num.kind === "pager" ? `Pager ${num.value}`
+    : !dial ? `${tag || "Ext"} ${num.value}`
+    : compact ? (tag || "Call")
+    : num.kind === "ext" ? `Ext ${num.value} · ${prettyDigits(dial)}` : prettyDigits(dial);
   if (dial) {
-    return h("a", { class: `numbtn${compact ? " compact" : ""}`, href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) },
-      icon("phone"), h("span", null, label), !compact && num.label && !["Phone", "Ext"].includes(num.label) ? h("small", null, num.label) : null);
+    const call = h("a", { class: `numbtn${compact ? " compact" : ""}`, href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) },
+      icon("phone"), h("span", null, label), !compact && tag ? h("small", null, tag) : null);
+    if (tag !== "Mobile") return call;
+    return h("span", { class: "numpair" }, call,
+      h("a", { class: `numbtn${compact ? " compact" : ""} icononly`, href: smsHref(dial), "aria-label": `Text ${prettyDigits(dial)}`, title: `Text ${prettyDigits(dial)}`, onclick: (e) => e.stopPropagation() }, icon("message")));
   }
   return h("button", { class: `numbtn copy${compact ? " compact" : ""}`, type: "button", title: num.kind === "pager" ? "Copy pager number" : "Dial from a hospital phone — tap to copy",
     onclick: (e) => { e.stopPropagation(); copyText(num.value); } },

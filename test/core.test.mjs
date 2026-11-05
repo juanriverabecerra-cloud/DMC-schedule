@@ -255,3 +255,30 @@ test("CA-1 obstetrics is the 11 to 9 rotation: Monday to Friday, 11a-9p", async 
   assert.deepEqual(t.elevenNine.map((d) => d.pid), ["doe-jane"]);
   assert.deepEqual(t.ob.map((d) => d.pid), ["leed-ana"]);
 });
+
+test("directory keeps Cisco phones and personal mobiles apart", async () => {
+  const { numberText, parseNumber } = await import("../public/core/directory.js");
+  assert.equal(parseNumber("Cell 248-555-0202").label, "Mobile"); // "Cell" and "Mobile" are one kind
+  assert.equal(parseNumber("cisco 313-555-0201").label, "Cisco");
+  const text = `## Residents
+Doe, Jane | Cisco 313-555-0101 | Pager 7001
+## Resident mobiles
+Doe, Jane | 248-555-0111
+Leed, Ana | Mobile 248-555-0112 | Cisco 313-555-0102
+## Anesthesiologists — Harper
+Smith, Alex | Cisco 313-555-0201
+## Anesthesiologists — Harper mobiles
+Smith, Alex | 248-555-0202`;
+  const built = buildDirectory(parseDirectoryText(text), people);
+  assert.deepEqual(built.people["doe-jane"].numbers.map((n) => `${n.label} ${n.value}`), ["Cisco 3135550101", "Pager 7001", "Mobile 2485550111"]);
+  assert.equal(built.staff.length, 1); // listed twice, one attending
+  assert.deepEqual(built.staff[0].numbers.map((n) => n.label), ["Cisco", "Mobile"]);
+  const m = createModel({ ...dataset(), directory: built });
+  const ana = m.dir.resident("leed-ana");
+  assert.equal(ana.primary.label, "Cisco"); // the work phone is the default even if the mobile is listed first
+  assert.equal(ana.mobile.value, "2485550112");
+  assert.equal(m.phone("leed-ana"), "3135550102");
+  assert.equal(numberText(ana.cisco), "Cisco (313) 555-0102");
+  assert.equal(numberText(ana.mobile), "Mobile (248) 555-0112");
+  assert.deepEqual(m.dir.search("mobile").map((c) => c.name).sort(), ["Ana Leed", "Jane Doe", "Smith, Alex"].sort());
+});

@@ -51,12 +51,16 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
   ## Dialing
   Ext 5xxxx = 313-745-xxxx
   ## Residents
-  Last, First | 313-555-0100 | Pager 1234
+  Last, First | Cisco 313-555-0100 | Pager 1234
+  ## Resident mobiles
+  Last, First | 248-555-0103
   ## Anesthesiologists — Harper
-  Last, First | Cisco 313-555-0101 | Cell 248-555-0102
+  Last, First | Cisco 313-555-0101 | Mobile 248-555-0102
   ## Harper OR rooms
   OR 15 | Ext 51234
   ```
+
+  Label each number with what it is: **Cisco** (hospital Cisco phone), **Mobile** (personal cell; "Cell" also works), **Pager**, **Ext** or **Vocera**. In a section whose title says "mobile" or "Cisco", unlabeled numbers take that label, and listing someone again adds the numbers to what they already have. The app calls the Cisco phone by default; mobiles also get a text button.
 
   "Residents" match the roster (a new name with "| PGY-1" is added), "Anesthesiologists …" sections are matched to the MDAs on the daily sheet (the site in the title breaks ties, e.g. Harper vs. Sinai-Grace), "Harper OR rooms" and "OPSC rooms" power the room buttons, and "Dialing" rules turn 5-digit extensions into numbers a cell phone can call.
 - **Yearly**: upload the new rotations file in June.

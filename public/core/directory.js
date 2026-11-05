@@ -2,19 +2,34 @@
 // and pagers, plus the rules that turn 5-digit hospital extensions into numbers a cell can dial.
 //
 //   ## Section title            what the section is decides how entries are used
-//   Name | number | number      a number may start with a label: Cisco, Cell, Ext, Pager, Phone
+//   Name | number | number      a number may start with a label: Cisco, Mobile (or Cell), Pager, Ext, Vocera
 //   Ext 5xxxx = 313-745-xxxx    (in a "Dialing" section) extension rule
 //
 // 7-digit numbers get area code 313; 4-5 digit numbers are extensions unless labeled Pager.
+// Unlabeled numbers in a section whose title says "mobile"/"cell" or "Cisco" take that label,
+// and a person listed again (e.g. "## Resident mobiles") gets the new numbers added.
 import { createMatcher, splitName, fold } from "./names.js";
 
 const CLASS_TOKEN = /^(CA|PGY)\s*-?\s*\d$/i;
+
+// One name per kind of phone, so a hospital Cisco phone and a personal mobile never get mixed up.
+const LABELS = [
+  [/^cisco( phone)?$/i, "Cisco"],
+  [/^(cell|mobile|personal|cell ?phone|mobile phone|personal cell)$/i, "Mobile"],
+  [/^vocera$/i, "Vocera"],
+  [/^(phone|tel)$/i, "Phone"],
+];
+const canonLabel = (label) => (LABELS.find(([re]) => re.test(label))?.[1]) || label;
+export const isMobile = (n) => n?.label === "Mobile";
+export const isCisco = (n) => n?.label === "Cisco";
+// Work phones first: Cisco, then desk/other lines, then a personal mobile.
+const rank = (n) => (isCisco(n) ? 0 : isMobile(n) ? 2 : 1);
 
 export function parseNumber(token) {
   const raw = String(token ?? "").trim();
   const m = raw.match(/^([A-Za-z][A-Za-z .]*?)?\s*([+(]?\d[\d\s().\-/]*)$/);
   if (!m) return null;
-  const label = (m[1] || "").trim().replace(/\.$/, "");
+  const label = canonLabel((m[1] || "").trim().replace(/\.$/, "").replace(/\s+/g, " "));
   let digits = m[2].replace(/\D/g, "");
   if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
   const kindLabel = label.toLowerCase();
@@ -31,6 +46,13 @@ function sectionType(title) {
   if (/^residents?\b/.test(t) && !/lounge|lines?/.test(t)) return "residents";
   if (/anesthesiolog|attending|mda list|physicians?/.test(t)) return "staff";
   return "places";
+}
+
+function defaultLabel(title) {
+  const t = title.toLowerCase();
+  if (/mobile|\bcell/.test(t)) return "Mobile";
+  if (/cisco/.test(t)) return "Cisco";
+  return null;
 }
 
 function siteOf(title) {
@@ -52,7 +74,7 @@ export function parseDirectoryText(text) {
     if (!s || s.startsWith("#") && !s.startsWith("##")) return;
     if (s.startsWith("##")) {
       const title = s.replace(/^#+\s*/, "").trim();
-      section = { title, type: sectionType(title), site: siteOf(title) };
+      section = { title, type: sectionType(title), site: siteOf(title), label: defaultLabel(title) };
       return;
     }
     if (section.type === "dialing") {
@@ -70,6 +92,7 @@ export function parseDirectoryText(text) {
       const c = part.match(CLASS_TOKEN);
       if (c) { cls = `${c[1].toUpperCase()}-${part.match(/\d$/)[0]}`; continue; }
       const n = parseNumber(part);
+      if (n && section.label && n.kind === "phone" && n.label === "Phone") n.label = section.label;
       if (n) numbers.push(n);
       else notes.push(part);
     }
@@ -99,11 +122,22 @@ export function prettyDigits(d) {
   return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d;
 }
 
+// The label worth showing next to a number ("Cisco", "Mobile", ...), or "".
+export const numberTag = (num) => (num?.label && !["Phone", "Ext", "Pager"].includes(num.label) ? num.label : "");
+
 export function numberText(num, dialing = []) {
   if (num.kind === "pager") return `Pager ${num.value}`;
   const dial = dialDigits(num, dialing);
-  if (num.kind === "ext") return dial ? `Ext ${num.value} · ${prettyDigits(dial)}` : `Ext ${num.value}`;
-  return prettyDigits(num.value);
+  const tag = numberTag(num);
+  if (num.kind === "ext") return `${tag || "Ext"} ${num.value}${dial ? ` · ${prettyDigits(dial)}` : ""}`;
+  return `${tag ? `${tag} ` : ""}${prettyDigits(num.value)}`;
+}
+
+// Adds numbers that aren't already listed.
+function mergeNumbers(a, b) {
+  const out = [...a];
+  for (const n of b) if (!out.some((x) => x.kind === n.kind && x.value === n.value)) out.push(n);
+  return out;
 }
 
 const slug = (s) => fold(s).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -126,13 +160,21 @@ export function buildDirectory(parsed, people, { upsert } = {}) {
       if (id) out.added.push(r.name);
     }
     if (!id) { out.unmatched.push(r.name); continue; }
+    const prev = out.people[id];
+    if (prev) { prev.numbers = mergeNumbers(prev.numbers, r.numbers); prev.notes = [...prev.notes, ...r.notes]; continue; }
     out.people[id] = { numbers: r.numbers, notes: r.notes, listedAs: r.name };
   }
   const seen = new Set();
   const uniq = (base) => { let id = base, i = 2; while (seen.has(id)) id = `${base}-${i++}`; seen.add(id); return id; };
+  const staffKey = new Map();
   for (const s of parsed.staff) {
     const q = splitName(s.name.includes(",") || !s.name.includes(" ") ? s.name : s.name.replace(/^(\S+)\s+(.+)$/, "$2, $1"));
-    out.staff.push({ id: uniq(`mda-${slug(s.name)}`), name: s.name, last: q.last, first: q.first, preferred: q.preferred, site: s.site, group: s.group, numbers: s.numbers, notes: s.notes });
+    const key = `${s.site}|${slug(q.last)}|${slug(q.first || "")}`;
+    const prev = staffKey.get(key);
+    if (prev) { prev.numbers = mergeNumbers(prev.numbers, s.numbers); prev.notes = [...prev.notes, ...s.notes]; continue; }
+    const entry = { id: uniq(`mda-${slug(s.name)}`), name: s.name, last: q.last, first: q.first, preferred: q.preferred, site: s.site, group: s.group, numbers: s.numbers, notes: s.notes };
+    staffKey.set(key, entry);
+    out.staff.push(entry);
   }
   for (const p of parsed.places) {
     const keys = [];
@@ -149,12 +191,14 @@ export function buildDirectory(parsed, people, { upsert } = {}) {
 // Older saves stored {people: {id: {phone}}, places: [{name, phone}]}.
 function upgrade(dir) {
   const d = dir || {};
+  // Saved labels from before "Cell" and "Mobile" were one kind.
+  const norm = (e) => ({ ...e, numbers: (e.numbers || []).map((n) => (n?.label ? { ...n, label: canonLabel(n.label) } : n)) });
   const people = {};
   for (const [id, v] of Object.entries(d.people || {})) {
-    people[id] = v.numbers ? v : { numbers: [parseNumber(v.phone)].filter(Boolean), notes: v.note ? [v.note] : [] };
+    people[id] = norm(v.numbers ? v : { numbers: [parseNumber(v.phone)].filter(Boolean), notes: v.note ? [v.note] : [] });
   }
-  const places = (d.places || []).map((p, i) => (p.numbers ? p : { id: `place-${i}`, name: p.name, group: "Places", numbers: [parseNumber(p.phone)].filter(Boolean), notes: p.note ? [p.note] : [], keys: [] }));
-  return { people, places, staff: d.staff || [], dialing: d.dialing || DEFAULT_DIALING, text: d.text || "" };
+  const places = (d.places || []).map((p, i) => norm(p.numbers ? p : { id: `place-${i}`, name: p.name, group: "Places", numbers: [parseNumber(p.phone)].filter(Boolean), notes: p.note ? [p.note] : [], keys: [] }));
+  return { people, places, staff: (d.staff || []).map(norm), dialing: d.dialing || DEFAULT_DIALING, text: d.text || "" };
 }
 
 // Lookups used by the screens and the calendar feed.
@@ -166,12 +210,17 @@ export function createDirectory(ds, model) {
   const placeByKey = new Map();
   for (const p of dir.places) for (const k of p.keys || []) placeByKey.set(k, p);
 
-  const firstDialable = (numbers) => numbers?.find((n) => dialDigits(n, dialing)) || null;
+  // The number to call by default: a work phone (Cisco first) before a personal mobile.
+  const firstDialable = (numbers) => [...(numbers || [])].sort((a, b) => rank(a) - rank(b)).find((n) => dialDigits(n, dialing)) || null;
 
   function resident(pid) {
     const e = dir.people[pid];
     if (!e) return null;
-    return { numbers: e.numbers, notes: e.notes || [], primary: firstDialable(e.numbers), pager: e.numbers.find((n) => n.kind === "pager") || null };
+    const numbers = [...e.numbers].sort((a, b) => rank(a) - rank(b));
+    return {
+      numbers, notes: e.notes || [], primary: firstDialable(numbers),
+      cisco: numbers.find(isCisco) || null, mobile: numbers.find(isMobile) || null, pager: numbers.find((n) => n.kind === "pager") || null,
+    };
   }
 
   // An attending named on the daily sheet ("Patel", "Kahai/David"); prefers the site's own list.
@@ -204,7 +253,7 @@ export function createDirectory(ds, model) {
     const digits = s.replace(/\D/g, "");
     const words = s.split(/\s+/).filter(Boolean);
     return all().filter((c) => {
-      const hay = fold(`${c.name} ${c.group} ${(c.notes || []).join(" ")}`);
+      const hay = fold(`${c.name} ${c.group} ${(c.notes || []).join(" ")} ${c.numbers.map((n) => n.label).join(" ")}`);
       if (words.every((w) => hay.includes(w))) return true;
       return digits.length >= 3 && c.numbers.some((n) => n.value.includes(digits) || (dialDigits(n, dialing) || "").includes(digits));
     });

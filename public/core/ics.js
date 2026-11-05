@@ -4,7 +4,7 @@
 import { addDays, range, fmtRange, fmtDate, monthDates, addMonths, monthKey } from "./dates.js";
 import { SITES } from "./codes.js";
 import { headline } from "./model.js";
-import { prettyDigits } from "./directory.js";
+import { prettyDigits, numberTag } from "./directory.js";
 
 const VTIMEZONE = [
   "BEGIN:VTIMEZONE", "TZID:America/Detroit",
@@ -55,16 +55,17 @@ function runs(dates) {
 }
 
 function withPhone(model, pid) {
-  const ph = model.phone(pid);
-  return ph ? `${model.name(pid)} (${prettyDigits(ph)})` : model.name(pid);
+  const num = model.dir.resident(pid)?.primary;
+  return num ? `${model.name(pid)} (${phoneOf(model, [num])})` : model.name(pid);
 }
 
-// "(313) 745-2594", "ext 37856" or "" for a list of directory numbers.
+// "Cisco (313) 555-0101", "(313) 555-0102", "ext 31234" or "" for a list of directory numbers.
 function phoneOf(model, numbers) {
   const num = model.dir.primary(numbers) || numbers?.[0];
   if (!num) return "";
   const dial = model.dir.dial(num);
-  return dial ? prettyDigits(dial) : num.kind === "pager" ? `pager ${num.value}` : `ext ${num.value}`;
+  const tag = numberTag(num);
+  return dial ? `${tag ? `${tag} ` : ""}${prettyDigits(dial)}` : num.kind === "pager" ? `pager ${num.value}` : `ext ${num.value}`;
 }
 
 function roomLine(model, r) {
