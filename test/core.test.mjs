@@ -221,3 +221,37 @@ test("directory: parsing, extensions, rooms, residents and attendings", () => {
   assert.deepEqual(dir.search("board").map((c) => c.name), ["Resident board runner"]);
   assert.deepEqual(dir.search("1234").map((c) => c.name), ["OR 5", "OR 18"]);
 });
+
+test("CA-1 obstetrics is the 11 to 9 rotation: Monday to Friday, 11a-9p", async () => {
+  const { normCode, rotationCode } = await import("../public/core/codes.js");
+  assert.equal(rotationCode("11 to 9"), "11-9");
+  assert.equal(rotationCode("11a-9p"), "11-9");
+  assert.equal(normCode("11 to 9"), "11-9");
+  assert.equal(normCode("9-Nov"), "11-9"); // Excel's date version of "11-9"
+  const ds = {
+    people,
+    months: { "2026-11": { days: 30, rows: {
+      "doe-jane": { rotation: "Obstetrics", days: { 2: {}, 3: { t: "OB" }, 4: { t: "11 to 9" }, 7: {} } },
+      "leed-ana": { rotation: "Obstetrics", days: { 2: { t: "OB" } } },
+    } } },
+    rotations: { "lee-sam": { "2026-12": "Obstetrics" } },
+    daily: {}, settings: {},
+  };
+  const model = createModel(ds);
+  for (const date of ["2026-11-02", "2026-11-03", "2026-11-04"]) {
+    const d = model.day("doe-jane", date);
+    assert.equal(d.code, "11-9", date);
+    assert.equal(d.label, "11 to 9");
+    assert.equal(d.site, "hutzel");
+    assert.deepEqual([d.shifts[0].start, d.shifts[0].end], [660, 1260]);
+  }
+  assert.equal(model.day("doe-jane", "2026-11-07").status, "off"); // Saturday
+  assert.equal(model.rotationFor("doe-jane", "2026-11"), "11 to 9");
+  assert.equal(model.rotationFor("lee-sam", "2026-12"), "11 to 9"); // planned month, before the call sheet
+  const ca2 = model.day("leed-ana", "2026-11-02");
+  assert.equal(ca2.code, "OB"); // CA-2 OB is unchanged
+  assert.equal(model.rotationFor("leed-ana", "2026-11"), "Obstetrics");
+  const t = model.tonight("2026-11-02");
+  assert.deepEqual(t.elevenNine.map((d) => d.pid), ["doe-jane"]);
+  assert.deepEqual(t.ob.map((d) => d.pid), ["leed-ana"]);
+});

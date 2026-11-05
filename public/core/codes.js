@@ -2,6 +2,7 @@
 // Hours confirmed by the residents: H1 = 24 h (6a-6a), H2 = 12 h (6a-6p), NF = 6p-6a,
 // "10-7" = 10a-7p, green = late resident (finishes at their site, then helps at Harper until 6p),
 // blue on a weekday = 24-hour call (same as H1), magenta week = cardiac call, "X" in an OR = CRNA room.
+// The CA-1 obstetrics rotation is officially the "11 to 9" rotation: Monday to Friday, 11a-9p.
 
 export const SITES = {
   harper: { short: "Harper", name: "Harper University Hospital" },
@@ -44,7 +45,7 @@ export const CODES = {
   "HVSH": { label: "Regional @ HVSH", site: "hvsh", group: "Regional" },
   "OB": { label: "Obstetrics", site: "hutzel", group: "Obstetrics" },
   "OB1": { label: "Obstetrics (OB1)", site: "hutzel", group: "Obstetrics" },
-  "11-9": { label: "Obstetrics 11a–9p", site: "hutzel", group: "Obstetrics", hours: [660, 1260] },
+  "11-9": { label: "11 to 9", site: "hutzel", group: "Obstetrics", hours: [660, 1260] },
   "ELECT": { label: "Elective", site: "elective", group: "Elective" },
   "ELECT-J": { label: "Elective – Jeopardy", site: "elective", group: "Elective" },
   "NCD": { label: "NCD", site: "harper", group: "Other" },
@@ -69,6 +70,7 @@ const ROTATION_RULES = [
   [/pacu/i, "PACU"],
   [/acute pain/i, "AP"],
   [/chronic pain|karmanos/i, "CP"],
+  [/^11\s*(?:a\.?m?\.?)?\s*(?:-|–|to)\s*9(?!\d)|^9-nov$/i, "11-9"],
   [/obstetric|^ob\b|hutzel/i, "OB"],
   [/regional|hvsh|huron/i, "HVSH"],
   [/pediatric|chm|children/i, "CHM"],
@@ -88,8 +90,26 @@ const ROTATION_RULES = [
   [/nora/i, "NORA"],
 ];
 
+// Other ways a code gets typed, including what Excel shows when it turns "11-9" into a date.
+const CODE_ALIASES = [
+  [/^11\s*A?M?\s*(?:-|–|TO)\s*9\s*P?M?$|^9-NOV$/, "11-9"],
+  [/^10\s*A?M?\s*(?:-|–|TO)\s*7\s*P?M?$|^7-OCT$/, "10-7"],
+];
+
 export function normCode(raw) {
-  return String(raw ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  const key = String(raw ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+  for (const [re, code] of CODE_ALIASES) if (re.test(key)) return code;
+  return key;
+}
+
+// The CA-1 OB rotation is the "11 to 9" rotation, whatever the sheet calls it.
+export const CA1_OB_ROTATION = "11 to 9";
+const isOb = (code) => code === "OB" || code === "OB1";
+export function classCode(code, cls) {
+  return cls === "CA-1" && isOb(code) ? "11-9" : code;
+}
+export function classRotation(name, cls) {
+  return cls === "CA-1" && name && isOb(rotationCode(name)) ? CA1_OB_ROTATION : name;
 }
 
 export function rotationCode(name) {

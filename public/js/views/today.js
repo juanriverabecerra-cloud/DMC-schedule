@@ -113,6 +113,7 @@ export function renderToday(ctx) {
     h("div", { class: "chips" }, dayChips(d)),
     d.late ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "You're the late resident: finish at your site, then help at Harper until 6p.") : null,
     d.call === "24" ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "24-hour call tonight (6a–6a), same as H1.") : null,
+    d.code === "11-9" && !d.call ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "11 to 9 rotation: OB at Hutzel, Monday to Friday, 11a–9p.") : null,
   ));
 
   const tomorrow = addDays(state.today, 1);

@@ -1,6 +1,6 @@
 // Turns the stored dataset into answers: where is a resident on a date, what are their
 // hours, who is on tonight. Shared by the app (browser) and the calendar feed (server).
-import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, mergeSettings } from "./codes.js";
+import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings } from "./codes.js";
 import { dow, monthKey, parts, addMonths } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
@@ -57,12 +57,14 @@ export function createModel(ds) {
     return set;
   }
 
+  // Rotation name as residents know it (a CA-1 on "Obstetrics" is on the "11 to 9" rotation).
   function rotationFor(pid, month) {
+    const cls = byId.get(pid)?.cls;
     const row = ds.months?.[month]?.rows?.[pid];
-    if (row?.rotation) return row.rotation;
+    if (row?.rotation) return classRotation(row.rotation, cls);
     const planned = ds.rotations?.[pid]?.[month];
-    if (planned) return planned;
-    return ds.months?.[addMonths(month, -1)]?.rows?.[pid]?.next || null;
+    if (planned) return classRotation(planned, cls);
+    return classRotation(ds.months?.[addMonths(month, -1)]?.rows?.[pid]?.next || null, cls);
   }
 
   function colorFor(rotation, group) {
@@ -124,7 +126,7 @@ export function createModel(ds) {
     info.source = "call";
     const cell = row.days[d] || {};
     const raw = (cell.t || "").trim();
-    const key = normCode(raw);
+    const key = classCode(normCode(raw), p?.cls);
     const tag = fillTag(cell.f);
     info.raw = raw;
     info.covering = !!cell.b;
@@ -299,7 +301,8 @@ export function createModel(ds) {
       call24: r.filter((d) => d.call === "H1" || d.call === "24"),
       call12: r.filter((d) => d.call === "H2"),
       cardiac: r.filter((d) => d.cardiac),
-      ob: r.filter((d) => d.status === "work" && d.site === "hutzel" && !d.call),
+      elevenNine: r.filter((d) => d.status === "work" && d.code === "11-9" && !d.call),
+      ob: r.filter((d) => d.status === "work" && d.site === "hutzel" && d.code !== "11-9" && !d.call),
       ja: r.filter((d) => d.status === "work" && (d.code === "JA" || d.roles.some((x) => x.kind === "ja"))),
       dailyNight: dl ? dl.night : [],
       obMda: dl?.sheet?.ob?.mda || "",

@@ -10,6 +10,7 @@ const LEGEND = [
   ["call12", "12-hr call", "H2. 6a to 6p."],
   ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights."],
   ["senior", "CA-3 10a–7p", "\"10-7\" on the call sheet."],
+  ["ob", "11 to 9", "CA-1 OB rotation at Hutzel. Monday to Friday, 11a to 9p (\"11-9\" on the call sheet)."],
   ["cardiac", "Cardiac call", "Magenta week on the call sheet."],
   ["vac", "Vacation", "Vac, or the peach block around it."],
   ["pc", "Post-call", "PC: post-call day off."],

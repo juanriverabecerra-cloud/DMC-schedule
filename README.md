@@ -9,7 +9,7 @@ A phone-first web app for DMC anesthesia residents that combines the three sched
 What it shows:
 
 - **Today**: your assignment, OR details, who you're working with, the week, upcoming call, and estimated duty hours.
-- **Tonight**: late resident, CA-3 10a–7p, night float, 24/12-hour call, cardiac call, JAs, OB and today's attendings, with call/text buttons.
+- **Tonight**: late resident, CA-3 10a–7p, the CA-1 on 11 to 9 (OB until 9p), night float, 24/12-hour call, cardiac call, JAs, OB and today's attendings, with call/text buttons.
 - **Board**: who's where today, grouped by site and OR, with search and class filters.
 - **Hours**: estimated weekly hours for everyone against ACGME limits (80 h/4-week average, 1 day off in 7, 24+4, rest between shifts).
 - **Gaps**: missing late/NF/24-hr/12-hr/cardiac coverage, the call sheet's own "coverage needed" rows, and conflicts with the daily sheet.
@@ -70,6 +70,7 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
 | Green fill | Late resident: finish at your site, then Harper until 6p |
 | `NF` | Night float, 6p–6a |
 | `10-7` (Excel shows it as a date) | CA-3 senior 10a–7p |
+| `11-9`, or a CA-1 on Obstetrics / `OB` | The "11 to 9" rotation: CA-1 OB at Hutzel, Monday to Friday 11a–9p |
 | Magenta week | Cardiac call (home call, not counted in hours) |
 | `Vac` / peach block | Vacation; a peach day for everyone is a holiday (CRNA coverage) |
 | `PC` | Post-call day off |

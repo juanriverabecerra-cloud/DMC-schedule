@@ -29,12 +29,13 @@ export function renderTonight(ctx) {
   append(root, [
     group(ctx, "Late resident", "until 6p", "late", t.late, (d) => `${where(d)} → Harper until 6p`),
     group(ctx, "CA-3 senior", "10a–7p", "senior", t.senior, where),
+    group(ctx, "11 to 9 (OB)", "11a – 9p", "ob", t.elevenNine, (d) => (d.roles.length ? headline(d) : "Hutzel OB")),
     group(ctx, "Night float", `6p – 6a ${fmtDate(tomorrow, "md")}`, "night", t.night),
     group(ctx, "24-hour call", `6a – 6a ${fmtDate(tomorrow, "md")}`, "call24", t.call24, (d) => (d.call === "24" ? `${d.rotation || d.label} + 24-hr call` : "H1")),
     group(ctx, "12-hour call", "6a – 6p", "call12", t.call12, () => "H2"),
     group(ctx, "Cardiac call", "home call this week", "cardiac", t.cardiac, where),
     group(ctx, "Junior attendings", "today", "info", t.ja, (d) => headline(d)),
-    group(ctx, "Obstetrics @ Hutzel", t.obMda ? `MDA ${t.obMda}` : "today", "vac", t.ob, (d) => d.label),
+    group(ctx, "Obstetrics @ Hutzel", t.obMda ? `MDA ${t.obMda}` : "today", "ob", t.ob, (d) => d.label),
   ]);
 
   const dl = t.daily;
