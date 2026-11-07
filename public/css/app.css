@@ -109,8 +109,9 @@ svg { display: block; }
 .tab .dot.soon { background: var(--accent); }
 
 /* ---------- date nav ---------- */
-.datenav { display: flex; align-items: center; gap: 4px; flex: 1; justify-content: center; }
-.datenav .label { font-weight: 650; font-size: 16px; min-width: 150px; text-align: center; position: relative; }
+.datenav { display: flex; align-items: center; gap: 4px; flex: 1; justify-content: center; min-width: 0; }
+.datenav .label { font-weight: 650; font-size: 16px; text-align: center; position: relative; white-space: nowrap; }
+.datenav ~ .iconbtn, .topbar-inner > .iconbtn:first-child:has(+ .datenav) { width: 32px; }
 .datenav .label input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 .datenav .sub { display: block; font-size: 11px; font-weight: 550; color: var(--muted); letter-spacing: .02em; text-transform: uppercase; }
 .iconbtn {
@@ -124,6 +125,13 @@ svg { display: block; }
   font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; flex: none;
 }
 .avatarbtn { border: 0; background: none; padding: 0; cursor: pointer; flex: none; }
+.topbar-inner > .numbtn { flex: none; }
+/* The smallest phones: your own schedule is still a tap away under More. */
+@media (max-width: 350px) {
+  .topbar-inner { gap: 4px; }
+  .todaybtn { padding: 4px 8px; }
+  .topbar-inner:has(.datenav) .avatarbtn { display: none; }
+}
 
 /* ---------- cards ---------- */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); margin: 0 0 12px; overflow: hidden; }
@@ -331,18 +339,19 @@ table.edit input.bad { border-color: var(--warn); background: color-mix(in srgb,
 /* ---------- calling ---------- */
 .numrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .numbtn {
-  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 10px; border: 0; cursor: pointer;
-  font-size: 13.5px; font-weight: 650; color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); white-space: nowrap;
+  --c: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; border: 0; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; line-height: 1; white-space: nowrap; text-decoration: none;
+  color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
+  transition: background .15s ease, transform .1s ease; -webkit-tap-highlight-color: transparent;
 }
-.numbtn svg { width: 16px; height: 16px; }
-.numbtn small { font-size: 11px; font-weight: 600; color: var(--muted); }
-.numbtn.copy { color: var(--muted); background: var(--surface-2); }
-.numbtn.compact { height: 30px; padding: 0 10px; font-size: 13px; }
+.numbtn svg { width: 15px; height: 15px; flex: none; }
+.numbtn.copy { --c: var(--muted); }
+.numbtn.icononly { width: 32px; padding: 0; }
+.numbtn:active { transform: scale(.96); }
+.numbtn:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+@media (hover: hover) { .numbtn:hover { background: color-mix(in srgb, var(--c) 22%, transparent); } }
 .numpair { display: inline-flex; gap: 4px; }
-.numbtn.icononly { padding: 0 10px; }
-.chip.callchip { --c: var(--accent); text-decoration: none; border: 0; cursor: pointer; }
-.chip.callchip.muted { --c: var(--muted); }
-.chip.callchip svg { width: 13px; height: 13px; }
 .callchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .roomgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
 .roomtile {

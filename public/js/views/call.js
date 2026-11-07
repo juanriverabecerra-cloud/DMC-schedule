@@ -1,6 +1,6 @@
 // Call: search everyone and everything with a number, a "Right now" list built from your
 // assignment today, one-tap essentials, and OR room tiles.
-import { h, icon, avatar, classPill, numberButton, emptyState, notice, card, copyText } from "../ui.js";
+import { h, icon, avatar, classPill, numberButtons, emptyState, notice, card, copyText } from "../ui.js";
 import { fmtDate } from "../../core/dates.js";
 import { CLASS_ORDER } from "../../core/model.js";
 
@@ -100,7 +100,7 @@ export function contactRow(ctx, item) {
       h("div", { class: "name" }, h("span", { class: "n" }, item.title), p ? classPill(p.cls) : null),
       item.sub ? h("div", { class: "sub" }, item.sub) : null,
       (item.notes || []).length ? h("div", { class: "tiny faint" }, item.notes.join(" · ")) : null,
-      h("div", { class: "numrow" }, item.numbers.map((n) => numberButton(model.dir, n)))),
+      h("div", { class: "numrow" }, numberButtons(model.dir, item.numbers))),
   );
 }
 
@@ -120,7 +120,7 @@ function roomGrid(ctx, kind) {
     const inner = [h("b", null, n), h("span", null, who || today?.surgeon || ""), !dial ? h("i", null, "copy") : null];
     return dial
       ? h("a", { class: "roomtile", href: `tel:+1${dial}`, title: `${p.name} · ${dir.text(num)}` }, inner)
-      : h("button", { class: "roomtile ext", type: "button", title: `${p.name} · ${dir.text(num)} (hospital phone)`, onclick: () => copyText(num.value) }, inner);
+      : h("button", { class: "roomtile ext", type: "button", title: `${p.name} · ${dir.text(num)} (hospital phone)`, onclick: () => copyText(num.value, `${p.name} ${num.value}`) }, inner);
   }));
 }
 

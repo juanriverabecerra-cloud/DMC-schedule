@@ -37,6 +37,7 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   left: '<path d="m15 5-7 7 7 7"/>',
   right: '<path d="m9 5 7 7-7 7"/>',
+  pager: '<rect x="3" y="7" width="18" height="10" rx="2.5"/><path d="M7 11h6"/>',
   phone: '<path d="M5 3h3l2 5-2.5 1.5a11 11 0 0 0 7 7L16 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 5a2 2 0 0 1 2-2z"/>',
   message: '<path d="M4 5h16v11H8l-4 4z"/>',
   calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
@@ -99,36 +100,51 @@ export function contactActions(phone, { text = false } = {}) {
   );
 }
 
-// One number as an action: dialable numbers call, extensions without a dialing rule and
-// pagers copy (they only work from a hospital phone or the paging system). The kind of phone
-// (Cisco, Mobile, Vocera) is always shown; a mobile also gets a text button.
-export function numberButton(dir, num, { compact = false } = {}) {
+// How a number is named on its button. The digits are never shown: a button says what the
+// number is (Mobile, Cisco, Call), and the phone app shows the digits on the way out.
+const numberLabel = (num, dial) => numberTag(num) || (dial ? "Call" : num.kind === "pager" ? "Pager" : "Ext");
+
+// Pagers and hospital-only extensions can't be dialed from a cell, so they copy and say what was copied.
+const copyNumber = (num, e) => {
+  e?.stopPropagation();
+  copyText(num.value, `${numberTag(num) || (num.kind === "pager" ? "Pager" : "Ext")} ${num.value}`);
+};
+
+// One number as an action, the same pill everywhere: dialable numbers are blue and call, and a
+// mobile adds a text button. Anything that can only be copied is grey.
+export function numberButton(dir, num, { label } = {}) {
   const dial = dir.dial(num);
-  const tag = numberTag(num);
-  const label = num.kind === "pager" ? `Pager ${num.value}`
-    : !dial ? `${tag || "Ext"} ${num.value}`
-    : compact ? (tag || "Call")
-    : num.kind === "ext" ? `Ext ${num.value} · ${prettyDigits(dial)}` : prettyDigits(dial);
-  if (dial) {
-    const call = h("a", { class: `numbtn${compact ? " compact" : ""}`, href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) },
-      icon("phone"), h("span", null, label), !compact && tag ? h("small", null, tag) : null);
-    if (tag !== "Mobile") return call;
-    return h("span", { class: "numpair" }, call,
-      h("a", { class: `numbtn${compact ? " compact" : ""} icononly`, href: smsHref(dial), "aria-label": `Text ${prettyDigits(dial)}`, title: `Text ${prettyDigits(dial)}`, onclick: (e) => e.stopPropagation() }, icon("message")));
+  const name = label || numberLabel(num, dial);
+  if (!dial) {
+    return h("button", { class: "numbtn copy", type: "button", title: `${dir.text(num)}: tap to copy`, onclick: (e) => copyNumber(num, e) },
+      icon(num.kind === "pager" ? "pager" : "phone"), name);
   }
-  return h("button", { class: `numbtn copy${compact ? " compact" : ""}`, type: "button", title: num.kind === "pager" ? "Copy pager number" : "Dial from a hospital phone — tap to copy",
-    onclick: (e) => { e.stopPropagation(); copyText(num.value); } },
-  icon(num.kind === "pager" ? "message" : "link"), h("span", null, label), !compact && num.kind !== "pager" ? h("small", null, "hospital phone") : null);
+  const call = h("a", { class: "numbtn", href: telHref(dial), "aria-label": `Call ${name}`, title: dir.text(num), onclick: (e) => e.stopPropagation() }, icon("phone"), name);
+  if (numberTag(num) !== "Mobile") return call;
+  return h("span", { class: "numpair" }, call,
+    h("a", { class: "numbtn icononly", href: smsHref(dial), "aria-label": `Text ${name}`, title: `Text ${prettyDigits(dial)}`, onclick: (e) => e.stopPropagation() }, icon("message")));
 }
 
-// Small inline chip that calls a place or person, e.g. "OR 15" or an MDA.
+// All of a contact's numbers, the default first. Two of the same kind are told apart: "Call 1", "Call 2".
+export function numberButtons(dir, numbers) {
+  const ordered = dir.inCallOrder(numbers);
+  const labels = ordered.map((n) => numberLabel(n, dir.dial(n)));
+  const seen = {};
+  return ordered.map((n, i) => {
+    const name = labels[i];
+    seen[name] = (seen[name] || 0) + 1;
+    return numberButton(dir, n, { label: labels.filter((l) => l === name).length > 1 ? `${name} ${seen[name]}` : name });
+  });
+}
+
+// The same pill, named for who or what it calls, e.g. "OR 15" or an MDA.
 export function callChip(dir, text, numbers) {
   const num = dir.primary(numbers) || numbers?.[0];
   if (!num) return null;
   const dial = dir.dial(num);
   return dial
-    ? h("a", { class: "chip callchip", href: telHref(dial), onclick: (e) => e.stopPropagation(), title: dir.text(num) }, icon("phone"), text)
-    : h("button", { class: "chip callchip muted", type: "button", onclick: (e) => { e.stopPropagation(); copyText(num.value); }, title: `${dir.text(num)} — copy` }, icon(num.kind === "pager" ? "message" : "link"), text);
+    ? h("a", { class: "numbtn", href: telHref(dial), "aria-label": `Call ${text}`, title: dir.text(num), onclick: (e) => e.stopPropagation() }, icon("phone"), text)
+    : h("button", { class: "numbtn copy", type: "button", onclick: (e) => copyNumber(num, e), title: `${dir.text(num)}: tap to copy` }, icon(num.kind === "pager" ? "pager" : "phone"), text);
 }
 
 // Status chips for one resident-day.
@@ -208,10 +224,10 @@ export function openSheet(title, content) {
   return close;
 }
 
-export async function copyText(text) {
+export async function copyText(text, shown) {
   try {
     await navigator.clipboard.writeText(text);
-    toast("Copied");
+    toast(shown ? `${shown} copied` : "Copied");
   } catch {
     window.prompt("Copy this:", text);
   }

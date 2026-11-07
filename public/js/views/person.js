@@ -1,4 +1,4 @@
-import { h, icon, card, avatar, classPill, dayChips, emptyState, telHref, smsHref, numberButton } from "../ui.js";
+import { h, icon, card, avatar, classPill, dayChips, emptyState, telHref, smsHref, numberButtons } from "../ui.js";
 import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
@@ -68,7 +68,7 @@ export function renderPerson(ctx, pid) {
       h("div", { style: { fontSize: "20px", fontWeight: 700 } }, model.name(pid)),
       h("div", { class: "muted small", style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
         classPill(p.cls), model.rotationFor(pid, monthKey(state.date)) || ""),
-      contact ? h("div", { class: "numrow" }, contact.numbers.map((n) => numberButton(model.dir, n))) : null),
+      contact ? h("div", { class: "numrow" }, numberButtons(model.dir, contact.numbers)) : null),
   ));
 
   root.append(h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },

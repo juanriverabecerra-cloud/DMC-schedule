@@ -1,4 +1,4 @@
-import { h, icon, personRow, emptyState, notice, append, numberButton, callChip } from "../ui.js";
+import { h, icon, personRow, emptyState, notice, append, numberButtons, callChip } from "../ui.js";
 import { fmtDate, addDays, dow } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 
@@ -62,7 +62,7 @@ export function renderTonight(ctx) {
             h("div", { class: "main" },
               h("div", { class: "name" }, staff?.name || name),
               h("div", { class: "sub" }, where.map((w) => (/^\d+$/.test(w) ? `OR ${w}` : w)).join(", ")),
-              staff ? h("div", { class: "numrow" }, staff.numbers.map((n) => numberButton(model.dir, n, { compact: true }))) : null));
+              staff ? h("div", { class: "numrow" }, numberButtons(model.dir, staff.numbers)) : null));
         }))));
     }
   } else if (date === addDays(state.today, 1)) {

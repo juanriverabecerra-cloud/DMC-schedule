@@ -279,6 +279,7 @@ Smith, Alex | 248-555-0202`;
   assert.equal(m.dir.resident("doe-jane").primary.label, "Mobile"); // even when Cisco is listed first
   assert.deepEqual(m.dir.resident("doe-jane").numbers.map((n) => n.label), ["Mobile", "Cisco", "Pager"]);
   assert.equal(m.dir.primary(built.staff[0].numbers).label, "Mobile");
+  assert.deepEqual(m.dir.inCallOrder(built.staff[0].numbers).map((n) => n.label), ["Mobile", "Cisco"]); // the default comes first on screen too
   assert.equal(ana.work.label, "Cisco"); // calendar feeds keep to the work phone
   assert.equal(m.dir.workPhone(built.staff[0].numbers).label, "Cisco");
   assert.equal(ana.mobile.value, "2485550112");

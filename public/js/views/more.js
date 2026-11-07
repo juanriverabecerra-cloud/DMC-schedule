@@ -37,7 +37,12 @@ export function renderMore(ctx) {
 
   const month = monthKey(state.today);
   const gaps = model.months.includes(month) ? monthGaps(model, month).filter((g) => g.date >= state.today && g.level === "gap") : [];
+  const dirCount = model.dir.all().length;
   root.append(h("section", { class: "card" }, h("ul", { class: "list" },
+    h("li", { class: "row tap", onclick: () => ctx.go("call") },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("phone")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Call"), h("div", { class: "sub" }, dirCount ? `${dirCount} people, rooms and units` : "Phone directory")),
+      icon("right")),
     h("li", { class: "row tap", onclick: () => ctx.go("gaps") },
       h("div", { class: "avatar", style: { "--c": gaps.length ? "var(--gap)" : "var(--late)" } }, icon(gaps.length ? "alert" : "check")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Coverage gaps"), h("div", { class: "sub" }, gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month")),
@@ -53,13 +58,6 @@ export function renderMore(ctx) {
   )));
 
   if (me && me.cls !== "PGY-1") root.append(subscribeCard(ctx, state.me));
-
-  const dirCount = model.dir.all().length;
-  root.append(h("section", { class: "card" }, h("ul", { class: "list" },
-    h("li", { class: "row tap", onclick: () => ctx.go("call") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("phone")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Phone directory"), h("div", { class: "sub" }, dirCount ? `${dirCount} people, rooms and units with one-tap calling` : "No numbers loaded yet (Admin › Directory)")),
-      icon("right")))));
 
   root.append(card("What the colors mean", h("ul", { class: "list" }, LEGEND.map(([cls, label, text]) =>
     h("li", { class: "row", style: { minHeight: "48px" } }, h("span", { class: `chip ${cls}`, style: { minWidth: "112px", justifyContent: "center" } }, label), h("div", { class: "main small muted" }, text)))), { pad: false }));

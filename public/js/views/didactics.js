@@ -57,7 +57,7 @@ export function sessionCard(ctx, e, { me = ctx.state.me, showDate = false } = {}
     fac.length ? h("div", { class: "session-faculty" }, fac.map((p) => h("div", { class: "facrow" },
       h("span", { class: "muted small" }, `${p.role === "presenter" ? "Speaker" : ROLES[p.role] || "Faculty"}:`),
       h("b", { class: "small" }, p.display),
-      p.staff?.numbers?.length ? numberButton(model.dir, model.dir.primary(p.staff.numbers) || p.staff.numbers[0], { compact: true }) : null))) : null,
+      p.staff?.numbers?.length ? numberButton(model.dir, model.dir.primary(p.staff.numbers) || p.staff.numbers[0]) : null))) : null,
     conflict ? notice("warn", "alert", conflict) : null,
     !e.cancelled ? zoomButtons(e.zoomLink, { compact: true }) : null,
     e.objectives || e.audience ? h("details", { class: "session-more" },
@@ -115,7 +115,7 @@ function daySession(ctx, e, { me, now, isToday }) {
     who.push(h("div", { class: "facrow" },
       h("span", { class: "muted small" }, `${p.role === "presenter" ? "Speaker" : ROLES[p.role] || "Faculty"}:`),
       h("b", { class: "small" }, p.display),
-      p.staff?.numbers?.length ? numberButton(model.dir, model.dir.primary(p.staff.numbers) || p.staff.numbers[0], { compact: true }) : null));
+      p.staff?.numbers?.length ? numberButton(model.dir, model.dir.primary(p.staff.numbers) || p.staff.numbers[0]) : null));
   }
   return h("div", { class: `dayses${mine ? " mine" : ""}${st?.kind === "done" ? " done" : ""}` },
     h("div", { class: "timecol" }, e.start != null ? fmtTime(mine?.start ?? e.start) : "—",

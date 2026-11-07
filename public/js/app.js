@@ -34,7 +34,6 @@ const TABS = [
   ["tonight", "Tonight", "moon"],
   ["board", "Board", "grid"],
   ["didactics", "Didactics", "book"],
-  ["call", "Call", "phone"],
   ["more", "More", "more"],
 ];
 
@@ -96,6 +95,9 @@ function topbar(r) {
   const inner = h("div", { class: "topbar-inner" });
   const me = state.me && state.model?.person(state.me);
   const meBtn = me ? h("button", { class: "avatarbtn", "aria-label": "My schedule", onclick: () => go(`p/${state.me}`) }, avatar(state.model, state.me, "sm")) : null;
+  // Calling is one tap from every screen, without taking a tab.
+  const callBtn = state.model && !["setup", "pick", "call"].includes(r.name)
+    ? h("a", { class: "numbtn icononly", href: "#/call", "aria-label": "Call", title: "Call" }, icon("phone")) : null;
 
   if (DATED.has(r.name) && state.model) {
     const { m, d } = parts(state.date);
@@ -110,14 +112,16 @@ function topbar(r) {
       ),
       h("button", { class: "iconbtn", "aria-label": "Next day", onclick: () => setDate(addDays(state.date, 1)) }, icon("right")),
       state.date !== state.today ? h("button", { class: "todaybtn", onclick: () => setDate(state.today) }, "Today") : null,
+      callBtn,
       meBtn,
     ]);
   } else {
     const titles = { call: "Call", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = ["p", "gaps", "admin", "hours", "rate"].includes(r.name);
+    const back = ["p", "call", "gaps", "admin", "hours", "rate"].includes(r.name);
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
+      callBtn,
       r.name !== "setup" ? meBtn : null,
     ]);
   }
@@ -142,7 +146,7 @@ function tabbar(r) {
   const didToday = sessionsToday();
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && ["gaps", "admin", "hours", "rate"].includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
     id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null,
