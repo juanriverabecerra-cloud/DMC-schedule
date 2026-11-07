@@ -109,8 +109,8 @@ test("hours: merges overlapping shifts and flags long stretches", () => {
   const m = createModel(dataset());
   const rep = hoursReport(m, "doe-jane", "2026-11-01", "2026-11-07");
   const week = rep.weeks.find((w) => w.start === "2026-11-01");
-  // Mon 11 + Tue 12 (late) + Wed 11 + Thu 11 + Fri 24 (6a Fri - 6a Sat, all inside the week)
-  assert.equal(Math.round(week.hours), 69);
+  // Mon 12 + Tue 12 (late) + Wed 12 + Thu 12 + Fri 24 (6a Fri - 6a Sat, all inside the week)
+  assert.equal(Math.round(week.hours), 72);
   assert.ok(rep.intervals.some((iv) => iv.end - iv.start === 24 * 60));
 });
 
@@ -275,9 +275,14 @@ Smith, Alex | 248-555-0202`;
   assert.deepEqual(built.staff[0].numbers.map((n) => n.label), ["Cisco", "Mobile"]);
   const m = createModel({ ...dataset(), directory: built });
   const ana = m.dir.resident("leed-ana");
-  assert.equal(ana.primary.label, "Cisco"); // the work phone is the default even if the mobile is listed first
+  assert.equal(ana.primary.label, "Mobile"); // the mobile is called first
+  assert.equal(m.dir.resident("doe-jane").primary.label, "Mobile"); // even when Cisco is listed first
+  assert.deepEqual(m.dir.resident("doe-jane").numbers.map((n) => n.label), ["Mobile", "Cisco", "Pager"]);
+  assert.equal(m.dir.primary(built.staff[0].numbers).label, "Mobile");
+  assert.equal(ana.work.label, "Cisco"); // calendar feeds keep to the work phone
+  assert.equal(m.dir.workPhone(built.staff[0].numbers).label, "Cisco");
   assert.equal(ana.mobile.value, "2485550112");
-  assert.equal(m.phone("leed-ana"), "3135550102");
+  assert.equal(m.phone("leed-ana"), "2485550112");
   assert.equal(numberText(ana.cisco), "Cisco (313) 555-0102");
   assert.equal(numberText(ana.mobile), "Mobile (248) 555-0112");
   assert.deepEqual(m.dir.search("mobile").map((c) => c.name).sort(), ["Ana Leed", "Jane Doe", "Smith, Alex"].sort());
@@ -429,7 +434,8 @@ test("fairness: weighted shifts, fair share, grades and who can cover", async ()
   assert.equal(c.options[0].pid, "e");
   assert.equal(c.options[0].backup, true);
   assert.match(c.blocked.find((b) => b.pid === "d").why, /takes no call/);
-  assert.match(c.blocked.find((b) => b.pid === "b").why, /Would reach about 84 h/); // a week of nights plus 24 hours
+  // Nights earlier in the week don't block a Saturday: the ACGME limit is the 4-week average.
+  assert.equal(c.options.find((o) => o.pid === "b").projected, 78);
   // Editing the points changes the score; bad values are ignored.
   setFairness(ds, { weights: { sat24: 20, late: "x" } });
   const m2 = createModel(ds);
@@ -449,4 +455,144 @@ test("someone only on older sheets leaves the roster but keeps their history", a
   assert.ok(!m.roster("2026-11-02").some((d) => d.pid === "z"));
   assert.equal(m.person("z").last, "ResZ");
   assert.equal(m.day("z", "2026-10-05").code, "VA");
+});
+
+test("the jeopardy resident is first for any class; everyone else stays in their class", async () => {
+  const { coverOptions } = await import("../public/core/fairness.js");
+  const ds = fairnessDataset();
+  ds.people.find((p) => p.id === "e").cls = "CA-3";
+  ds.people.find((p) => p.id === "c").cls = "CA-2";
+  const c = coverOptions(createModel(ds), "a", "2026-11-07");
+  assert.equal(c.options[0].pid, "e");
+  assert.equal(c.options[0].cls, "CA-3");
+  assert.ok(!c.options.some((o) => o.pid === "c")); // a CA-2 doesn't cover a CA-1
+  const wide = coverOptions(createModel(ds), "a", "2026-11-07", { allClasses: true });
+  assert.ok(wide.options.some((o) => o.pid === "c"));
+});
+
+test("a breaks day is lighter and ends early; someone pulled from their post keeps their day", async () => {
+  const { dayItems, DEFAULT_WEIGHTS } = await import("../public/core/fairness.js");
+  const ds = fairnessDataset();
+  ds.months["2026-11"].rows.c.rotation = "PAT";
+  ds.months["2026-11"].rows.c.days[3] = { t: "PAT" };
+  ds.months["2026-11"].rows.a.days[3] = { t: "BA" };
+  ds.daily["2026-11-03"] = { date: "2026-11-03", rooms: [{ or: "1", staff: "X", ja: "", breaks: "ResA" }, { or: "2", staff: "X", ja: "", breaks: "PAT" }], opsc: {}, ob: {}, pat: [], night: [] };
+  const m = createModel(ds);
+  const giver = m.day("a", "2026-11-03");
+  assert.equal(giver.breaksDay, true);
+  assert.equal(giver.shifts[0].end, 900); // done by 3p
+  assert.ok(DEFAULT_WEIGHTS.breaks < 0);
+  assert.deepEqual(dayItems(giver, DEFAULT_WEIGHTS), [{ key: "breaks", pts: DEFAULT_WEIGHTS.breaks }]);
+  const post = m.day("c", "2026-11-03");
+  assert.equal(post.alsoBreaks, true);
+  assert.deepEqual(dayItems(post, DEFAULT_WEIGHTS), [{ key: "breaks", pts: 0 }]); // counted, not scored
+});
+
+test("AP in the Breaks column means the most senior on Acute Pain who isn't on a call shift", () => {
+  const ds = fairnessDataset();
+  const cls = { a: "CA-1", c: "CA-2", e: "CA-3" };
+  for (const p of ds.people) if (cls[p.id]) p.cls = cls[p.id];
+  for (const id of Object.keys(cls)) {
+    ds.months["2026-11"].rows[id].rotation = "Acute Pain";
+    ds.months["2026-11"].rows[id].days[3] = { t: "AP" };
+  }
+  const sheet = { date: "2026-11-03", rooms: [{ or: "1", staff: "X", ja: "", breaks: "AP" }], opsc: {}, ob: {}, pat: [], night: [] };
+  ds.daily["2026-11-03"] = sheet;
+  let m = createModel(ds);
+  assert.equal(m.day("e", "2026-11-03").alsoBreaks, true); // the CA-3 keeps their post
+  assert.equal(m.day("a", "2026-11-03").roles.some((r) => r.kind === "breaks"), false);
+
+  ds.months["2026-11"].rows.e.days[3] = { t: "10-7" };
+  m = createModel(ds);
+  assert.equal(m.day("e", "2026-11-03").call, "10-7");
+  assert.equal(m.day("e", "2026-11-03").code, "AP");
+  assert.equal(m.day("e", "2026-11-03").roles.some((r) => r.kind === "breaks"), false);
+  assert.equal(m.day("c", "2026-11-03").alsoBreaks, true); // next most senior
+});
+
+test("after a 24: a blank day is post-call, and anything listed is flagged, not a 36-hour shift", () => {
+  const ds = fairnessDataset();
+  const days = { 6: { t: "BA", f: "C9DAF8" }, 7: { t: "SIM" } };
+  ds.months["2026-11"].rows.c.days = days;
+  ds.months["2026-11"].rows.f.days = { 1: { t: "H1" } };
+  const m = createModel(ds);
+  assert.equal(m.day("f", "2026-11-02").status, "postcall");
+  const rep = hoursReport(m, "c", "2026-11-01", "2026-11-14");
+  assert.ok(!rep.flags.some((f) => f.rule === "6.22"));
+  assert.ok(rep.flags.some((f) => f.rule === "postcall" && /SIM/.test(f.text)));
+});
+
+test("ACGME: rolling limits use the 4-week window", () => {
+  const ds = fairnessDataset();
+  const week = {};
+  // In-house call every other night for four weeks is over the every-third-night limit.
+  for (let d = 1; d <= 28; d += 2) week[d] = { t: "H1" };
+  ds.months["2026-11"].rows.c.days = week;
+  const rep = hoursReport(createModel(ds), "c", "2026-11-01", "2026-11-30");
+  assert.ok(rep.flags.some((f) => f.rule === "6.27" && f.level === "gap"));
+  // A single heavy week is a warning, not a broken limit.
+  assert.ok(rep.flags.filter((f) => f.rule === "week").every((f) => f.level === "warn"));
+});
+
+test("years stay apart: class comes from that year's list, rotators and interns aren't scored", async () => {
+  const { fairnessReport, rosterOf, academicYears, yearRange } = await import("../public/core/fairness.js");
+  const ds = fairnessDataset();
+  ds.months["2026-06"] = { days: 30, rows: { a: { cls: "PGY-1", rotation: "", days: { 3: { t: "H" } } }, visitor: { cls: "CA-3", rotation: "Obstetrics", days: {} } } };
+  ds.people.push({ id: "visitor", last: "Visitor", first: "Test", preferred: "Test", cls: "CA-3", former: true, canonical: "Visitor, Test", aliases: [] });
+  ds.rosters = { 2026: { a: "CA-1", b: "CA-1", c: "CA-1" }, 2025: { b: "CA-3" } };
+  const m = createModel(ds);
+  assert.deepEqual(academicYears(m), [2026, 2025]);
+  assert.equal(rosterOf(m, 2025).visitor, undefined);
+  assert.equal(m.classAt("a", "2026-06"), "PGY-1");
+  assert.equal(m.classAt("a", "2026-11"), "CA-1");
+  assert.equal(fairnessReport(m, yearRange(m, "2026-11-06", 2026)).classes[0].rows.length, 3);
+  assert.deepEqual(yearRange(m, "2026-11-06", 2025), { from: "2025-07-01", to: "2026-06-30" });
+});
+
+test("sheets write holidays and names many ways", async () => {
+  const { sameName, splitName } = await import("../public/core/names.js");
+  const { isHolidayText, normCode } = await import("../public/core/codes.js");
+  assert.ok(sameName(splitName("Smith Jones, Alexander"), splitName("Smith, Alexandor")));
+  assert.ok(!sameName(splitName("Smith, Adam"), splitName("Smith, Betty")));
+  for (const t of ["HOLIDAY", "HOLIDA", "Holiday", "LABOR **  DAY **   HOL IDAY"]) assert.ok(isHolidayText(t), t);
+  assert.ok(!isHolidayText("H1"));
+  assert.equal(normCode("post call"), "PC");
+  assert.equal(normCode("OSPC"), "OPSC");
+  assert.equal(normCode("ITE-H1"), "H1");
+  const ds = fairnessDataset();
+  const rows = ds.months["2026-11"].rows;
+  "HOLIDAY".split("").slice(0, 6).forEach((ch, i) => { rows["abcdef"[i]].days[26] = { t: ch }; });
+  const m = createModel(ds);
+  assert.ok(m.holidays("2026-11").has(26));
+  assert.equal(m.day("a", "2026-11-26").status, "holiday");
+});
+
+test("minimums are typed in, saved and checked against the day", async () => {
+  const { setFairness } = await import("../lib/dataset.js");
+  const { serviceCoverage, shortOn } = await import("../public/core/fairness.js");
+  const ds = fairnessDataset();
+  ds.fairness = {};
+  ds.log = [];
+  setFairness(ds, { weights: { breaks: -2 } });
+  setFairness(ds, { minimums: { Obstetrics: { "CA-1": "2", "CA-2": "" }, "Acute Pain": { "CA-1": "1" } } });
+  assert.equal(ds.fairness.weights.breaks, -2); // saving one kind leaves the other alone
+  assert.deepEqual(ds.fairness.minimums, { Obstetrics: { "CA-1": 2 }, "Acute Pain": { "CA-1": 1 } });
+  const m = createModel(ds);
+  assert.deepEqual(shortOn(m, "2026-11-02").map((x) => [x.group, x.have, x.min]), [["Obstetrics", 1, 2], ["Acute Pain", 0, 1]]);
+  const row = serviceCoverage(m, "2026-11").services.find((x) => x.group === "Acute Pain");
+  assert.equal(row.min, 1);
+  assert.equal(row.zero.length, 21);
+});
+
+test("shift ratings: combined only, and small groups stay hidden", async () => {
+  const { cleanScores, summarizeSurvey, ANCHOR_KEY } = await import("../public/core/survey.js");
+  assert.deepEqual(cleanScores({ fri24: "7", nope: 3, late: 99, nf: "", [ANCHOR_KEY]: 4 }), { fri24: 7, late: 15 });
+  const res = summarizeSurvey([
+    { cls: "CA-1", scores: { fri24: 4 } }, { cls: "CA-1", scores: { fri24: 6 } }, { cls: "CA-1", scores: { fri24: 8 } },
+    { cls: "CA-3", scores: { fri24: 10 } }, { cls: "CA-2", scores: {} },
+  ]);
+  assert.equal(res.count, 4);
+  assert.deepEqual(res.shifts.fri24, { n: 4, median: 7, low: 4, high: 10, classes: { "CA-1": 6 } });
+  // One or two answers would be someone's own, so they stay hidden.
+  assert.deepEqual(summarizeSurvey([{ cls: "CA-1", scores: { fri24: 4 } }, { cls: "CA-1", scores: { fri24: 6 } }]).shifts, {});
 });

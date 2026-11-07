@@ -1,12 +1,13 @@
 // All API routes plus the calendar feeds.
 import { openStore } from "../../lib/store.js";
-import { isAdmin, isViewer, calToken, pidFromToken, configured, env } from "../../lib/auth.js";
+import { isAdmin, isViewer, calToken, pidFromToken, surveyKey, configured, env } from "../../lib/auth.js";
 import {
   normalizeDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, setDirectory, setSettings, setDidactics, deleteDidactics, removePerson, setFairness,
 } from "../../lib/dataset.js";
 import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal } from "../../public/core/dates.js";
+import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -77,6 +78,21 @@ export default async function handler(req) {
       const img = await st.getBytes(`photo/${photo[1]}`);
       if (!img) return fail(404, "No photo for that day");
       return new Response(img.data, { headers: { "content-type": img.contentType, "cache-control": "private, max-age=3600" } });
+    }
+
+    // Shift ratings are kept apart from the dataset: everyone can read the dataset, and these
+    // are only ever shown combined, to admins.
+    if (path === "/api/survey" && method === "PUT") {
+      const body = await req.json();
+      const ds = await loadDataset(st);
+      const person = ds.people.find((p) => p.id === body.pid);
+      if (!person) return fail(400, "Pick yourself first");
+      const scores = cleanScores(body.scores);
+      if (!Object.keys(scores).length) return fail(400, "Rate at least one shift");
+      const survey = (await st.getJSON("survey")) || { responses: {} };
+      survey.responses[surveyKey(person.id)] = { cls: person.cls, scores };
+      await st.setJSON("survey", survey);
+      return json({ ok: true });
     }
 
     // ---- admin only below ----
@@ -200,6 +216,11 @@ export default async function handler(req) {
       const summary = setDirectory(ds, await req.json());
       await st.setJSON("dataset", ds);
       return json({ ok: true, summary, updatedAt: ds.updatedAt });
+    }
+
+    if (path === "/api/survey/results" && method === "GET") {
+      const survey = (await st.getJSON("survey")) || { responses: {} };
+      return json(summarizeSurvey(Object.values(survey.responses)));
     }
 
     if (path === "/api/fairness" && method === "PUT") {

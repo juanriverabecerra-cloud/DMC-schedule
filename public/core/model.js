@@ -1,7 +1,7 @@
 // Turns the stored dataset into answers: where is a resident on a date, what are their
 // hours, who is on tonight. Shared by the app (browser) and the calendar feed (server).
-import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings, fillFamily } from "./codes.js";
-import { dow, monthKey, parts, addMonths } from "./dates.js";
+import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings, fillFamily, isHolidayText } from "./codes.js";
+import { dow, monthKey, parts, addMonths, addDays } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
 import { createDidactics } from "./didactics.js";
@@ -16,9 +16,12 @@ export const ROLE_WORDS = {
   "pat": "PAT", "pat resident": "PAT",
   "nora": "NORA", "nora resident": "NORA",
   "board runner": "BD",
+  "pacu": "PACU", "ap": "AP", "acute pain": "AP",
+  "11-9": "11-9", "11 to 9": "11-9",
 };
 export const roleWord = (name) => ROLE_WORDS[String(name ?? "").trim().toLowerCase()] || null;
 const KEEP_POST = new Set(Object.values(ROLE_WORDS));
+const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
 
 export const BOARD_ORDER = [
   "Harper Main OR", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
@@ -42,6 +45,8 @@ export function createModel(ds) {
   const internWeeks = Object.keys(ds.interns?.weeks || {}).sort();
 
   const fillTag = (hex) => (hex ? S.fillTags[hex.toUpperCase()] || fillFamily(hex) : null);
+  // The class someone was in that month, not the class they're in now.
+  const classAt = (pid, month) => ds.months?.[month]?.rows?.[pid]?.cls || byId.get(pid)?.cls;
 
   function holidays(month) {
     if (holidayCache.has(month)) return holidayCache.get(month);
@@ -51,7 +56,9 @@ export function createModel(ds) {
       const rows = Object.values(m.rows);
       for (let d = 1; d <= (m.days || 31); d++) {
         const blanks = rows.filter((r) => !r.days[d]?.t && fillTag(r.days[d]?.f) === "off").length;
-        if (rows.length && blanks / rows.length >= 0.6) set.add(d);
+        // A holiday can be spelled down the column, one letter per resident.
+        const words = rows.filter((r) => isHolidayText(r.days[d]?.t) || /^[HOLIDAY]$/.test(r.days[d]?.t || "")).length;
+        if (rows.length && (blanks / rows.length >= 0.6 || words >= 5)) set.add(d);
       }
     }
     holidayCache.set(month, set);
@@ -60,7 +67,7 @@ export function createModel(ds) {
 
   // Rotation name as residents know it (a CA-1 on "Obstetrics" is on the "11 to 9" rotation).
   function rotationFor(pid, month) {
-    const cls = byId.get(pid)?.cls;
+    const cls = classAt(pid, month);
     const row = ds.months?.[month]?.rows?.[pid];
     if (row?.rotation) return classRotation(row.rotation, cls);
     const planned = ds.rotations?.[pid]?.[month];
@@ -81,6 +88,15 @@ export function createModel(ds) {
     for (let k = d - 1; peach(k); k--) run++;
     for (let k = d + 1; peach(k); k++) run++;
     return run >= 3;
+  }
+
+  // True when the day before was a 24-hr call, including across the end of a month.
+  function after24(pid, date) {
+    const prev = addDays(date, -1);
+    const cell = ds.months?.[monthKey(prev)]?.rows?.[pid]?.days?.[parts(prev).d];
+    if (!cell) return false;
+    const key = normCode(cell.t);
+    return key === "H1" || (fillTag(cell.f) === "call24" && !CALL_SET.has(key));
   }
 
   function internDay(pid, date) {
@@ -133,7 +149,7 @@ export function createModel(ds) {
     info.source = "call";
     const cell = row.days[d] || {};
     const raw = (cell.t || "").trim();
-    const key = classCode(normCode(raw), p?.cls);
+    const key = classCode(normCode(raw), classAt(pid, month));
     const tag = fillTag(cell.f);
     info.raw = raw;
     info.covering = !!cell.b;
@@ -146,6 +162,8 @@ export function createModel(ds) {
       Object.assign(info, { status: "postcall", label: "Post-call day off" });
     } else if (OFF_RE.test(raw)) {
       Object.assign(info, { status: "off", label: "Off" });
+    } else if (isHolidayText(raw) || (holidays(month).has(d) && /^[HOLIDAY]$/.test(raw))) {
+      Object.assign(info, { status: "holiday", label: "Holiday (CRNA coverage)" });
     } else if (/^no call/i.test(raw)) {
       info.noCall = true;
       if (weekend) Object.assign(info, { status: "off", label: "Off (no call)" });
@@ -160,6 +178,7 @@ export function createModel(ds) {
       else if (tag === "off") Object.assign(info, { status: hasVacNear(row, d) ? "vacation" : "off", label: hasVacNear(row, d) ? "Vacation" : "Off" });
       else if (weekend) Object.assign(info, { status: "off", label: "Off" });
       else if (normCode(row.days[d - 1]?.t) === "NF") Object.assign(info, { status: "postcall", label: "Off after night float" });
+      else if (after24(pid, date)) Object.assign(info, { status: "postcall", label: "Post-call day off" });
       else info.status = "work";
     } else {
       const c = CODES[key];
@@ -175,12 +194,16 @@ export function createModel(ds) {
       if (tag === "late") info.late = true;
       if (tag === "call24") { info.call = "24"; info.site = info.site || "harper"; }
     }
+    // Something listed the morning after a 24 (a SIM session, an exam) isn't a full workday:
+    // it's counted as the 4 hours ACGME allows for education, and shown as something to check.
+    if (info.status === "work" && !info.call && raw && after24(pid, date)) info.afterCall = raw;
     info.shifts = shiftsFor(info);
     return info;
   }
 
   function shiftsFor(info) {
     if (info.status !== "work") return [];
+    if (info.afterCall) return [{ start: 360, end: 600, kind: "day", label: info.afterCall }];
     if (info.call && CALL_CODES[info.call]) {
       const c = CALL_CODES[info.call];
       return [{ start: c.start, end: c.end, kind: c.kind, label: c.label }];
@@ -210,13 +233,21 @@ export function createModel(ds) {
           .map((n) => match(n, { prefer })).filter((id) => id && byId.get(id)?.cls !== "PGY-1");
         if (listed.length) return [...new Set(listed)];
       }
-      return people.filter((p) => {
+      const holders = people.filter((p) => {
         if (p.cls === "PGY-1") return false;
         const b = baseDay(p.id, date);
-        return b.status === "work" && b.code === code;
-      }).map((p) => p.id);
+        return b.status === "work" && b.code === code && b.call !== "NF";
+      });
+      // Acute Pain usually sends its most senior resident who isn't on a call shift that day.
+      if (code === "AP") {
+        const free = holders.filter((p) => !baseDay(p.id, date).call);
+        const senior = free.map((p) => p.cls).sort().at(-1);
+        return free.filter((p) => p.cls === senior).map((p) => p.id);
+      }
+      const junior = holders.map((p) => p.cls).sort()[0];
+      return holders.filter((p) => p.cls === junior).map((p) => p.id);
     };
-    const resolve = (text, where) => splitNames(text).filter((n) => !isCrnaMark(n)).flatMap((name) => {
+    const resolve = (text, where) => splitNames(text).filter((n) => !isCrnaMark(n) && !NOT_A_NAME.test(n)).flatMap((name) => {
       const role = roleWord(name);
       if (role) {
         const ids = roleIds(role);
@@ -273,6 +304,12 @@ export function createModel(ds) {
     if (post && info.roles.some((r) => r.kind === "breaks") && info.roles.every((r) => r.kind === "breaks" || r.kind === "pat")) {
       info.alsoBreaks = true;
       info.roles = [...info.roles.filter((r) => r.kind === "pat"), ...info.roles.filter((r) => r.kind === "breaks")];
+    }
+    // Giving breaks is the job for the day: a lighter day, usually done by 2-3p.
+    if (info.status === "work" && !info.call && !info.late && !info.alsoBreaks
+      && info.roles.some((r) => r.kind === "breaks") && !info.roles.some((r) => r.kind === "room")) {
+      info.breaksDay = true;
+      info.shifts = info.shifts.map((s) => ({ ...s, end: Math.min(s.end, S.breaksEnd), label: "Breaks" }));
     }
     cache.set(key, info);
     return info;
@@ -348,7 +385,7 @@ export function createModel(ds) {
   }
 
   const api = {
-    ds, S, people, byId, months, match,
+    ds, S, people, byId, months, match, classAt,
     person: (id) => byId.get(id),
     name, phone, rotationFor, day, roster, daily, tonight, boardGroup, holidays, coverageNeeded, hasCall, internPat,
     site: (id) => SITES[id] || null,

@@ -1,3 +1,4 @@
+import { local } from "../api.js";
 import { h, icon, card, dayChips, personRow, notice, emptyState, avatar } from "../ui.js";
 import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, fmtMonth } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
@@ -179,6 +180,13 @@ export function renderToday(ctx) {
   }
 
   root.append(subscribeCard(ctx, pid));
+  if (model.person(pid)?.cls !== "PGY-1" && !local.get("shiftRatings")?.sentAt && !local.get("rateDismissed")) {
+    const nudge = h("section", { class: "card card-pad rate-nudge" },
+      h("div", { class: "main" }, h("div", { class: "name small" }, "How heavy do your shifts feel?"), h("div", { class: "tiny muted" }, "One minute. It helps make call fairer, and nobody sees your answers.")),
+      h("button", { class: "btn sm primary", onclick: () => ctx.go("rate") }, "Rate"),
+      h("button", { class: "btn sm ghost", onclick: () => { local.set("rateDismissed", true); nudge.remove(); } }, "Not now"));
+    root.append(nudge);
+  }
   return root;
 }
 

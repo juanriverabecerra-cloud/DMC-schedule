@@ -20,7 +20,7 @@ export const WEIGHT_ROWS = [
   ["cardiacWe", "Cardiac home call, weekend day", 1.5, "Tied to your phone on your days off"],
   ["cardiac", "Cardiac home call, weekday", 0.5, "On call after a normal day"],
   ["late", "Late day (until 6p)", 1, "The baseline for the scale"],
-  ["breaks", "Giving breaks", 0.5, "From the daily sheet"],
+  ["breaks", "Giving breaks", -1, "A lighter day: two rooms, usually done by 2–3p. Negative points take load off"],
   ["stack", "Heavy shifts within 6 days", 2, "Extra points when one heavy shift follows another: recovery matters"],
 ];
 export const DEFAULT_WEIGHTS = Object.fromEntries(WEIGHT_ROWS.map(([k, , v]) => [k, v]));
@@ -37,13 +37,28 @@ export const COLUMNS = [
   ["breaks", "Breaks", ["breaks"], 2],
 ];
 
-// Rotations that have taken no call in any month reviewed. Editable once confirmed.
+// Rotations that take no call (confirmed by the program's residents).
 export const NO_CALL_GROUPS = ["Obstetrics", "Pediatrics", "9-ICU", "Sinai-Grace ICU"];
 const HEAVY = 5;
 const MIN_DAYS = 14; // too little time in the period to compare fairly
 
 export const weightsOf = (model) => ({ ...DEFAULT_WEIGHTS, ...(model.fairness?.weights || {}) });
 const noCallGroups = (model) => model.fairness?.noCallGroups || NO_CALL_GROUPS;
+
+// Who was in each class in an academic year: the program's annual rotations file, or the call
+// sheets when that year's file wasn't uploaded. Balances reset each year, so years never mix.
+export function rosterOf(model, ay) {
+  const listed = model.ds.rosters?.[ay];
+  if (listed && Object.keys(listed).length) return listed;
+  const out = {};
+  for (const m of model.months) {
+    if (academicYearOf(`${m}-15`) !== ay) continue;
+    for (const [pid, r] of Object.entries(model.ds.months[m].rows)) {
+      if (!model.person(pid)?.hidden) out[pid] ||= r.cls || model.person(pid)?.cls;
+    }
+  }
+  return out;
+}
 const rotationGroup = (d) => CODES[d.rotationCode]?.group || d.group || null;
 export const isNoCallRotation = (model, d) => noCallGroups(model).includes(rotationGroup(d));
 
@@ -57,7 +72,8 @@ export function dayItems(d, W) {
     else if (d.call === "NF") add("nf");
     else if (d.call === "10-7") add(d.weekend ? "seniorWe" : "senior");
     if (d.late) add("late");
-    if (d.roles?.some((r) => r.kind === "breaks")) add("breaks");
+    // Everyone pulled for breaks is counted; only a day spent on breaks earns the lighter score.
+    if (d.roles?.some((r) => r.kind === "breaks")) items.push({ key: "breaks", pts: d.breaksDay ? W.breaks ?? 0 : 0 });
   }
   if (d.cardiac) add(d.weekend ? "cardiacWe" : "cardiac");
   return items;
@@ -140,8 +156,9 @@ const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m
 export function fairnessReport(model, { from, to } = {}) {
   const W = weightsOf(model);
   const classes = [];
+  const roster = Object.entries(rosterOf(model, academicYearOf(from)));
   for (const cls of ["CA-1", "CA-2", "CA-3"]) {
-    const rows = model.people.filter((p) => p.cls === cls).map((p) => residentLoad(model, p.id, from, to, W)).filter((r) => r.eligible + r.noCallDays > 0);
+    const rows = roster.filter(([, c]) => c === cls).map(([pid]) => residentLoad(model, pid, from, to, W)).filter((r) => r.eligible + r.noCallDays > 0);
     if (!rows.length) continue;
     const total = rows.reduce((s, r) => s + r.points, 0);
     const days = rows.reduce((s, r) => s + r.eligible, 0);
@@ -167,20 +184,46 @@ export function fairnessReport(model, { from, to } = {}) {
   return { from, to, classes, overall, W };
 }
 
-// Months of the academic year so far: which have a call sheet and which don't.
-export function academicMonths(model, today) {
-  const start = `${academicYearOf(today)}-07`;
-  const now = monthKey(today);
+// Academic years with at least one call sheet, newest first.
+export function academicYears(model) {
+  return [...new Set(model.months.map((m) => academicYearOf(`${m}-15`)))].sort((a, b) => b - a);
+}
+export const yearLabel = (ay) => `${ay}–${String(ay + 1).slice(2)}`;
+
+// Months of an academic year up to today: which have a call sheet and which don't.
+export function academicMonths(model, today, ay = academicYearOf(today)) {
+  const end = [`${ay + 1}-06`, monthKey(today)].sort()[0];
   const out = [];
-  for (let m = start; m <= now; m = addMonths(m, 1)) out.push({ month: m, loaded: model.months.includes(m) });
+  for (let m = `${ay}-07`; m <= end; m = addMonths(m, 1)) out.push({ month: m, loaded: model.months.includes(m) });
   return out;
 }
 
-export function yearRange(model, today) {
-  const months = academicMonths(model, today);
-  const last = [...model.months].filter((m) => m >= months[0].month).sort().pop() || months[months.length - 1].month;
-  const dates = monthDates(last);
-  return { from: `${months[0].month}-01`, to: dates[dates.length - 1] };
+export function yearRange(model, today, ay = academicYearOf(today)) {
+  const months = academicMonths(model, today, ay);
+  const inYear = model.months.filter((m) => m >= `${ay}-07` && m <= `${ay + 1}-06`);
+  const dates = monthDates(inYear[inYear.length - 1] || months[months.length - 1].month);
+  return { from: `${ay}-07-01`, to: dates[dates.length - 1] };
+}
+
+// One line per academic year, for comparing them side by side.
+export function yearsSummary(model, today) {
+  return academicYears(model).map((ay) => {
+    const rep = fairnessReport(model, yearRange(model, today, ay));
+    const row = { ay, label: yearLabel(ay), overall: rep.overall, classes: rep.classes.map((c) => ({ cls: c.cls, grade: c.grade, rate28: c.rate28 })), months: academicMonths(model, today, ay).filter((m) => m.loaded).length };
+    return row;
+  });
+}
+
+// A past year stopped at the same point in the year as today, so a part-year can be read
+// fairly: grades climb as a year fills in.
+export function samePointLastYear(model, today) {
+  const ay = academicYearOf(today);
+  const to = yearRange(model, today, ay).to;
+  const last = model.months.includes(`${Number(to.slice(0, 4)) - 1}-${to.slice(5, 7)}`) ? `${Number(to.slice(0, 4)) - 1}${to.slice(4)}` : null;
+  if (!last) return null;
+  const rep = fairnessReport(model, { from: `${ay - 1}-07-01`, to: last });
+  const final = fairnessReport(model, yearRange(model, today, ay - 1)).overall;
+  return { label: `${yearLabel(ay - 1)} at this point`, overall: rep.overall, final, classes: rep.classes.map((c) => ({ cls: c.cls, grade: c.grade, rate28: c.rate28 })), months: (Number(to.slice(5, 7)) + 5) % 12 + 1 };
 }
 
 // ---------- coverage: who could take a shift ----------
@@ -201,6 +244,32 @@ export function shiftOf(d, W) {
 
 const isBackup = (d) => d.rotationCode === "ELECT-J" || /jeopardy/i.test(d.rotation || "");
 
+// A copy of the schedule with this resident also working those hours. A 24 leaves them
+// post-call the next day, so that day's regular work comes off.
+function withShift(model, pid, date, source) {
+  const next = addDays(date, 1);
+  const is24 = source.call === "H1" || source.call === "24";
+  return {
+    ...model,
+    day(p, dt) {
+      const d = model.day(p, dt);
+      if (p !== pid) return d;
+      if (dt === date) return { ...d, status: "work", call: source.call, late: source.late, shifts: source.shifts };
+      if (is24 && dt === next && !d.call) return { ...d, status: "postcall", shifts: [] };
+      return d;
+    },
+  };
+}
+
+// What taking this shift would break: ACGME "must" limits block it, the rest are warnings.
+function limitCheck(model, pid, date, source) {
+  const from = addDays(date, -28), to = addDays(date, 28);
+  const seen = new Set(hoursReport(model, pid, from, to).flags.map((f) => f.text));
+  const sim = withShift(model, pid, date, source);
+  const fresh = hoursReport(sim, pid, from, to).flags.filter((f) => !seen.has(f.text));
+  return { blocks: fresh.filter((f) => f.level === "gap"), notes: fresh.filter((f) => f.level === "warn"), week: weekHours(sim, pid, date) };
+}
+
 // Why this resident can't take the shift, or null.
 function blockedBy(model, d, shift) {
   const prev = model.day(d.pid, addDays(d.date, -1));
@@ -218,8 +287,9 @@ function blockedBy(model, d, shift) {
   return null;
 }
 
-// Ranked options to cover a resident's shift. Backup (jeopardy) residents first, then whoever
-// is furthest under their fair share. Everyone left out is listed with the reason.
+// Ranked options to cover a resident's shift. Coverage stays within the class, except the
+// jeopardy resident, who is always first for a sick call. After that, fewest warnings, then
+// whoever is furthest under their fair share. Everyone left out is listed with the reason.
 export function coverOptions(model, pid, date, { allClasses = false, report } = {}) {
   const W = weightsOf(model);
   const d = model.day(pid, date);
@@ -230,28 +300,29 @@ export function coverOptions(model, pid, date, { allClasses = false, report } = 
   const load = new Map(rep.classes.flatMap((c) => c.rows.map((r) => [r.pid, r])));
   const options = [], blocked = [];
   for (const p of model.people) {
-    if (p.id === pid || p.cls === "PGY-1" || (!allClasses && p.cls !== me.cls)) continue;
+    if (p.id === pid || p.cls === "PGY-1") continue;
     const c = model.day(p.id, date);
+    const backup = isBackup(c);
+    if (!allClasses && !backup && p.cls !== me.cls) continue;
     let why = blockedBy(model, c, shift);
-    const week = weekHours(model, p.id, date);
-    const adds = c.status === "off" ? shift.hours : Math.max(0, shift.hours - 11);
-    const projected = Math.round((week?.hours || 0) + adds);
-    if (!why && projected > 80) why = `Would reach about ${projected} h that week`;
     // On a weekend the shift needs someone who is off; a regular day needs someone working.
     if (!why && d.weekend && c.status !== "off") why = c.label || "Working";
-    if (why) { blocked.push({ pid: p.id, why }); continue; }
-    const cautions = [];
+    const limits = why ? null : limitCheck(model, p.id, date, d);
+    if (limits?.blocks.length) why = `ACGME: ${limits.blocks[0].text}`;
+    if (why) { blocked.push({ pid: p.id, why, backup }); continue; }
+    const cautions = limits.notes.map((f) => f.text);
     const next = model.day(p.id, addDays(date, 1));
     const prev = model.day(p.id, addDays(date, -1));
     if (next.call === "H1" || next.call === "24") cautions.push("24-hr call the next day");
     if (["H1", "24", "H2"].includes(prev.call)) cautions.push("On call the day before");
-    if (projected >= 70) cautions.push(`About ${projected} h that week`);
+    if ((d.call === "H1" || d.call === "24") && next.status === "work" && !next.call) cautions.push("Post-call the next day: that day needs covering");
     if (shift.key === "nf" && c.status === "work") cautions.push("Their days need covering");
-    if (shift.key === "regular" && !isBackup(c) && c.status === "work") cautions.push(`Leaves ${rotationGroup(c) || "their service"} short`);
+    if (shift.key === "regular" && !backup && c.status === "work") cautions.push(`Leaves ${rotationGroup(c) || "their service"} short`);
     const r = load.get(p.id);
-    options.push({ pid: p.id, status: c.label, balance: r?.balance ?? 0, load: r?.load ?? null, projected, backup: isBackup(c), cautions, after: (r?.balance ?? 0) + shift.pts });
+    options.push({ pid: p.id, cls: p.cls, status: c.label, balance: r?.balance ?? 0, load: r?.load ?? null, projected: Math.round(limits.week?.hours || 0), backup, cautions, after: (r?.balance ?? 0) + shift.pts });
   }
   options.sort((a, b) => Number(b.backup) - Number(a.backup) || a.cautions.length - b.cautions.length || a.balance - b.balance);
+  blocked.sort((a, b) => Number(!!b.backup) - Number(!!a.backup));
   return { shift, options, blocked };
 }
 
@@ -269,7 +340,7 @@ export function suggestMoves(model, today, { report, limit = 8 } = {}) {
       for (const it of r.items) {
         if (it.date < today || it.date > last || !SHIFT_LABEL[it.key] || it.key === "nf" || it.key.startsWith("senior")) continue;
         const { shift, options } = coverOptions(model, r.pid, it.date, { report: rep });
-        const best = options.find((o) => !o.cautions.length && o.balance < 0);
+        const best = options.find((o) => o.cls === c.cls && !o.cautions.length && o.balance < 0);
         if (!shift || !best) continue;
         const a = r.balance, b = byId.get(best.pid)?.balance ?? best.balance;
         const gain = a ** 2 + b ** 2 - (a - shift.pts) ** 2 - (b + shift.pts) ** 2;
@@ -293,36 +364,40 @@ export function suggestMoves(model, today, { report, limit = 8 } = {}) {
 const CLASSES = ["CA-1", "CA-2", "CA-3"];
 
 // For each service and class: the plan, who's assigned that month, and the weekdays it ran
-// short because someone was on vacation or nights. `need` is the confirmed minimum once there
-// is one, otherwise the plan, capped at the number assigned (the plan sheet counts the NORA
-// resident under Thoracic, so a planned seat with nobody assigned isn't treated as a gap).
+// short because someone was on vacation or nights. `need` is the minimum an admin typed in
+// when there is one, otherwise the plan, capped at the number assigned (the plan sheet counts
+// the NORA resident under Thoracic, so a planned seat with nobody assigned isn't a gap).
 export function serviceCoverage(model, month) {
   if (!model.months.includes(month)) return { services: [], weekdays: 0 };
   const plan = model.ds.siteTotals?.[month] || {};
   const mins = model.fairness?.minimums || {};
-  const dates = monthDates(month).filter((date) => dow(date) % 6 !== 0 && !model.roster(date).some((d) => d.status === "holiday"));
+  const roster = rosterOf(model, academicYearOf(`${month}-15`));
+  const holidays = model.holidays(month);
+  const dates = monthDates(month).filter((date) => dow(date) % 6 !== 0 && !holidays.has(Number(date.slice(8))));
   const rows = new Map();
   const slot = (group, cls) => {
     const key = `${group}|${cls}`;
-    if (!rows.has(key)) rows.set(key, { group, cls, plan: plan[group]?.[cls] || 0, assigned: 0, days: [], zero: [] });
+    if (!rows.has(key)) rows.set(key, { group, cls, plan: plan[group]?.[cls] || 0, min: mins[group]?.[cls] ?? null, assigned: 0, days: [], zero: [] });
     return rows.get(key);
   };
   const assigned = new Map();
-  for (const p of model.people) {
-    if (!CLASSES.includes(p.cls)) continue;
-    const g = rotationGroup(model.day(p.id, `${month}-15`));
+  for (const pid of Object.keys(model.ds.months[month].rows)) {
+    const cls = roster[pid];
+    if (!CLASSES.includes(cls)) continue;
+    const g = rotationGroup(model.day(pid, `${month}-15`));
     if (!g) continue;
-    slot(g, p.cls).assigned++;
-    assigned.set(p.id, g);
+    slot(g, cls).assigned++;
+    assigned.set(pid, { g, cls });
   }
+  for (const [group, classes] of Object.entries(mins)) for (const cls of Object.keys(classes)) slot(group, cls);
   for (const date of dates) {
     const present = {};
-    for (const [pid, g] of assigned) {
+    for (const [pid, { g, cls }] of assigned) {
       const d = model.day(pid, date);
-      if (d.status === "work" && d.call !== "NF") present[`${g}|${model.person(pid).cls}`] = (present[`${g}|${model.person(pid).cls}`] || 0) + 1;
+      if (d.status === "work" && d.call !== "NF") present[`${g}|${cls}`] = (present[`${g}|${cls}`] || 0) + 1;
     }
     for (const [key, row] of rows) {
-      const need = mins[row.group]?.[row.cls] ?? (row.plan ? Math.min(row.plan, row.assigned) : row.assigned);
+      const need = row.min ?? (row.plan ? Math.min(row.plan, row.assigned) : row.assigned);
       const have = present[key] || 0;
       if (have < need) row.days.push(date);
       if (!have && need) row.zero.push(date);
@@ -330,6 +405,69 @@ export function serviceCoverage(model, month) {
   }
   const services = [...rows.values()].sort((a, b) => b.zero.length - a.zero.length || b.days.length - a.days.length);
   return { services, weekdays: dates.length };
+}
+
+// Every service a class has been on in the loaded months, for the minimums table.
+export function serviceList(model) {
+  const groups = new Set(Object.keys(model.fairness?.minimums || {}));
+  const last = model.months[model.months.length - 1];
+  if (last) {
+    const roster = rosterOf(model, academicYearOf(`${last}-15`));
+    for (const pid of Object.keys(model.ds.months[last].rows)) {
+      const g = roster[pid] && rotationGroup(model.day(pid, `${last}-15`));
+      if (g) groups.add(g);
+    }
+  }
+  for (const plan of Object.values(model.ds.siteTotals || {})) for (const g of Object.keys(plan)) groups.add(g);
+  return [...groups].sort();
+}
+
+// Services under a typed-in minimum on one date, with who's actually there.
+export function shortOn(model, date) {
+  const mins = model.fairness?.minimums || {};
+  if (!Object.keys(mins).length || !model.hasCall(date)) return [];
+  const roster = rosterOf(model, academicYearOf(date));
+  const have = {};
+  for (const pid of Object.keys(model.ds.months[monthKey(date)].rows)) {
+    const d = model.day(pid, date);
+    if (d.status === "work" && d.call !== "NF" && roster[pid]) {
+      const key = `${rotationGroup(d)}|${roster[pid]}`;
+      have[key] = (have[key] || 0) + 1;
+    }
+  }
+  const out = [];
+  for (const [group, classes] of Object.entries(mins)) {
+    for (const [cls, min] of Object.entries(classes)) {
+      const n = have[`${group}|${cls}`] || 0;
+      if (n < min) out.push({ group, cls, min, have: n });
+    }
+  }
+  return out;
+}
+
+// ---------- ACGME limits ----------
+
+export const LIMITS = [
+  ["6.20", "80 hours a week, averaged over 4 weeks", "must"],
+  ["6.21.a", "14 hours off after 24-hour call", "must"],
+  ["6.21.b", "1 day in 7 off, averaged over 4 weeks", "must"],
+  ["6.22", "24 hours of continuous work, plus 4 for transitions", "must"],
+  ["6.27", "In-house call at most every third night, averaged over 4 weeks", "must"],
+  ["6.21", "8 hours off between shifts", "should"],
+  ["postcall", "Something listed the morning after a 24", "watch"],
+  ["week", "Single weeks over 80 hours (allowed if the average holds)", "watch"],
+];
+
+// Every limit for the whole program over a period, worst first within each rule.
+export function limitsReport(model, { from, to }) {
+  const roster = Object.entries(rosterOf(model, academicYearOf(from))).filter(([, c]) => CLASSES.includes(c));
+  const found = new Map(LIMITS.map(([rule]) => [rule, []]));
+  for (const [pid, cls] of roster) {
+    for (const f of hoursReport(model, pid, from, to).flags) {
+      if (found.has(f.rule) && f.date >= from && f.date <= to) found.get(f.rule).push({ ...f, pid, cls });
+    }
+  }
+  return LIMITS.map(([rule, label, kind]) => ({ rule, label, kind, items: found.get(rule).sort((a, b) => b.date.localeCompare(a.date)) }));
 }
 
 // Plain-language findings for the top of the screen.
@@ -349,10 +487,18 @@ export function insights(model, report, today) {
   }
   for (const c of report.classes) {
     for (const r of c.rows) {
-      for (const w of hoursReport(model, r.pid, today, report.to).weeks) {
-        if (w.known && w.end >= today && w.start <= report.to && w.hours > 80) {
-          out.push({ level: "gap", text: `${model.person(r.pid).last}: about ${Math.round(w.hours)} hours scheduled the week of ${w.start.slice(5).replace("-", "/")}.`, pid: r.pid });
-        }
+      for (const f of hoursReport(model, r.pid, today, report.to).flags) {
+        if (f.level === "gap" && f.date >= addDays(today, -21)) out.push({ level: "gap", text: `${model.person(r.pid).last}: ${f.text}.`, pid: r.pid });
+      }
+    }
+  }
+  // The daily sheet disagreeing with the call sheet, from today on.
+  const upcoming = report.to >= today ? Object.keys(model.ds.daily || {}).filter((x) => x >= today).sort() : [];
+  for (const date of upcoming) {
+    for (const [pid, roles] of model.daily(date)?.roles || []) {
+      const d = model.day(pid, date);
+      if (["vacation", "postcall"].includes(d.status) && roles.some((r) => r.kind !== "night")) {
+        out.push({ level: "warn", text: `${model.person(pid).last} is on the daily sheet for ${date.slice(5).replace("-", "/")}, but the call sheet says ${d.label.toLowerCase()}.`, pid });
       }
     }
   }
@@ -360,24 +506,25 @@ export function insights(model, report, today) {
 }
 
 // Months of each rotation over the year's plan, for spotting uneven rotation mixes.
-export function rotationBalance(model) {
+export function rotationBalance(model, ay = academicYears(model)[0]) {
   const out = [];
+  const roster = Object.entries(rosterOf(model, ay));
+  const inYear = (m) => m >= `${ay}-07` && m <= `${ay + 1}-06`;
   for (const cls of ["CA-1", "CA-2", "CA-3"]) {
-    const people = model.people.filter((p) => p.cls === cls && model.ds.rotations?.[p.id]);
+    const people = roster.filter(([pid, c]) => c === cls && model.ds.rotations?.[pid]).map(([pid]) => pid);
     if (!people.length) continue;
-    const tally = new Map(people.map((p) => [p.id, {}]));
-    for (const p of people) {
-      for (const [month] of Object.entries(model.ds.rotations[p.id])) {
-        const name = model.rotationFor(p.id, month);
-        const d = model.day(p.id, `${month}-15`);
-        const g = CODES[d.rotationCode]?.group || name || "Other";
-        const t = tally.get(p.id);
+    const tally = new Map(people.map((pid) => [pid, {}]));
+    for (const pid of people) {
+      for (const month of Object.keys(model.ds.rotations[pid]).filter(inYear)) {
+        const d = model.day(pid, `${month}-15`);
+        const g = CODES[d.rotationCode]?.group || model.rotationFor(pid, month) || "Other";
+        const t = tally.get(pid);
         t[g] = (t[g] || 0) + 1;
       }
     }
     const groups = new Set([...tally.values()].flatMap((t) => Object.keys(t)));
     const rows = [...groups].map((g) => {
-      const vals = people.map((p) => ({ pid: p.id, n: tally.get(p.id)[g] || 0 }));
+      const vals = people.map((pid) => ({ pid, n: tally.get(pid)[g] || 0 }));
       const nums = vals.map((v) => v.n);
       return { group: g, min: Math.min(...nums), max: Math.max(...nums), most: vals.filter((v) => v.n === Math.max(...nums)).map((v) => v.pid), least: vals.filter((v) => v.n === Math.min(...nums)).map((v) => v.pid) };
     }).filter((r) => r.max - r.min >= 2).sort((a, b) => (b.max - b.min) - (a.max - a.min));

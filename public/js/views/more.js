@@ -46,6 +46,10 @@ export function renderMore(ctx) {
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours"), h("div", { class: "sub" }, "Estimated weekly hours for everyone")),
       icon("right")),
+    h("li", { class: "row tap", onclick: () => ctx.go("rate") },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("sparkle")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts"), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),
+      icon("right")),
   )));
 
   if (me && me.cls !== "PGY-1") root.append(subscribeCard(ctx, state.me));

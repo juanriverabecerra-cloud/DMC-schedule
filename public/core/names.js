@@ -48,7 +48,8 @@ export function slugify(s) {
 export function sameName(a, b) {
   if (!a.lastSig || a.lastSig !== b.lastSig) return false;
   if (!a.firstTokens.length || !b.firstTokens.length) return true;
-  return a.firstTokens.some((t) => b.firstTokens.includes(t) || b.firstTokens.some((u) => u.startsWith(t) || t.startsWith(u)));
+  return a.firstTokens.some((t) => b.firstTokens.some((u) => u === t || u.startsWith(t) || t.startsWith(u)
+    || (t.length >= 5 && u.length >= 5 && editDistance(t, u) <= 1))); // a typo on an old sheet
 }
 
 export function displayName(p) {
@@ -94,7 +95,7 @@ export function createMatcher(people) {
   const index = people.map((p) => {
     const parts = splitName(`${p.last}, ${p.first}${p.preferred && p.preferred !== p.first ? ` (${p.preferred})` : ""}`);
     const aliasParts = (p.aliases || []).map(splitName);
-    return { id: p.id, parts, aliasParts, initials: initialsOf(parts) };
+    return { id: p.id, parts, aliasParts, initials: initialsOf(parts), nicknames: (p.aliases || []).map((a) => a.toLowerCase()) };
   });
 
   function pick(cands, prefer) {
@@ -109,6 +110,8 @@ export function createMatcher(people) {
   return function match(text, { prefer } = {}) {
     const raw = String(text ?? "").replace(/\([^)]*\)/g, "").trim();
     if (!raw || isCrnaMark(raw)) return null;
+    const nick = index.filter((e) => e.nicknames.includes(raw.toLowerCase()));
+    if (nick.length === 1) return nick[0].id; // a sheet's own shorthand, saved as an alias
     if (/^[A-Z]{2,4}$/.test(raw)) {
       const byInit = index.filter((e) => e.initials.includes(raw));
       const got = pick(byInit, prefer);

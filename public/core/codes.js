@@ -95,6 +95,10 @@ const ROTATION_RULES = [
 // Other ways a code gets typed, including what Excel shows when it turns "11-9" into a date.
 const CODE_ALIASES = [
   [/^PEDS?$/, "CHM"],
+  [/^POST[- ]?CALL$/, "PC"],
+  [/^(OSPC|OPCS)$/, "OPSC"],
+  [/^(SIM|ITE)[- ]H1$/, "H1"],
+  [/^CALL$/, "H1"],
   [/^(BA|BA-V|AP|OPSC|PACU|CP|VA|HC|TH|HN|ACC|BD|JA|NORA|VASC)1$/, null], // the rotation with a Friday 24-hr marker: "BA1"
   [/^11\s*A?M?\s*(?:-|–|TO)\s*9\s*P?M?$|^9-NOV$/, "11-9"],
   [/^10\s*A?M?\s*(?:-|–|TO)\s*7\s*P?M?$|^7-OCT$/, "10-7"],
@@ -105,6 +109,9 @@ export function normCode(raw) {
   for (const [re, code] of CODE_ALIASES) if (re.test(key)) return code ?? key.slice(0, -1);
   return key;
 }
+
+// Holidays get typed many ways: "HOLIDAY", "HOLIDA", "LABOR ** DAY ** HOL IDAY".
+export const isHolidayText = (t) => /hol\s*i?\s*da|^hol$/i.test(String(t ?? ""));
 
 // The CA-1 OB rotation is the "11 to 9" rotation, whatever the sheet calls it.
 export const CA1_OB_ROTATION = "11 to 9";
@@ -166,7 +173,8 @@ export const FILL_TAG_LABELS = {
 
 // Scheduled hours used for duty-hour estimates, in minutes from midnight.
 export const DEFAULT_SETTINGS = {
-  dayHours: [360, 1020], // regular weekday: 6a-5p (estimate; adjust in Settings)
+  dayHours: [360, 1080], // regular weekday: 6a-6p, the outer limit (adjust in Settings)
+  breaksEnd: 900, // a breaks day is usually done by 2-3p
   codeHours: {
     "11-9": [660, 1260],
     "PAT": [420, 960],

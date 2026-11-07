@@ -56,13 +56,13 @@ function runs(dates) {
 }
 
 function withPhone(model, pid) {
-  const num = model.dir.resident(pid)?.primary;
+  const num = model.dir.resident(pid)?.work;
   return num ? `${model.name(pid)} (${phoneOf(model, [num])})` : model.name(pid);
 }
 
 // "Cisco (313) 555-0101", "(313) 555-0102", "ext 31234" or "" for a list of directory numbers.
 function phoneOf(model, numbers) {
-  const num = model.dir.primary(numbers) || numbers?.[0];
+  const num = model.dir.workPhone(numbers) || numbers?.[0];
   if (!num) return "";
   const dial = model.dir.dial(num);
   const tag = numberTag(num);

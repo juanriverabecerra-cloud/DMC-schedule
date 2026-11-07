@@ -1,6 +1,11 @@
-// Duty-hour ESTIMATES from scheduled shift times, checked against the ACGME limits:
-// 80 h/week averaged over 4 weeks, 1 day in 7 free (averaged over 4 weeks),
-// 24 h + 4 h transition maximum, 8 h off between shifts, 14 h off after 24 h of in-house call.
+// Duty-hour ESTIMATES from scheduled shift times, checked against the ACGME requirements for
+// anesthesiology (2025, sections 6.20-6.28). "must" limits:
+//   6.20    80 h/week averaged over 4 weeks (the anesthesiology committee allows no exceptions)
+//   6.21.a  14 h free after 24 h of in-house call
+//   6.21.b  1 day in 7 free averaged over 4 weeks; a day off is 24 continuous hours
+//   6.22    24 h of continuous work, plus up to 4 h for transitions
+//   6.27    in-house call no more often than every third night, averaged over 4 weeks
+// and one "should": 6.21, 8 h off between work periods.
 import { addDays, toUTC, startOfWeek, range } from "./dates.js";
 
 const DAY = 1440;
@@ -29,6 +34,18 @@ function overlap(iv, a, b) {
   return Math.max(0, Math.min(iv.end, b) - Math.max(iv.start, a));
 }
 
+// Whole 24-hour stretches with no work between two moments.
+function freeDays(ivs, a, b) {
+  let n = 0, cursor = a;
+  for (const iv of ivs) {
+    if (iv.end <= a) continue;
+    if (iv.start >= b) break;
+    n += Math.floor(Math.max(0, iv.start - cursor) / DAY);
+    cursor = Math.max(cursor, iv.end);
+  }
+  return n + Math.floor(Math.max(0, b - cursor) / DAY);
+}
+
 // Weekly summary (Sunday-Saturday) for every week touching [from, to].
 export function hoursReport(model, pid, from, to) {
   const firstWeek = startOfWeek(addDays(from, -21)); // three earlier weeks feed the 4-week average
@@ -38,30 +55,40 @@ export function hoursReport(model, pid, from, to) {
   for (let ws = firstWeek; ws <= lastDay; ws = addDays(ws, 7)) {
     const a = toUTC(ws) / 60000, b = a + 7 * DAY;
     const minutes = ivs.reduce((s, iv) => s + overlap(iv, a, b), 0);
-    let daysOff = 0, known = true;
+    let daysOff = 0, known = true, away = 0, calls = 0;
     for (let i = 0; i < 7; i++) {
       const date = addDays(ws, i);
       const d = model.day(pid, date);
       if (d.source !== "call") known = false;
+      if (d.status === "vacation") away++;
+      if (d.call === "H1" || d.call === "24") calls++;
       const da = a + i * DAY;
       if (!ivs.some((iv) => overlap(iv, da, da + DAY) > 0)) daysOff++;
     }
-    weeks.push({ start: ws, end: addDays(ws, 6), hours: minutes / 60, daysOff, known });
+    weeks.push({ start: ws, end: addDays(ws, 6), hours: minutes / 60, daysOff, known, away, calls });
   }
   for (let i = 0; i < weeks.length; i++) {
     const window = weeks.slice(Math.max(0, i - 3), i + 1);
     const full = window.length === 4 && window.every((w) => w.known);
-    weeks[i].avg4 = full ? window.reduce((s, w) => s + w.hours, 0) / 4 : null;
-    weeks[i].daysOff4 = full ? window.reduce((s, w) => s + w.daysOff, 0) : null;
+    // Vacation days are left out of the average, so a week away can't hide three heavy ones.
+    const present = 28 - window.reduce((s, w) => s + w.away, 0);
+    weeks[i].avg4 = full && present >= 7 ? window.reduce((s, w) => s + w.hours, 0) / (present / 7) : null;
+    weeks[i].daysOff4 = full ? freeDays(ivs, toUTC(window[0].start) / 60000, toUTC(window[3].end) / 60000 + DAY) : null;
+    weeks[i].calls4 = full ? window.reduce((s, w) => s + w.calls, 0) : null;
   }
 
   const flags = [];
   const inRange = (date) => date >= from && date <= lastDay;
   for (const w of weeks) {
     if (!w.known || !inRange(w.end)) continue;
-    if (w.hours > 80) flags.push({ level: "gap", date: w.start, text: `About ${Math.round(w.hours)} h scheduled the week of ${w.start.slice(5)}` });
-    if (w.avg4 !== null && w.avg4 > 80) flags.push({ level: "gap", date: w.start, text: `4-week average about ${Math.round(w.avg4)} h (limit 80)` });
-    if (w.daysOff4 !== null && w.daysOff4 < 4) flags.push({ level: "warn", date: w.start, text: `Only ${w.daysOff4} days off in the 4 weeks ending ${w.end.slice(5)} (need 4)` });
+    if (w.hours > 80) flags.push({ level: "warn", rule: "week", date: w.start, text: `About ${Math.round(w.hours)} h scheduled the week of ${w.start.slice(5)}; the limit is the 4-week average` });
+    if (w.avg4 !== null && w.avg4 > 80) flags.push({ level: "gap", rule: "6.20", date: w.start, text: `4-week average about ${Math.round(w.avg4)} h ending ${w.end.slice(5)} (limit 80)` });
+    if (w.daysOff4 !== null && w.daysOff4 < 4) flags.push({ level: "gap", rule: "6.21.b", date: w.start, text: `Only ${w.daysOff4} days off in the 4 weeks ending ${w.end.slice(5)} (need 4)` });
+    if (w.calls4 !== null && w.calls4 > 9) flags.push({ level: "gap", rule: "6.27", date: w.start, text: `${w.calls4} in-house calls in the 4 weeks ending ${w.end.slice(5)} (every third night allows 9)` });
+  }
+  for (const date of range(from, lastDay)) {
+    const d = model.day(pid, date);
+    if (d.afterCall) flags.push({ level: "warn", rule: "postcall", date, text: `Listed for ${d.afterCall} on ${date.slice(5)}, the morning after a 24-h call` });
   }
   let nights = 0, nightStart = null;
   for (let i = 0; i < ivs.length; i++) {
@@ -69,12 +96,12 @@ export function hoursReport(model, pid, from, to) {
     const len = (iv.end - iv.start) / 60;
     const date = iv.dates[0];
     if (!inRange(date)) continue;
-    if (len > 28) flags.push({ level: "gap", date, text: `Continuous duty of about ${Math.round(len)} h starting ${date.slice(5)} (limit 24 + 4)` });
+    if (len > 28) flags.push({ level: "gap", rule: "6.22", date, text: `Continuous duty of about ${Math.round(len)} h starting ${date.slice(5)} (limit 24 + 4)` });
     const next = ivs[i + 1];
     if (next) {
       const gap = (next.start - iv.end) / 60;
-      if (len >= 24 && gap < 14) flags.push({ level: "warn", date: next.dates[0], text: `Only ${Math.round(gap)} h off after 24-h call before ${next.dates[0].slice(5)}` });
-      else if (gap < 8) flags.push({ level: "warn", date: next.dates[0], text: `Only ${Math.round(gap)} h off before the shift on ${next.dates[0].slice(5)}` });
+      if (len >= 24 && gap < 14) flags.push({ level: "gap", rule: "6.21.a", date: next.dates[0], text: `Only ${Math.round(gap)} h off after 24-h call before ${next.dates[0].slice(5)} (need 14)` });
+      else if (gap < 8) flags.push({ level: "warn", rule: "6.21", date: next.dates[0], text: `Only ${Math.round(gap)} h off before the shift on ${next.dates[0].slice(5)} (should be 8)` });
     }
     if (iv.kinds.includes("night")) {
       nights = nightStart && (iv.start - ivs[i - 1]?.start) <= DAY + 60 ? nights + 1 : 1;

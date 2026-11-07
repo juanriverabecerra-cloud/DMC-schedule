@@ -22,8 +22,10 @@ const LABELS = [
 const canonLabel = (label) => (LABELS.find(([re]) => re.test(label))?.[1]) || label;
 export const isMobile = (n) => n?.label === "Mobile";
 export const isCisco = (n) => n?.label === "Cisco";
-// Work phones first: Cisco, then desk/other lines, then a personal mobile.
-const rank = (n) => (isCisco(n) ? 0 : isMobile(n) ? 2 : 1);
+// The order to call in: a personal mobile, then Cisco, then desk/other lines.
+const rank = (n) => (isMobile(n) ? 0 : isCisco(n) ? 1 : 2);
+// Calendar feeds end up on outside servers, so they keep to work phones where there is one.
+const workRank = (n) => (isCisco(n) ? 0 : isMobile(n) ? 2 : 1);
 
 export function parseNumber(token) {
   const raw = String(token ?? "").trim();
@@ -210,15 +212,14 @@ export function createDirectory(ds, model) {
   const placeByKey = new Map();
   for (const p of dir.places) for (const k of p.keys || []) placeByKey.set(k, p);
 
-  // The number to call by default: a work phone (Cisco first) before a personal mobile.
-  const firstDialable = (numbers) => [...(numbers || [])].sort((a, b) => rank(a) - rank(b)).find((n) => dialDigits(n, dialing)) || null;
+  const firstDialable = (numbers, order = rank) => [...(numbers || [])].sort((a, b) => order(a) - order(b)).find((n) => dialDigits(n, dialing)) || null;
 
   function resident(pid) {
     const e = dir.people[pid];
     if (!e) return null;
     const numbers = [...e.numbers].sort((a, b) => rank(a) - rank(b));
     return {
-      numbers, notes: e.notes || [], primary: firstDialable(numbers),
+      numbers, notes: e.notes || [], primary: firstDialable(numbers), work: firstDialable(numbers, workRank),
       cisco: numbers.find(isCisco) || null, mobile: numbers.find(isMobile) || null, pager: numbers.find((n) => n.kind === "pager") || null,
     };
   }
@@ -265,7 +266,8 @@ export function createDirectory(ds, model) {
     opscRoom: (n) => placeByKey.get(`opsc:${Number(n)}`) || null,
     dial: (num) => dialDigits(num, dialing),
     text: (num) => numberText(num, dialing),
-    primary: firstDialable,
+    primary: (numbers) => firstDialable(numbers),
+    workPhone: (numbers) => firstDialable(numbers, workRank),
     hasData: dir.staff.length + dir.places.length + Object.keys(dir.people).length > 0,
   };
 }
