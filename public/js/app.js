@@ -17,6 +17,7 @@ import { renderRate } from "./views/rate.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderDidactics } from "./views/didactics.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
+import { remindersFor } from "./views/reminders.js";
 
 const state = {
   ds: local.get("ds"),
@@ -116,7 +117,7 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
+    const titles = { call: "Call", rate: "Rate the shifts", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
     const back = ["p", "call", "gaps", "admin", "hours", "rate"].includes(r.name);
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
@@ -144,12 +145,14 @@ function tabbar(r) {
   nav.hidden = false;
   const gapsSoon = state.model ? [0, 1, 2].some((i) => dayGaps(state.model, addDays(state.today, i)).some((g) => g.level === "gap")) : false;
   const didToday = sessionsToday();
+  const toDo = remindersFor(state.model, state).length > 0;
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
       class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
     id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null,
+    id === "more" && toDo && !gapsSoon ? h("i", { class: "dot soon", "aria-label": "Something to do" }) : null,
     id === "didactics" && didToday ? h("i", { class: `dot${didToday === "live" ? "" : " soon"}`, "aria-label": didToday === "live" ? "Session live now" : "Session today" }) : null)));
   nav.replaceChildren(inner);
 }
@@ -170,7 +173,7 @@ export function render() {
     else if (r.name === "pick") content = renderPickMe(ctx());
     else if (r.name === "tonight") content = renderTonight(ctx());
     else if (r.name === "board") content = renderBoard(ctx());
-    else if (r.name === "hours") content = renderHours(ctx());
+    else if (r.name === "hours") content = renderHours(ctx(), r.arg);
     else if (r.name === "call") content = renderCall(ctx());
     else if (r.name === "gaps") content = renderGaps(ctx(), r.arg);
     else if (r.name === "didactics") content = renderDidactics(ctx());

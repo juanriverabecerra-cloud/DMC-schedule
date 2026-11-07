@@ -48,12 +48,12 @@ export function parseLoggedHours(text) {
   return { entries, summed, worked, total: tail ? Number(tail[1]) : null, first: entries[0]?.date || null, last: entries[entries.length - 1]?.date || null };
 }
 
-// A new paste replaces what's stored for the dates it covers, so corrections carry through.
+// Each file adds to the running record. Only days the new file includes are updated, so a
+// corrected day carries through and every other day stays, however partial the file is.
 export function mergeEntries(old, incoming) {
   if (!incoming.length) return old || [];
-  const dates = incoming.map((e) => e.date).sort();
-  const [from, to] = [dates[0], dates[dates.length - 1]];
-  return [...(old || []).filter((e) => e.date < from || e.date > to), ...incoming]
+  const updated = new Set(incoming.map((e) => e.date));
+  return [...(old || []).filter((e) => !updated.has(e.date)), ...incoming]
     .sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
 }
 

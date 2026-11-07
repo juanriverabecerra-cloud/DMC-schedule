@@ -3,6 +3,7 @@ import { local } from "../api.js";
 import { monthKey, fmtMonth } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeCard } from "./common.js";
+import { remindersFor } from "./reminders.js";
 
 const LEGEND = [
   ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
@@ -35,6 +36,8 @@ export function renderMore(ctx) {
     me ? h("li", { class: "row tap", onclick: () => ctx.go("pick") }, h("div", { class: "main" }, "Not you? Change"), icon("right")) : null,
   )));
 
+  const pending = remindersFor(model, state);
+  const todo = (key) => (pending.includes(key) ? h("span", { class: "pill todo" }, "To do") : null);
   const month = monthKey(state.today);
   const gaps = model.months.includes(month) ? monthGaps(model, month).filter((g) => g.date >= state.today && g.level === "gap") : [];
   const dirCount = model.dir.all().length;
@@ -49,11 +52,11 @@ export function renderMore(ctx) {
       icon("right")),
     h("li", { class: "row tap", onclick: () => ctx.go("hours") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours"), h("div", { class: "sub" }, "Estimated weekly hours for everyone")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours", todo("hours")), h("div", { class: "sub" }, "Your real hours, and estimates for everyone")),
       icon("right")),
     h("li", { class: "row tap", onclick: () => ctx.go("rate") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("sparkle")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts"), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts", todo("rate")), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),
       icon("right")),
   )));
 

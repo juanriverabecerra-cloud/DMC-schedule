@@ -19,7 +19,8 @@ export const WEIGHT_ROWS = [
   ["senior", "CA-3 10a–7p, weekday", 1, "Late finish"],
   ["cardiacWe", "Cardiac home call, weekend day", 1.5, "Tied to your phone on your days off"],
   ["cardiac", "Cardiac home call, weekday", 0.5, "On call after a normal day"],
-  ["late", "Late day (until 6p)", 1, "The baseline for the scale"],
+  ["lateFri", "Late day, Friday", 2, "Runs into the weekend: it starts later and you start it tired"],
+  ["late", "Late day, Mon–Thu (until 6p)", 1, "The baseline for the scale"],
   ["breaks", "Giving breaks", -1, "A lighter day: two rooms, usually done by 2–3p. Negative points take load off"],
   ["stack", "Heavy shifts within 6 days", 2, "Extra points when one heavy shift follows another: recovery matters"],
 ];
@@ -31,7 +32,7 @@ export const COLUMNS = [
   ["fri24", "Fri 24", ["fri24", "wk24"], 1],
   ["h2", "12-hr", ["h2sat", "h2sun", "h2wk"], 1],
   ["nf", "Nights", ["nf"], 5],
-  ["late", "Late", ["late"], 2],
+  ["late", "Late", ["late", "lateFri"], 2],
   ["senior", "10–7", ["senior", "seniorWe"], 7],
   ["cardiac", "Cardiac", ["cardiac", "cardiacWe"], 7],
   ["breaks", "Breaks", ["breaks"], 2],
@@ -71,7 +72,7 @@ export function dayItems(d, W) {
     else if (d.call === "H2") add(d.dow === 6 ? "h2sat" : d.dow === 0 ? "h2sun" : "h2wk");
     else if (d.call === "NF") add("nf");
     else if (d.call === "10-7") add(d.weekend ? "seniorWe" : "senior");
-    if (d.late) add("late");
+    if (d.late) add(d.dow === 5 ? "lateFri" : "late");
     // Everyone pulled for breaks is counted; only a day spent on breaks earns the lighter score.
     if (d.roles?.some((r) => r.kind === "breaks")) items.push({ key: "breaks", pts: d.breaksDay ? W.breaks ?? 0 : 0 });
   }

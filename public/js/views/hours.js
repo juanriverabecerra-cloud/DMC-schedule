@@ -54,7 +54,7 @@ function openImport(ctx, pid) {
     const entries = mergeEntries(loggedFor(pid)?.entries, parsed.entries);
     const kept = saveLogged(pid, entries);
     close();
-    toast(kept ? "Saved on this device" : "This browser wouldn't save it. Private browsing can block this.");
+    toast(kept ? `Saved on this device: ${entries.length} entries in all` : "This browser wouldn't save it. Private browsing can block this.");
     ctx.render();
   });
 }
@@ -122,8 +122,13 @@ function loggedCard(ctx, pid) {
   );
 }
 
-export function renderHours(ctx) {
+export function renderHours(ctx, arg) {
   const { model, state } = ctx;
+  // The reminder links straight to the import. Clearing the link keeps it from reopening.
+  if (arg === "add" && state.me) {
+    history.replaceState(null, "", "#/hours");
+    setTimeout(() => openImport(ctx, state.me));
+  }
   const root = h("div");
   const ws = startOfWeek(state.hoursWeek || state.date);
   if (!model.hasCall(ws) && !model.hasCall(addDays(ws, 6))) {

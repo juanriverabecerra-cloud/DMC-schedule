@@ -321,7 +321,15 @@ test("logged hours: reads the page however it was copied, and checks the total",
   const fixed = parseLoggedHours("M 11/2/2026 6:00 AM 11/2/2026 3:00 PM 9 Rotation").entries;
   const merged = mergeEntries(first, fixed);
   assert.equal(merged.length, 5);
-  assert.equal(merged[0].hours, 9); // a new paste replaces the dates it covers
+  assert.equal(merged[0].hours, 9); // a corrected day carries through
+  const older = parseLoggedHours("M 10/5/2026 6:00 AM 10/5/2026 4:00 PM 10 Rotation").entries;
+  assert.equal(mergeEntries(first, older).length, 6); // an older file adds to the record
+  const newer = parseLoggedHours("M 12/7/2026 6:00 AM 12/7/2026 4:00 PM 10 Rotation").entries;
+  assert.equal(mergeEntries(first, newer).length, 6); // so does a newer one
+  const spread = parseLoggedHours(`M 11/2/2026 6:00 AM 11/2/2026 3:00 PM 9 Rotation
+F 11/6/2026 6:00 AM 11/6/2026 3:00 PM 9 Rotation`).entries;
+  assert.equal(mergeEntries(first, spread).length, 5); // days between the file's first and last stay
+  assert.equal(mergeEntries(mergeEntries(first, older), older).length, 6); // the same file twice changes nothing
 });
 
 test("logged hours: the export file, vacation, rotations and years with no call sheet", async () => {
@@ -602,6 +610,35 @@ test("the jeopardy resident is first for any class; everyone else stays in their
   assert.ok(!c.options.some((o) => o.pid === "c")); // a CA-2 doesn't cover a CA-1
   const wide = coverOptions(createModel(ds), "a", "2026-11-07", { allClasses: true });
   assert.ok(wide.options.some((o) => o.pid === "c"));
+});
+
+test("a Friday late day scores on its own, because it runs into the weekend", async () => {
+  const { dayItems, DEFAULT_WEIGHTS, WEIGHT_ROWS, COLUMNS } = await import("../public/core/fairness.js");
+  const { SURVEY_ROWS } = await import("../public/core/survey.js");
+  assert.ok(DEFAULT_WEIGHTS.lateFri > DEFAULT_WEIGHTS.late);
+  const late = (dow) => ({ status: "work", late: true, dow, shifts: [], roles: [] });
+  assert.deepEqual(dayItems(late(5), DEFAULT_WEIGHTS).map((i) => i.key), ["lateFri"]);
+  assert.deepEqual(dayItems(late(4), DEFAULT_WEIGHTS).map((i) => i.key), ["late"]);
+  assert.ok(SURVEY_ROWS.some(([key]) => key === "lateFri")); // residents rate it separately
+  assert.ok(WEIGHT_ROWS.some(([key]) => key === "lateFri")); // admins can change it
+  assert.deepEqual(COLUMNS.find(([key]) => key === "late")[2], ["late", "lateFri"]); // tables still show one Late column
+});
+
+test("reminders: one at a time, for residents who haven't done it, and Later comes back", async () => {
+  const { nextReminder, pendingReminders, snoozeReminder } = await import("../public/core/reminders.js");
+  const today = "2026-11-07";
+  assert.deepEqual(pendingReminders({ cls: "CA-1" }), ["hours", "rate"]);
+  assert.deepEqual(pendingReminders({ cls: "CA-1", hasHours: true }), ["rate"]);
+  assert.deepEqual(pendingReminders({ cls: "CA-1", hasHours: true, hasRated: true }), []);
+  assert.deepEqual(pendingReminders({ cls: "PGY-1" }), []);
+  assert.deepEqual(pendingReminders({}), []); // nobody picked yet
+  const both = ["hours", "rate"];
+  assert.equal(nextReminder(both, {}, today), "hours");
+  const later = snoozeReminder({}, "hours", today);
+  assert.equal(later.hours, "2026-11-10");
+  assert.equal(nextReminder(both, later, today), "rate"); // the other one takes its turn
+  assert.equal(nextReminder(["hours"], later, "2026-11-09"), null);
+  assert.equal(nextReminder(["hours"], later, "2026-11-10"), "hours"); // and it comes back
 });
 
 test("a breaks day is lighter and ends early; someone pulled from their post keeps their day", async () => {

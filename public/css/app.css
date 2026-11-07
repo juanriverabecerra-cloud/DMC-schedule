@@ -478,8 +478,11 @@ table.fair .bal.under { color: var(--info); font-weight: 700; }
 .rate-order { margin: 0; padding: 0; list-style: none; counter-reset: order; }
 .rate-order li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
 .rate-order li:last-child { border-bottom: 0; }
-.rate-nudge { display: flex; align-items: center; gap: 8px; }
-.rate-nudge .main { flex: 1; min-width: 0; }
+.reminder { display: flex; gap: 12px; align-items: flex-start; border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.reminder .main { flex: 1; min-width: 0; }
+.reminder .name { font-weight: 650; }
+.reminder .btnrow { margin-top: 10px; }
+.pill.todo { --c: var(--accent); margin-left: 6px; }
 
 /* ACGME limits */
 .limit { list-style: none; border-bottom: 1px solid var(--border); padding: 8px 0; }
