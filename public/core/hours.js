@@ -10,12 +10,19 @@ import { addDays, toUTC, startOfWeek, range } from "./dates.js";
 
 const DAY = 1440;
 
-export function intervals(model, pid, from, to) {
+// `actual` (core/logged.js) swaps in logged shifts for dates someone recorded, and their own
+// averages for the days after that. Inside the logged dates, a day with no entry wasn't worked.
+export function intervals(model, pid, from, to, actual = null) {
   const raw = [];
   for (const date of range(addDays(from, -2), to)) {
-    const d = model.day(pid, date);
     const base = toUTC(date) / 60000;
-    for (const s of d.shifts) raw.push({ start: base + s.start, end: base + s.end, kinds: [s.kind], dates: [date] });
+    if (actual && date >= actual.first && date <= actual.last) {
+      for (const e of actual.byDate[date] || []) raw.push({ start: base + e.start, end: toUTC(e.endDate) / 60000 + e.end, kinds: ["logged"], dates: [date] });
+      continue;
+    }
+    const d = model.day(pid, date);
+    const avg = actual && date > actual.last && d.shifts.length === 1 ? actual.expected(d) : null;
+    for (const s of d.shifts) raw.push({ start: base + s.start, end: base + (avg ? s.start + avg * 60 : s.end), kinds: [s.kind], dates: [date] });
   }
   raw.sort((a, b) => a.start - b.start);
   const merged = [];
@@ -47,10 +54,10 @@ function freeDays(ivs, a, b) {
 }
 
 // Weekly summary (Sunday-Saturday) for every week touching [from, to].
-export function hoursReport(model, pid, from, to) {
+export function hoursReport(model, pid, from, to, { actual = null } = {}) {
   const firstWeek = startOfWeek(addDays(from, -21)); // three earlier weeks feed the 4-week average
   const lastDay = addDays(startOfWeek(to), 6);
-  const ivs = intervals(model, pid, firstWeek, lastDay);
+  const ivs = intervals(model, pid, firstWeek, lastDay, actual);
   const weeks = [];
   for (let ws = firstWeek; ws <= lastDay; ws = addDays(ws, 7)) {
     const a = toUTC(ws) / 60000, b = a + 7 * DAY;
@@ -59,8 +66,9 @@ export function hoursReport(model, pid, from, to) {
     for (let i = 0; i < 7; i++) {
       const date = addDays(ws, i);
       const d = model.day(pid, date);
-      if (d.source !== "call") known = false;
-      if (d.status === "vacation") away++;
+      const logged = actual && date >= actual.first && date <= actual.last;
+      if (d.source !== "call" && !logged) known = false; // a logged day needs no call sheet
+      if (d.status === "vacation" || (logged && actual.away.has(date))) away++;
       if (d.call === "H1" || d.call === "24") calls++;
       const da = a + i * DAY;
       if (!ivs.some((iv) => overlap(iv, da, da + DAY) > 0)) daysOff++;
@@ -112,8 +120,8 @@ export function hoursReport(model, pid, from, to) {
   return { weeks: weeks.filter((w) => w.end >= from && w.start <= to), flags, intervals: ivs };
 }
 
-export function weekHours(model, pid, date) {
+export function weekHours(model, pid, date, opts) {
   const ws = startOfWeek(date);
-  const rep = hoursReport(model, pid, ws, addDays(ws, 6));
+  const rep = hoursReport(model, pid, ws, addDays(ws, 6), opts);
   return rep.weeks.find((w) => w.start === ws) || null;
 }

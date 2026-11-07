@@ -289,6 +289,117 @@ Smith, Alex | 248-555-0202`;
   assert.deepEqual(m.dir.search("mobile").map((c) => c.name).sort(), ["Ana Leed", "Jane Doe", "Smith, Alex"].sort());
 });
 
+const LOGGED_ROWS = [
+  ["Rotation on 11/1/2026 ROTATION - PRG-2"],
+  ["M", "11/2/2026 6:00 AM", "11/2/2026 4:00 PM", "10", "Rotation Daily Duties & Assignments", "Res", "Res", "11/5/2026 7:51 AM"],
+  ["Tu", "11/3/2026 6:00 AM", "11/3/2026 5:30 PM", "11.5", "Rotation Daily Duties & Assignments", "Res", "Res", "Never - See Details"],
+  ["W", "11/4/2026 6:00 AM", "11/4/2026 2:30 PM", "8.5", "Rotation Daily Duties & Assignments", "Res", "Res", "Never - See Details"],
+  ["Th", "11/5/2026 8:00 AM", "11/5/2026 6:00 PM", "10", "Conference/Didactics", "Res", "Res", "Never - See Details"],
+  ["F", "11/6/2026 6:00 PM", "11/7/2026 6:00 AM", "12", "Rotation Daily Duties & Assignments", "Res", "Res", "Never - See Details"],
+  ["52"], ["52.00"], ["Export To Excel"],
+];
+
+test("logged hours: reads the page however it was copied, and checks the total", async () => {
+  const { parseLoggedHours, mergeEntries } = await import("../public/core/logged.js");
+  const copies = [
+    LOGGED_ROWS.map((r) => r.join("\t")).join("\n"), // the table's tabs survive
+    LOGGED_ROWS.flat().join("\n"), // each cell on its own line, as phones tend to copy
+    LOGGED_ROWS.flat().join(" "), // one long line
+  ];
+  for (const copy of copies) {
+    const p = parseLoggedHours(copy);
+    assert.equal(p.entries.length, 5);
+    assert.equal(p.summed, 52);
+    assert.equal(p.total, 52);
+    assert.equal(p.entries[3].type, "Conference/Didactics");
+    assert.equal(p.entries[0].type, "Rotation Daily Duties & Assignments");
+    assert.deepEqual([p.entries[4].date, p.entries[4].start, p.entries[4].endDate, p.entries[4].end], ["2026-11-06", 1080, "2026-11-07", 360]);
+  }
+  assert.equal(parseLoggedHours("Nothing useful here 10/21/2026 7:51 AM").entries.length, 0);
+
+  const first = parseLoggedHours(copies[0]).entries;
+  const fixed = parseLoggedHours("M 11/2/2026 6:00 AM 11/2/2026 3:00 PM 9 Rotation").entries;
+  const merged = mergeEntries(first, fixed);
+  assert.equal(merged.length, 5);
+  assert.equal(merged[0].hours, 9); // a new paste replaces the dates it covers
+});
+
+test("logged hours: the export file, vacation, rotations and years with no call sheet", async () => {
+  const { parseLoggedHours, compareLogged, hoursByRotation, actualHours } = await import("../public/core/logged.js");
+  const row = (w, a, b, hrs, type) => `<tr data-log-id="1" data-sel="0"><td data-chk="1"></td><td data-wkday="1" style="mso-number-format:0\\.00;">${w}</td><td data-sdate="1">${a}</td><td data-edate="1">${b}</td><td data-hrs="1">${hrs}</td><td data-dt="1">${type}</td><td data-src="1">Res</td><td data-apr="1">Res</td><td data-chkdate="1">&nbsp;</td></tr>`;
+  const html = `<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN"><html><head><style>td { color: red }</style></head><body><table><thead><tr><th>Start</th><th>End</th></tr></thead><tbody>
+<tr><td colspan="9">Rotation on 7/1/2025 WARDS-A - PRG-1</td></tr>
+${row("Su", "7/6/2025 7:00 AM", "7/7/2025 7:30 AM", "24.5", "Call")}
+${row("W", "7/9/2025 6:00 AM", "7/9/2025 6:00 PM", "12", "Rotation Daily Duties &amp; Assignments")}
+${row("Th", "7/10/2025 12:00 AM", "7/11/2025 12:00 AM", "24", "Vacation")}
+<tr><td colspan="9">Rotation on 7/14/2025 CLINIC-B - PRG-1</td></tr>
+${row("M", "7/14/2025 8:00 AM", "7/14/2025 5:00 PM", "9", "Rotation Daily Duties &amp; Assignments")}
+</tbody><tfoot><tr><td>&nbsp;</td><td>69.50</td><td>&nbsp;</td></tr></tfoot></table></body></html>`;
+  const p = parseLoggedHours(html);
+  assert.equal(p.entries.length, 4);
+  assert.equal(p.total, 69.5); // the page's total includes vacation
+  assert.equal(p.summed, 69.5);
+  assert.equal(p.worked, 45.5); // work doesn't
+  assert.equal(p.entries[1].type, "Rotation Daily Duties & Assignments");
+  assert.deepEqual(p.entries.map((e) => e.rotation), ["WARDS-A", "WARDS-A", "WARDS-A", "CLINIC-B"]);
+
+  const m = createModel(fairnessDataset()); // this resident has no call sheet in 2025
+  const cmp = compareLogged(m, "c", p.entries);
+  assert.equal(cmp.noSheet, 2);
+  assert.deepEqual(cmp.offDays, []); // no sheet isn't the same as a day off
+  assert.deepEqual(cmp.rows.map((r) => [r.label, r.days, r.avg]), [["24-hr call", 1, 24.5]]); // a logged 24 counts anyway
+
+  const wards = hoursByRotation(p.entries).find((r) => r.name === "WARDS-A");
+  assert.equal(wards.hours, 36.5); // vacation isn't work
+
+  const actual = actualHours(m, "c", p.entries);
+  const week = hoursReport(m, "c", "2025-07-06", "2025-07-12", { actual }).weeks.find((w) => w.start === "2025-07-06");
+  assert.equal(week.known, true); // logged days need no call sheet
+  assert.equal(week.hours, 36.5);
+  assert.equal(week.away, 1);
+});
+
+test("logged hours replace the estimate, and your averages shape what's ahead", async () => {
+  const { actualHours, compareLogged, outlook, parseLoggedHours } = await import("../public/core/logged.js");
+  const ds = fairnessDataset();
+  const rows = ds.months["2026-11"].rows;
+  for (const day of [2, 3, 4, 5, 9, 10, 11, 12]) rows.c.days[day] = { t: "BA" };
+  const m = createModel(ds);
+  const text = `M 11/2/2026 6:00 AM 11/2/2026 4:00 PM 10 Rotation Daily Duties
+Tu 11/3/2026 6:00 AM 11/3/2026 4:00 PM 10 Rotation Daily Duties
+W 11/4/2026 6:00 AM 11/4/2026 4:00 PM 10 Rotation Daily Duties
+Th 11/5/2026 8:00 AM 11/5/2026 6:00 PM 10 Conference/Didactics
+Sa 11/7/2026 6:00 AM 11/7/2026 2:00 PM 8 Rotation Daily Duties`;
+  const { entries } = parseLoggedHours(text);
+  const cmp = compareLogged(m, "c", entries);
+  assert.equal(cmp.conference, 1); // counted in hours, not in the rotation's average
+  assert.deepEqual(cmp.offDays, ["2026-11-07"]); // the sheet shows Saturday off
+  assert.deepEqual(cmp.rows.map((r) => [r.label, r.days, r.avg, r.estAvg, r.diff]), [["Basic Anesthesia", 3, 10, 12, -2]]);
+
+  const actual = actualHours(m, "c", entries);
+  assert.deepEqual([actual.first, actual.last], ["2026-11-02", "2026-11-07"]);
+  assert.equal(actual.learned["rot:Basic Anesthesia"], 10);
+
+  const estimate = hoursReport(m, "c", "2026-11-01", "2026-11-14");
+  const real = hoursReport(m, "c", "2026-11-01", "2026-11-14", { actual });
+  const week = (rep, start) => rep.weeks.find((w) => w.start === start);
+  assert.equal(week(estimate, "2026-11-01").hours, 60); // five 12-hour days on the schedule
+  assert.equal(week(real, "2026-11-01").hours, 48); // 10 + 10 + 10 + 10 + 8 as logged; Friday wasn't
+  assert.equal(week(estimate, "2026-11-08").hours, 60);
+  assert.equal(week(real, "2026-11-08").hours, 50); // the same five days at your 10-hour average
+  const view = outlook(real, "2026-11-07", actual);
+  assert.equal(view.allLogged, false); // under four weeks logged, so the average leans on estimates
+  assert.equal(actual.expected(m.day("d", "2026-11-02")), null); // too few days to guess at a new rotation
+
+  const more = parseLoggedHours(`${text}
+M 11/9/2026 6:00 AM 11/9/2026 4:00 PM 10 Rotation Daily Duties
+Tu 11/10/2026 6:00 AM 11/10/2026 4:00 PM 10 Rotation Daily Duties
+W 11/11/2026 6:00 AM 11/11/2026 4:00 PM 10 Rotation Daily Duties`).entries;
+  const later = actualHours(m, "c", more);
+  assert.equal(later.usual, 10);
+  assert.equal(later.expected(m.day("d", "2026-11-02")), 10); // a new rotation starts from your usual day
+});
+
 test("anesthesia techs are one list for every room, and 3xxxx extensions dial", () => {
   const text = `## Dialing
 Ext 3xxxx = 313-993-xxxx

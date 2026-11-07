@@ -3,6 +3,7 @@ import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LET
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
 import { hoursReport } from "../../core/hours.js";
+import { actualFor } from "../logged.js";
 import { openDaySheet, subscribeCard } from "./common.js";
 import { didacticsPersonCard } from "./didactics.js";
 
@@ -91,9 +92,10 @@ export function renderPerson(ctx, pid) {
     hoursHolder.replaceChildren();
     if (p.cls === "PGY-1" || !model.months.includes(month)) return;
     const dates = monthDates(month);
-    const rep = hoursReport(model, pid, dates[0], dates[dates.length - 1]);
+    const actual = pid === state.me ? actualFor(model, pid) : null;
+    const rep = hoursReport(model, pid, dates[0], dates[dates.length - 1], { actual });
     const max = Math.max(90, ...rep.weeks.map((w) => w.hours));
-    hoursHolder.append(card("Weekly hours (estimate)", h("div", null,
+    hoursHolder.append(card(actual ? "Weekly hours (logged + predicted)" : "Weekly hours (estimate)", h("div", null,
       h("div", { class: "bars" },
         h("div", { class: "line80", style: { bottom: `${(80 / max) * 0.78 * 120 + 18}px` }, title: "80-hour limit" }),
         rep.weeks.map((w) => h("div", { class: "b" },

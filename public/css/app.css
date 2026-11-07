@@ -244,6 +244,8 @@ svg { display: block; }
 .bars .b { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
 .bars .b i { width: 100%; max-width: 40px; border-radius: 8px 8px 4px 4px; background: var(--c, var(--accent)); min-height: 2px; }
 .bars .b span { font-size: 11px; color: var(--muted); font-weight: 600; }
+.bars .b.ahead i { opacity: .4; }
+.bars .b.ahead b { color: var(--muted); }
 .bars .b b { font-size: 12px; }
 .bars .line80 { position: absolute; left: 0; right: 0; border-top: 2px dashed color-mix(in srgb, var(--gap) 60%, transparent); }
 
@@ -352,6 +354,9 @@ table.edit input.bad { border-color: var(--warn); background: color-mix(in srgb,
 .numbtn:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
 @media (hover: hover) { .numbtn:hover { background: color-mix(in srgb, var(--c) 22%, transparent); } }
 .numpair { display: inline-flex; gap: 4px; }
+.steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.list.flush .row { padding-left: 0; padding-right: 0; }
+.paste summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 8px; }
 .callchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .roomgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
 .roomtile {

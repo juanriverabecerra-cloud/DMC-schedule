@@ -4,6 +4,7 @@ import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, 
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
+import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
 import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
@@ -49,14 +50,15 @@ export function weekStrip(ctx, pid) {
 
 export function hoursCard(ctx, pid) {
   const { model, state } = ctx;
-  const wk = weekHours(model, pid, state.date);
+  const actual = pid === state.me ? actualFor(model, pid) : null; // real hours are only ever your own
+  const wk = weekHours(model, pid, state.date, { actual });
   if (!wk || !wk.known) return null;
   const pct = Math.min(100, (wk.hours / 90) * 100);
   const color = wk.hours > 80 ? "var(--gap)" : wk.hours > 70 ? "var(--warn)" : "var(--accent)";
-  const rep = hoursReport(model, pid, startOfWeek(state.date), addDays(startOfWeek(state.date), 6));
+  const rep = hoursReport(model, pid, startOfWeek(state.date), addDays(startOfWeek(state.date), 6), { actual });
   const flags = rep.flags.filter((f) => f.level !== "info");
   return h("section", { class: "card card-pad", onclick: () => ctx.go("hours"), style: { cursor: "pointer" } },
-    h("h3", { class: "card-title" }, "Duty hours this week", h("span", { class: "right muted" }, "estimate")),
+    h("h3", { class: "card-title" }, "Duty hours this week", h("span", { class: "right muted" }, hoursBasis(actual, wk))),
     h("div", { class: "bignum" }, Math.round(wk.hours), h("small", null, "h of 80")),
     h("div", { class: "meter", style: { marginTop: "8px" } }, h("i", { style: { width: `${pct}%`, background: color } }), h("span", { class: "limit", style: { left: `${(80 / 90) * 100}%` } })),
     h("div", { class: "stats" },
