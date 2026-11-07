@@ -1,6 +1,6 @@
 // Turns the stored dataset into answers: where is a resident on a date, what are their
 // hours, who is on tonight. Shared by the app (browser) and the calendar feed (server).
-import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings } from "./codes.js";
+import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings, fillFamily } from "./codes.js";
 import { dow, monthKey, parts, addMonths } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
@@ -31,7 +31,7 @@ export const CLASS_ORDER = ["CA-3", "CA-2", "CA-1", "PGY-1"];
 
 export function createModel(ds) {
   const S = mergeSettings(ds.settings);
-  const people = (ds.people || []).filter((p) => !p.hidden).sort((a, b) =>
+  const people = (ds.people || []).filter((p) => !p.hidden && !p.former).sort((a, b) =>
     (CLASS_ORDER.indexOf(a.cls) - CLASS_ORDER.indexOf(b.cls)) || a.last.localeCompare(b.last));
   const byId = new Map((ds.people || []).map((p) => [p.id, p]));
   const match = createMatcher(people);
@@ -41,7 +41,7 @@ export function createModel(ds) {
   const months = Object.keys(ds.months || {}).sort();
   const internWeeks = Object.keys(ds.interns?.weeks || {}).sort();
 
-  const fillTag = (hex) => (hex ? S.fillTags[hex.toUpperCase()] || null : null);
+  const fillTag = (hex) => (hex ? S.fillTags[hex.toUpperCase()] || fillFamily(hex) : null);
 
   function holidays(month) {
     if (holidayCache.has(month)) return holidayCache.get(month);
@@ -72,9 +72,15 @@ export function createModel(ds) {
     return GROUP_COLORS[group] || (ds.rotationColors?.[rotation] ? `#${ds.rotationColors[rotation]}` : "#b0b8c4");
   }
 
+  // A peach block counts as vacation when "Vac" is written near it, or when it runs for days
+  // (some months color the block and write nothing).
   function hasVacNear(row, d) {
     for (let k = -3; k <= 3; k++) if (VAC_RE.test(row.days[d + k]?.t || "")) return true;
-    return false;
+    const peach = (n) => fillTag(row.days[n]?.f) === "off";
+    let run = 1;
+    for (let k = d - 1; peach(k); k--) run++;
+    for (let k = d + 1; peach(k); k++) run++;
+    return run >= 3;
   }
 
   function internDay(pid, date) {
@@ -153,6 +159,7 @@ export function createModel(ds) {
       if (holidays(month).has(d)) Object.assign(info, { status: "holiday", label: "Holiday (CRNA coverage)" });
       else if (tag === "off") Object.assign(info, { status: hasVacNear(row, d) ? "vacation" : "off", label: hasVacNear(row, d) ? "Vacation" : "Off" });
       else if (weekend) Object.assign(info, { status: "off", label: "Off" });
+      else if (normCode(row.days[d - 1]?.t) === "NF") Object.assign(info, { status: "postcall", label: "Off after night float" });
       else info.status = "work";
     } else {
       const c = CODES[key];
@@ -348,6 +355,7 @@ export function createModel(ds) {
   };
   api.dir = createDirectory(ds, api);
   api.didactics = createDidactics(ds, api);
+  api.fairness = ds.fairness || {};
   return api;
 }
 

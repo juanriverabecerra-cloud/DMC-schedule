@@ -368,3 +368,85 @@ test("people who left: directory cleanup and removing someone", async () => {
   assert.equal(createModel(ds).person("doe-jane"), undefined);
   assert.equal(removePerson(ds, "nobody"), null);
 });
+
+// Sunday-Saturday in November 2026: the 1st is a Sunday.
+function fairnessDataset() {
+  const ca1 = (id, last) => ({ id, last, first: "Test", preferred: "Test", cls: "CA-1", canonical: `${last}, Test`, aliases: [] });
+  const rows = {
+    a: { rotation: "Basic Anesthesia", days: { 2: { t: "BA" }, 7: { t: "H1" }, 13: { t: "BA", f: "C9DAF8" }, 15: { t: "H2" }, 3: { t: "BA", f: "00FF00" } } },
+    b: { rotation: "Basic Anesthesia", days: { 1: { t: "NF" }, 2: { t: "NF" }, 3: { t: "NF" }, 4: { t: "NF" }, 5: { t: "NF" }, 6: {} } },
+    c: { rotation: "Basic Anesthesia", days: { 2: { t: "BA" } } },
+    d: { rotation: "Obstetrics", days: { 2: { t: "11-9" } } },
+    e: { rotation: "Elective - Jeopardy", days: { 2: { t: "ELECT-J" } } },
+    f: { rotation: "Basic Anesthesia", days: { 9: { f: "FFCFB3" }, 10: { f: "FFCFB3" }, 11: { f: "FFCFB3" }, 12: { f: "FFCFB3" } } },
+  };
+  return {
+    people: ["a", "b", "c", "d", "e", "f"].map((id) => ca1(id, `Res${id.toUpperCase()}`)),
+    months: { "2026-11": { rows, days: 30 } },
+    daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] },
+  };
+}
+
+test("reading call sheets: colors by family, Friday markers, and the day off after nights", async () => {
+  const { fillFamily, normCode } = await import("../public/core/codes.js");
+  assert.equal(fillFamily("FFCFB3"), "off");
+  assert.equal(fillFamily("A4C2F4"), "call24");
+  assert.equal(fillFamily("11EE11"), "late");
+  assert.equal(fillFamily("F3F3F3"), null);
+  assert.equal(normCode("BA1"), "BA");
+  assert.equal(normCode("OB1"), "OB1"); // its own code
+  assert.equal(normCode("PEDS"), "CHM");
+  const m = createModel(fairnessDataset());
+  assert.equal(m.day("b", "2026-11-06").status, "postcall"); // blank Friday after nights
+  assert.equal(m.day("a", "2026-11-13").call, "24");
+  assert.equal(m.day("f", "2026-11-10").status, "vacation"); // a peach block with nothing written
+});
+
+test("fairness: weighted shifts, fair share, grades and who can cover", async () => {
+  const { residentLoad, fairnessReport, coverOptions, gradeOf, weightsOf, dayItems, DEFAULT_WEIGHTS } = await import("../public/core/fairness.js");
+  const { setFairness } = await import("../lib/dataset.js");
+  const ds = fairnessDataset();
+  const m = createModel(ds);
+  const period = { from: "2026-11-01", to: "2026-11-30" };
+  // A Saturday 24 is worth more than a Friday 24.
+  assert.ok(DEFAULT_WEIGHTS.sat24 > DEFAULT_WEIGHTS.fri24);
+  const a = residentLoad(m, "a", period.from, period.to);
+  assert.deepEqual(a.counts, { sat24: 1, fri24: 1, h2sun: 1, late: 1, stack: 2 });
+  assert.equal(a.points, 10 + 6 + 6 + 1 + 2 * 2);
+  assert.equal(residentLoad(m, "b", period.from, period.to).points, 12.5); // five nights
+  // Time on a no-call rotation doesn't count as available.
+  assert.equal(residentLoad(m, "d", period.from, period.to).eligible, 0);
+  const rep = fairnessReport(m, period);
+  const row = (id) => rep.classes[0].rows.find((r) => r.pid === id);
+  assert.ok(Math.abs(rep.classes[0].rows.reduce((s, r) => s + r.balance, 0)) < 1e-9); // balances net to zero
+  assert.ok(row("a").balance > 0 && row("c").balance < 0);
+  assert.equal(row("d").load, null); // nothing to compare
+  assert.equal(gradeOf(0.05), "A");
+  assert.equal(gradeOf(0.6), "F");
+  // Sick on Saturday: backup first, people on nights or no-call rotations left out with a reason.
+  const c = coverOptions(m, "a", "2026-11-07", { report: rep });
+  assert.equal(c.shift.key, "sat24");
+  assert.equal(c.options[0].pid, "e");
+  assert.equal(c.options[0].backup, true);
+  assert.match(c.blocked.find((b) => b.pid === "d").why, /takes no call/);
+  assert.match(c.blocked.find((b) => b.pid === "b").why, /Would reach about 84 h/); // a week of nights plus 24 hours
+  // Editing the points changes the score; bad values are ignored.
+  setFairness(ds, { weights: { sat24: 20, late: "x" } });
+  const m2 = createModel(ds);
+  assert.equal(weightsOf(m2).sat24, 20);
+  assert.equal(weightsOf(m2).late, 1);
+  assert.deepEqual(dayItems(m2.day("a", "2026-11-07"), weightsOf(m2)), [{ key: "sat24", pts: 20 }]);
+});
+
+test("someone only on older sheets leaves the roster but keeps their history", async () => {
+  const { mergeCallWorkbook } = await import("../lib/dataset.js");
+  assert.equal(typeof mergeCallWorkbook, "function");
+  const ds = fairnessDataset();
+  ds.months["2026-10"] = { rows: { z: { rotation: "VA", days: { 5: { t: "VA" } } } }, days: 31 };
+  ds.people.push({ id: "z", last: "ResZ", first: "Test", preferred: "Test", cls: "CA-1", former: true, canonical: "ResZ, Test", aliases: [] });
+  const m = createModel(ds);
+  assert.ok(!m.people.some((p) => p.id === "z"));
+  assert.ok(!m.roster("2026-11-02").some((d) => d.pid === "z"));
+  assert.equal(m.person("z").last, "ResZ");
+  assert.equal(m.day("z", "2026-10-05").code, "VA");
+});

@@ -93,8 +93,8 @@ export function renderToday(ctx) {
   if (!state.me || !model.person(state.me)) {
     root.append(
       notice("", "user", "Choose who you are to see your own day. ", h("a", { href: "#/pick" }, "Pick yourself")),
-      tonightMini(ctx) || emptyState("calendar", "No schedule for this day", "Upload a call sheet in Admin."),
       didacticsDayCard(ctx) || "",
+      tonightMini(ctx) || emptyState("calendar", "No schedule for this day", "Upload a call sheet in Admin."),
     );
     return root;
   }
@@ -139,6 +139,10 @@ export function renderToday(ctx) {
     }
   }
 
+  // Only on days with didactics, right after the day's assignment.
+  const did = didacticsDayCard(ctx);
+  if (did) root.append(did);
+
   const mates = teammates(ctx, d);
   if (mates.length) {
     root.append(card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }));
@@ -151,10 +155,6 @@ export function renderToday(ctx) {
 
   const mini = tonightMini(ctx);
   if (mini) root.append(mini);
-
-  // Only on days with didactics, right under "Who's on".
-  const did = didacticsDayCard(ctx);
-  if (did) root.append(did);
 
   root.append(card("This week", weekStrip(ctx, pid), { pad: false }));
 

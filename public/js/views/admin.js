@@ -1,9 +1,10 @@
 // Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
 // phone directory, people, settings and backups. Every call sends the admin key.
-import { h, icon, card, toast, notice, openSheet, avatar, classPill } from "../ui.js";
+import { h, icon, card, toast, notice, openSheet, avatar, classPill, segmented } from "../ui.js";
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
+import { renderFairness } from "./fairness.js";
 import { roleWord } from "../../core/model.js";
 import { formatDirectoryText } from "../../core/directory.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
@@ -508,7 +509,7 @@ function peopleSection(ctx) {
     } }, icon("x"));
     return h("li", { class: "row", style: { minHeight: "52px" } },
       avatar(model, p.id, "sm"),
-      h("div", { class: "main" }, h("div", { class: "name" }, `${p.last}, ${p.preferred || p.first}`, p.hidden ? h("span", { class: "pill" }, "hidden") : null),
+      h("div", { class: "main" }, h("div", { class: "name" }, `${p.last}, ${p.preferred || p.first}`, p.hidden ? h("span", { class: "pill" }, "hidden") : null, p.former ? h("span", { class: "pill" }, "former") : null),
         p.aliases?.length ? h("div", { class: "sub tiny" }, `Also: ${p.aliases.join("; ")}`) : null),
       cls, h("label", { title: "Show in the app", style: { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px" } }, hide, "show"), remove);
   })), { pad: false, right: `${all.length}` });
@@ -585,6 +586,9 @@ function backupSection(ctx) {
 export function renderAdmin(ctx) {
   const root = h("div");
   if (!local.get("adminKey")) { root.append(adminLogin(ctx)); return root; }
+  const tab = local.get("adminTab", "uploads");
+  root.append(h("div", { style: { marginBottom: "12px" } }, segmented([["uploads", "Uploads"], ["fairness", "Fairness"]], tab, (v) => { local.set("adminTab", v); ctx.render(); })));
+  if (tab === "fairness") { root.append(renderFairness(ctx)); return root; }
   const statusHolder = h("div");
   const dailyHolder = h("div");
   const didHolder = h("div");

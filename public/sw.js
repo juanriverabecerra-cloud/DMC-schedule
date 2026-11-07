@@ -1,12 +1,12 @@
 // Offline support: the app shell is cached; schedule data is cached by the app itself
 // (localStorage), so API and calendar requests always go to the network.
-const CACHE = "dmc-shell-v7";
+const CACHE = "dmc-shell-v8";
 const SHELL = [
   "/", "/index.html", "/css/app.css", "/manifest.webmanifest",
   "/js/app.js", "/js/api.js", "/js/ui.js",
   "/js/views/today.js", "/js/views/tonight.js", "/js/views/board.js", "/js/views/person.js", "/js/views/hours.js",
-  "/js/views/gaps.js", "/js/views/more.js", "/js/views/admin.js", "/js/views/setup.js", "/js/views/common.js", "/js/views/call.js", "/js/views/didactics.js",
-  "/core/dates.js", "/core/codes.js", "/core/names.js", "/core/model.js", "/core/hours.js", "/core/gaps.js", "/core/swap.js", "/core/ics.js", "/core/directory.js", "/core/didactics.js",
+  "/js/views/gaps.js", "/js/views/more.js", "/js/views/admin.js", "/js/views/setup.js", "/js/views/common.js", "/js/views/call.js", "/js/views/didactics.js", "/js/views/fairness.js",
+  "/core/dates.js", "/core/codes.js", "/core/names.js", "/core/model.js", "/core/hours.js", "/core/gaps.js", "/core/swap.js", "/core/ics.js", "/core/directory.js", "/core/didactics.js", "/core/fairness.js",
   "/icons/icon-192.png", "/icons/favicon.svg",
 ];
 

@@ -1,7 +1,6 @@
 import { h, icon, card, avatar, classPill, segmented, telHref } from "../ui.js";
 import { local } from "../api.js";
-import { monthKey, fmtMonth, fmtTime, relDay, nowMinutesLocal } from "../../core/dates.js";
-import { eventHeadline, relevantTo } from "../../core/didactics.js";
+import { monthKey, fmtMonth } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeCard } from "./common.js";
 
@@ -43,15 +42,6 @@ export function renderMore(ctx) {
       h("div", { class: "avatar", style: { "--c": gaps.length ? "var(--gap)" : "var(--late)" } }, icon(gaps.length ? "alert" : "check")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Coverage gaps"), h("div", { class: "sub" }, gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month")),
       icon("right")),
-    (() => {
-      const D = model.didactics;
-      const next = D.has ? D.upcoming(state.today, nowMinutesLocal(), 31).find((e) => relevantTo(e, state.me)) : null;
-      return h("li", { class: "row tap", onclick: () => ctx.go("didactics") },
-        h("div", { class: "avatar", style: { "--c": "var(--ob)" } }, icon("book")),
-        h("div", { class: "main" }, h("div", { class: "name" }, "Didactics"),
-          h("div", { class: "sub" }, next ? `Next: ${relDay(next.date, state.today)} ${fmtTime(next.start)} · ${eventHeadline(next)}` : D.has ? "Conference schedule, Zoom links, your presentations" : "No conference schedule uploaded yet")),
-        icon("right"));
-    })(),
     h("li", { class: "row tap", onclick: () => ctx.go("hours") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours"), h("div", { class: "sub" }, "Estimated weekly hours for everyone")),

@@ -15,6 +15,7 @@ What it shows:
 - **Hours**: estimated weekly hours for everyone against ACGME limits (80 h/4-week average, 1 day off in 7, 24+4, rest between shifts).
 - **Gaps**: missing late/NF/24-hr/12-hr/cardiac coverage, the call sheet's own "coverage needed" rows, and conflicts with the daily sheet.
 - **Swap finder**: for any call shift, same-class residents who are free and would stay under the hour limits.
+- **Fairness (Admin)**: weighted burden points per shift (a Saturday 24 counts more than a Friday 24; every value is editable), each resident's share of the work against their class, a grade for how evenly it's shared, a "Someone's out" tool that ranks who can cover and shows why everyone else can't, suggested swaps, service coverage and the year's rotation mix. It advises; people decide.
 - **Calendar feed**: subscribe once in Apple or Google Calendar and every shift arrives with its OR details, room phone, MDA's number and who's on.
 - **Didactics**: the month's conferences as an agenda, with "Next up", one-tap **Join Zoom** and **Dial in** (it dials, then enters the meeting ID and passcode), filters (Wednesday, Monday, mock orals, mine), objectives and the original PDF. On days with didactics, Today shows them right under "Who's on": the time block and room, each session with presenters and topics, mock-oral slots, the faculty member's call button, "Live now" / "In 20 min", what it's about, and Join Zoom, Dial in and the meeting ID and passcode to copy. Residents see their own presentations and mock-oral slots on their profile, with a heads-up when they're on vacation, post-call, coming off nights or at another site that day. Sessions go into the calendar feed with the Zoom link (mock orals only for the residents examined); each resident can leave didactics out of their feed.
 - **Call**: one-tap calling for residents, attendings (Cisco and cell), OR rooms, units and service lines. "Right now" lists who you're likely to need today (your room, your MDA, your JA, the board runners). Every OR card in the app has call chips for the room and its MDA. Pagers and hospital-only extensions copy to the clipboard.
@@ -67,6 +68,7 @@ No schedule data lives in this repository. Uploads are stored in Netlify Blobs a
 
   "Residents" match the roster (a new name with "| PGY-1" is added), "Anesthesiologists …" sections are matched to the MDAs on the daily sheet (the site in the title breaks ties, e.g. Harper vs. Sinai-Grace), "Harper OR rooms" and "OPSC rooms" power the room buttons, and "Dialing" rules turn 5-digit extensions into numbers a cell phone can call.
 - **Someone leaves the program**: **Admin → People → ✕** removes them (roster, call-sheet rows, rotations, phone numbers). Saving the directory also drops anyone who is no longer listed and has no schedule anywhere.
+- **Past months**: upload older call sheets any time to fill in the fairness history. Anyone on an older sheet but not the newest one stays in the history and off the roster.
 - **Yearly**: upload the new rotations file in June.
 
 ## How the call sheet is read

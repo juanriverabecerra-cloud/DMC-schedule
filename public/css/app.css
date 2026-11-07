@@ -101,11 +101,12 @@ svg { display: block; }
 .tabbar-inner { display: flex; width: 100%; max-width: 680px; }
 .tab {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 2px;
-  color: var(--faint); font-size: 11px; font-weight: 550; border: 0; background: none; cursor: pointer; position: relative;
+  color: var(--faint); font-size: 11px; font-weight: 550; border: 0; background: none; cursor: pointer; position: relative; min-width: 0;
 }
 .tab svg { width: 24px; height: 24px; }
 .tab[aria-current="page"] { color: var(--accent); }
 .tab .dot { position: absolute; top: 4px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; background: var(--gap); }
+.tab .dot.soon { background: var(--accent); }
 
 /* ---------- date nav ---------- */
 .datenav { display: flex; align-items: center; gap: 4px; flex: 1; justify-content: center; }
@@ -418,3 +419,34 @@ details.card.group[open] > summary { border-bottom: 1px solid var(--border); }
   background: var(--surface-2); color: var(--muted); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; text-align: left; }
 .zp-code span { flex: 1; color: var(--text); }
 .zp-code svg { width: 16px; height: 16px; }
+
+/* ---------- admin fairness ---------- */
+.grade { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 7px; font-size: 13px; font-weight: 800; color: var(--c, var(--muted)); background: color-mix(in srgb, var(--c, var(--muted)) 16%, transparent); }
+.grade.big { min-width: 58px; height: 58px; border-radius: 14px; font-size: 30px; }
+.grade.gA { --c: var(--late); } .grade.gB { --c: var(--call12); } .grade.gC { --c: var(--warn); } .grade.gD { --c: var(--vac); } .grade.gF { --c: var(--gap); }
+.reportcard .rc-main { display: flex; align-items: center; gap: 14px; }
+.reportcard .rc-classes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.rc-class { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.rc-class.on { border-color: var(--accent); }
+.facts { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
+.facts li { padding-left: 14px; position: relative; }
+.facts li::before { content: ""; position: absolute; left: 0; top: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.facts li.warn::before { background: var(--warn); } .facts li.gap::before { background: var(--gap); }
+.fairscroll { margin: 0; }
+table.fair { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.fair th { padding: 8px 7px; font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; white-space: nowrap; border-bottom: 1px solid var(--border); }
+table.fair td { padding: 8px 7px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.fair tbody tr { cursor: pointer; }
+table.fair.plain tbody tr { cursor: default; }
+table.fair tbody tr:last-child td { border-bottom: 0; }
+table.fair tfoot td { border-top: 1px solid var(--border); border-bottom: 0; }
+table.fair .n { text-align: center; }
+table.fair .who { position: sticky; left: 0; z-index: 1; text-align: left; font-weight: 600; background: var(--surface); padding-left: 12px; }
+table.fair .hot1 { background: color-mix(in srgb, var(--gap) 14%, transparent); }
+table.fair .hot2 { background: color-mix(in srgb, var(--gap) 30%, transparent); font-weight: 700; }
+table.fair .cool1 { background: color-mix(in srgb, var(--info) 12%, transparent); }
+table.fair .cool2 { background: color-mix(in srgb, var(--info) 26%, transparent); font-weight: 700; }
+table.fair .bal.over { color: var(--gap); font-weight: 700; }
+table.fair .bal.under { color: var(--info); font-weight: 700; }
+.rank { width: 20px; flex: none; text-align: center; font-weight: 800; color: var(--muted); font-size: 13px; padding-top: 6px; }
+.input.weight { width: 72px; padding: 6px 8px; text-align: center; flex: none; }

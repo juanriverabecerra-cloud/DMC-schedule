@@ -46,6 +46,8 @@ export const CODES = {
   "OB": { label: "Obstetrics", site: "hutzel", group: "Obstetrics" },
   "OB1": { label: "Obstetrics (OB1)", site: "hutzel", group: "Obstetrics" },
   "11-9": { label: "11 to 9", site: "hutzel", group: "Obstetrics", hours: [660, 1260] },
+  "TEE": { label: "TEE", site: "harper", group: "Cardiac" },
+  "GLAM": { label: "Conference (GLAM)", site: "elective", group: "Other" },
   "ELECT": { label: "Elective", site: "elective", group: "Elective" },
   "ELECT-J": { label: "Elective – Jeopardy", site: "elective", group: "Elective" },
   "NCD": { label: "NCD", site: "harper", group: "Other" },
@@ -92,13 +94,15 @@ const ROTATION_RULES = [
 
 // Other ways a code gets typed, including what Excel shows when it turns "11-9" into a date.
 const CODE_ALIASES = [
+  [/^PEDS?$/, "CHM"],
+  [/^(BA|BA-V|AP|OPSC|PACU|CP|VA|HC|TH|HN|ACC|BD|JA|NORA|VASC)1$/, null], // the rotation with a Friday 24-hr marker: "BA1"
   [/^11\s*A?M?\s*(?:-|–|TO)\s*9\s*P?M?$|^9-NOV$/, "11-9"],
   [/^10\s*A?M?\s*(?:-|–|TO)\s*7\s*P?M?$|^7-OCT$/, "10-7"],
 ];
 
 export function normCode(raw) {
   const key = String(raw ?? "").trim().replace(/\s+/g, " ").toUpperCase();
-  for (const [re, code] of CODE_ALIASES) if (re.test(key)) return code;
+  for (const [re, code] of CODE_ALIASES) if (re.test(key)) return code ?? key.slice(0, -1);
   return key;
 }
 
@@ -128,10 +132,30 @@ export const DEFAULT_FILL_TAGS = {
   "00FF00": "late",
   "C9DAF8": "call24",
   "CFE2F3": "call24",
+  "A4C2F4": "call24",
+  "9FC5E8": "call24",
   "FF00FF": "cardiac",
   "FAE2D5": "off",
   "FCE5CD": "off",
+  "FFCFB3": "off",
 };
+
+// The chiefs pick a slightly different shade most months, so a color that isn't listed above
+// is read by its family: bright green, magenta, pale blue, or peach.
+export function fillFamily(hex) {
+  const m = String(hex ?? "").match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!m) return null;
+  const [r, g, b] = m.slice(1).map((x) => parseInt(x, 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2;
+  if (d < 0.06) return null;
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = (max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  if (h >= 100 && h <= 140 && s > 0.7 && l < 0.65) return "late";
+  if (h >= 285 && h <= 315 && s > 0.7) return "cardiac";
+  if (h >= 190 && h <= 235 && l >= 0.6) return "call24";
+  if (h >= 8 && h <= 45 && l >= 0.75 && s >= 0.5) return "off";
+  return null;
+}
 
 export const FILL_TAG_LABELS = {
   late: "Late resident (until 6p)",

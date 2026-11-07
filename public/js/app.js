@@ -2,8 +2,9 @@
 import { h, icon, avatar, toast, append } from "./ui.js";
 import { api, local, fetchDataset } from "./api.js";
 import { createModel } from "../core/model.js";
-import { todayLocal, addDays, fmtDate, relDay, parts, MONTH_SHORT, DOW_SHORT, dow } from "../core/dates.js";
+import { todayLocal, addDays, fmtDate, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
 import { dayGaps } from "../core/gaps.js";
+import { relevantTo } from "../core/didactics.js";
 import { renderToday } from "./views/today.js";
 import { renderTonight } from "./views/tonight.js";
 import { renderBoard } from "./views/board.js";
@@ -31,6 +32,7 @@ const TABS = [
   ["today", "Today", "home"],
   ["tonight", "Tonight", "moon"],
   ["board", "Board", "grid"],
+  ["didactics", "Didactics", "book"],
   ["call", "Call", "phone"],
   ["more", "More", "more"],
 ];
@@ -111,7 +113,7 @@ function topbar(r) {
     ]);
   } else {
     const titles = { call: "Call", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = ["p", "gaps", "admin", "hours", "didactics"].includes(r.name);
+    const back = ["p", "gaps", "admin", "hours"].includes(r.name);
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
@@ -121,16 +123,29 @@ function topbar(r) {
   bar.replaceChildren(inner);
 }
 
+// "live" while a session you'd attend is running, "today" if one is still to come, else null.
+function sessionsToday() {
+  const D = state.model?.didactics;
+  if (!D?.has) return null;
+  const now = nowMinutesLocal();
+  const list = D.on(state.today).filter((e) => relevantTo(e, state.me) && (e.end ?? 1440) > now);
+  if (!list.length) return null;
+  return list.some((e) => e.start != null && e.start <= now) ? "live" : "today";
+}
+
 function tabbar(r) {
   const nav = document.getElementById("tabbar");
   if (r.name === "setup" || !state.model) { nav.hidden = true; return; }
   nav.hidden = false;
   const gapsSoon = state.model ? [0, 1, 2].some((i) => dayGaps(state.model, addDays(state.today, i)).some((g) => g.level === "gap")) : false;
+  const didToday = sessionsToday();
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && ["gaps", "admin", "hours", "didactics"].includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && ["gaps", "admin", "hours"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
-    }, icon(ic), label, id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null)));
+    }, icon(ic), label,
+    id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null,
+    id === "didactics" && didToday ? h("i", { class: `dot${didToday === "live" ? "" : " soon"}`, "aria-label": didToday === "live" ? "Session live now" : "Session today" }) : null)));
   nav.replaceChildren(inner);
 }
 
