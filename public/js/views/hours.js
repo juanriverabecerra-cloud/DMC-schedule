@@ -6,7 +6,8 @@ import { compareLogged, hoursByRotation, mergeEntries, outlook, parseLoggedHours
 import { actualFor, clearLogged, loggedFor, saveLogged } from "../logged.js";
 import { hoursCard } from "./today.js";
 
-const VIEW_HOURS = "https://www.new-innov.com/DutyHours/DutyHours_Host.aspx?Control=ViewMyHours";
+// The login page, not View Hours itself: that page shows an error to anyone not signed in yet.
+const SIGN_IN = "https://www.new-innov.com/login/login.aspx";
 
 // New Innovations offers no outside connection, so a resident brings their own View Hours page:
 // the Export To Excel file, or a copy and paste. Nobody hands over a password, and the numbers
@@ -37,13 +38,14 @@ function openImport(ctx, pid) {
   box.addEventListener("input", () => read(box.value));
   const close = openSheet("Add my hours", h("div", null,
     h("ol", { class: "steps" },
-      h("li", null, "Tap View Hours below and sign in, in Safari."),
+      // Opened from the Home Screen, links stay in a small browser inside the app.
+      h("li", null, `Tap Sign in below and log in to New Innovations.${navigator.standalone ? " Use Safari: tap the compass at the bottom right if it opens inside this app." : ""}`),
       h("li", null, "On the mobile menu, tap Full Site, then Work Hours › View Hours."),
       h("li", null, "Zoom in on the bottom right, tap Export To Excel, then Download."),
       h("li", null, "Come back here, tap Choose file and pick the newest GridExport file.")),
     h("p", { class: "tiny muted", style: { margin: "0 0 10px" } }, "First time: set From to your first day and tap Update to bring in your whole residency. After that, the usual four weeks is enough."),
     h("div", { class: "btnrow", style: { marginBottom: "10px" } },
-      h("a", { class: "btn", href: VIEW_HOURS, target: "_blank", rel: "noopener noreferrer" }, icon("link"), "View Hours"),
+      h("a", { class: "btn", href: SIGN_IN, target: "_blank", rel: "noopener noreferrer" }, icon("link"), "Sign in"),
       h("button", { class: "btn", onclick: () => file.click() }, icon("upload"), "Choose file")),
     file,
     h("details", { class: "paste" }, h("summary", null, "Or paste the page instead"), box),
