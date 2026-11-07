@@ -268,6 +268,7 @@ export function createDirectory(ds, model) {
     text: (num) => numberText(num, dialing),
     primary: (numbers) => firstDialable(numbers),
     inCallOrder: (numbers) => [...(numbers || [])].sort((a, b) => rank(a) - rank(b)),
+    techs: () => dir.places.filter((p) => /anesthesia techs/i.test(p.group)),
     workPhone: (numbers) => firstDialable(numbers, workRank),
     hasData: dir.staff.length + dir.places.length + Object.keys(dir.people).length > 0,
   };

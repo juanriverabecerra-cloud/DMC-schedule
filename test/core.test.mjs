@@ -289,6 +289,28 @@ Smith, Alex | 248-555-0202`;
   assert.deepEqual(m.dir.search("mobile").map((c) => c.name).sort(), ["Ana Leed", "Jane Doe", "Smith, Alex"].sort());
 });
 
+test("anesthesia techs are one list for every room, and 3xxxx extensions dial", () => {
+  const text = `## Dialing
+Ext 3xxxx = 313-993-xxxx
+## Harper OR rooms
+OR 17 | Ext 30001
+## Anesthesia techs
+Alex | Cisco 313-555-0301
+Sam | Cisco 313-555-0302
+## Pharmacy
+Pharmacy OR | Ext 30002 | Open 6a to 2:15p
+## Harper units
+2 Webber North | 313-555-0303 | Rooms 2201-2220`;
+  const built = buildDirectory(parseDirectoryText(text), people);
+  const m = createModel({ ...dataset(), directory: built });
+  assert.deepEqual(m.dir.techs().map((t) => t.name), ["Alex", "Sam"]);
+  assert.deepEqual(m.dir.search("tech").map((c) => c.name), ["Alex", "Sam"]);
+  assert.equal(m.dir.dial(m.dir.room("17").numbers[0]), "3139930001");
+  const pharmacy = m.dir.place(/^pharmacy or/i);
+  assert.deepEqual(pharmacy.notes, ["Open 6a to 2:15p"]);
+  assert.deepEqual(m.dir.place(/^2 webber/i).notes, ["Rooms 2201-2220"]); // a room range is a note, not a number
+});
+
 const DIDACTICS = {
   month: "2026-11",
   location: "Main Auditorium",

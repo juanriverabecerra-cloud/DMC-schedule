@@ -1,13 +1,41 @@
 // Pieces shared by several screens: OR assignment details, the day sheet, upcoming events,
 // and the calendar subscription card.
-import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip } from "../ui.js";
+import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons } from "../ui.js";
 import { fmtDate, fmtRange, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT } from "../../core/dates.js";
 import { headline, siteName } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
 
-// Call chips under an OR row: the room phone, its MDA and the residents in it.
+// Techs change rooms every day, so no tech belongs to an OR: any room reaches the whole list.
+// The one you called today stays on top, since they're likely covering your area.
+export function openTechSheet(ctx) {
+  const { model, state } = ctx;
+  const techs = model.dir.techs();
+  const saved = local.get("lastTech");
+  const recent = saved?.date === state.today ? saved.id : null;
+  const list = [...techs].sort((a, b) => (b.id === recent) - (a.id === recent));
+  const rows = list.map((t) => {
+    const row = h("li", { class: "row" },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, t.name[0]),
+      h("div", { class: "main" },
+        h("div", { class: "name" }, h("span", { class: "n" }, t.name)),
+        t.id === recent ? h("div", { class: "sub" }, "You called earlier today") : null),
+      h("div", { class: "numrow", style: { marginTop: 0, flex: "none" } }, numberButtons(model.dir, t.numbers)));
+    // Capture: the call button stops the click from reaching the row.
+    row.addEventListener("click", (e) => { if (e.target.closest("a.numbtn")) local.set("lastTech", { date: state.today, id: t.id }); }, true);
+    return row;
+  });
+  openSheet("Anesthesia techs", h("div", null,
+    h("p", { class: "small muted", style: { margin: "0 0 8px" } }, "Techs change rooms every day, so call whoever's free."),
+    h("ul", { class: "list" }, rows)));
+}
+
+export const techChip = (ctx, label = "Tech") => h("button", {
+  class: "numbtn", type: "button", "aria-label": "Anesthesia techs", onclick: (e) => { e.stopPropagation(); openTechSheet(ctx); },
+}, icon("phone"), label);
+
+// Call chips under an OR row: the room phone, its MDA, a tech and the residents in it.
 export function roomCallChips(ctx, room, { residents = false } = {}) {
   const { model } = ctx;
   const dir = model.dir;
@@ -18,6 +46,7 @@ export function roomCallChips(ctx, room, { residents = false } = {}) {
     const s = dir.staff(part);
     if (s) chips.push(callChip(dir, s.last || s.name, s.numbers));
   }
+  if (dir.techs().length) chips.push(techChip(ctx));
   if (residents) {
     for (const x of room.staffIds || []) {
       const r = x.id && dir.resident(x.id);

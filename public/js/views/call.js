@@ -3,15 +3,28 @@
 import { h, icon, avatar, classPill, numberButtons, emptyState, notice, card, copyText } from "../ui.js";
 import { fmtDate } from "../../core/dates.js";
 import { CLASS_ORDER } from "../../core/model.js";
+import { techChip } from "./common.js";
 
 const ESSENTIALS = [
   /^resident board runner/i, /^mda board runner/i, /^crna board runner/i, /^harper or main desk/i, /^pacu harper/i,
   /^pacu resident/i, /^acute pain/i, /^mda ob/i, /^ob vocera/i, /^on-call pain fellow/i,
 ];
 
+// The clinical groups come first, then the rest of the hospital.
+const GROUP_ORDER = [
+  "anesthesiologists — harper", "cardiac attendings", "anesthesia lines", "anesthesia techs", "harper desks", "or team", "harper units", "icus",
+  "lab", "pharmacy", "radiology", "procedure areas", "departments", "pain", "pagers", "hospital services", "karmanos", "drh units", "rim",
+];
+
 function placeItem(dir, re, why) {
   const p = dir.place(re);
   return p ? { key: `place:${p.id}`, title: p.name, sub: why, numbers: p.numbers } : null;
+}
+
+// Techs float between rooms, so this opens the whole list instead of calling one number.
+function techItem(ctx, why) {
+  const count = ctx.model.dir.techs().length;
+  return count ? { key: "techs", title: "Anesthesia techs", sub: why || `${count} on the list`, action: () => techChip(ctx, "Choose a tech") } : null;
 }
 
 function staffItem(dir, name, why, site) {
@@ -42,6 +55,7 @@ export function quickContacts(ctx, pid, date) {
     if (r.kind === "room") {
       add(roomItem(dir, r.room, `Your room · ${[r.room.surgeon, r.room.time].filter(Boolean).join(" ")}`));
       add(staffItem(dir, r.room.mda, `Your MDA · OR ${r.or}`));
+      add(techItem(ctx, "For anything your room needs"));
       r.room.jaIds.forEach((s) => s.id && add(residentItem(model, s.id, `JA for OR ${r.or}`)));
       r.with.forEach((s) => s.id && add(residentItem(model, s.id, `In OR ${r.or} with you`)));
       r.room.breakIds.forEach((s) => s.id && add(residentItem(model, s.id, `Breaks for OR ${r.or}`)));
@@ -51,6 +65,7 @@ export function quickContacts(ctx, pid, date) {
         add(roomItem(dir, room, `${r.kind === "ja" ? "JA" : "Breaks"} · ${room.staffIds.map(nm).join(" & ") || (room.crna ? "CRNA" : "")}`));
         room.staffIds.forEach((s) => s.id && add(residentItem(model, s.id, `In OR ${room.or}`)));
         add(staffItem(dir, room.mda, `MDA · OR ${room.or}`));
+        add(techItem(ctx, "For anything a room needs"));
         if (r.kind === "breaks") room.jaIds.forEach((s) => s.id && add(residentItem(model, s.id, `JA for OR ${room.or}`)));
       }
     }
@@ -100,7 +115,7 @@ export function contactRow(ctx, item) {
       h("div", { class: "name" }, h("span", { class: "n" }, item.title), p ? classPill(p.cls) : null),
       item.sub ? h("div", { class: "sub" }, item.sub) : null,
       (item.notes || []).length ? h("div", { class: "tiny faint" }, item.notes.join(" · ")) : null,
-      h("div", { class: "numrow" }, numberButtons(model.dir, item.numbers))),
+      h("div", { class: "numrow" }, item.action ? item.action() : numberButtons(model.dir, item.numbers))),
   );
 }
 
@@ -157,7 +172,8 @@ export function renderCall(ctx) {
 
   const essentials = ESSENTIALS.map((re) => dir.place(re)).filter(Boolean);
   if (essentials.length) {
-    browse.append(card("Essentials", h("ul", { class: "list" }, essentials.map((p) => contactRow(ctx, { key: p.id, title: p.name, numbers: p.numbers, notes: p.notes }))), { pad: false }));
+    const techs = techItem(ctx);
+    browse.append(card("Essentials", h("ul", { class: "list" }, essentials.map((p) => contactRow(ctx, { key: p.id, title: p.name, numbers: p.numbers, notes: p.notes })), techs ? contactRow(ctx, techs) : null), { pad: false }));
   }
 
   const orGrid = roomGrid(ctx, "or");
@@ -176,12 +192,9 @@ export function renderCall(ctx) {
   const order = (g) => {
     const res = g.match(/^Residents · (.+)$/);
     if (res) return 100 + CLASS_ORDER.indexOf(res[1]);
-    if (/anesthesiologists — harper/i.test(g)) return 1;
-    if (/cardiac/i.test(g)) return 2;
-    if (/anesthesia lines/i.test(g)) return 3;
-    if (/harper desks/i.test(g)) return 4;
-    if (/anesthesiologists/i.test(g)) return 50;
-    return 60;
+    const known = GROUP_ORDER.indexOf(g.toLowerCase());
+    if (known >= 0) return known;
+    return /anesthesiologists/i.test(g) ? 50 : 60;
   };
   for (const g of [...groups.keys()].sort((a, b) => order(a) - order(b) || a.localeCompare(b))) {
     const list = groups.get(g);
@@ -192,7 +205,7 @@ export function renderCall(ctx) {
   const ext = dir.dialing;
   browse.append(h("p", { class: "disclaimer" },
     ext.length ? `Extensions are dialed as ${ext.map((r) => `${r.prefix}xxxx → (${r.base.slice(0, 3)}) ${r.base.slice(3)}-xxxx`).join(", ")}. ` : "",
-    "Pagers and other extensions copy to the clipboard. Numbers come from the anesthesia badge cards; tell an admin if one is wrong."));
+    "Pagers and other extensions copy to the clipboard. Numbers come from the anesthesia badge cards and the Harper phone list; tell an admin if one is wrong."));
 
   root.append(h("div", { class: "search", style: { marginBottom: "12px" } }, icon("search"), search), results, browse);
   drawResults();
