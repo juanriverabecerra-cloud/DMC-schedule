@@ -9,6 +9,7 @@ import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet } 
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { reminderCard } from "./reminders.js";
+import { swapsTodayCard } from "./requests.js";
 
 function shortCode(d) {
   if (d.call === "NF") return "NF";
@@ -106,6 +107,9 @@ export function renderToday(ctx) {
   const p = model.person(pid);
   const reminder = reminderCard(ctx);
   if (reminder) root.append(reminder);
+  // Swaps waiting on you come before your own day: someone's waiting on an answer.
+  const swapNews = state.date === state.today ? swapsTodayCard(ctx) : null;
+  if (swapNews) root.append(swapNews);
 
   if (!model.hasCall(state.date) && d.source !== "intern") {
     root.append(notice("warn", "info", `The ${fmtMonth(monthKey(state.date))} call sheet hasn't been uploaded yet${d.rotation ? `. Planned rotation: ${d.rotation}.` : "."}`));

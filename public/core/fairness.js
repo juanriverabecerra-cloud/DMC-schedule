@@ -6,15 +6,16 @@ import { hoursReport, weekHours } from "./hours.js";
 import { CODES, CALL_CODES } from "./codes.js";
 
 // Scale: one late day = 1 point. Editable in Admin › Fairness.
+// The weekly pattern: 24-hr call (H1, or blue on a Friday) only on Friday and Saturday, 12-hr
+// call (H2) only on Saturday and Sunday, and night float Sunday to Thursday nights. Friday's 24
+// covers Friday night and Saturday's covers Saturday night. Holiday weekends shift this, so a 24
+// on any other day counts as a weekend 24 and a 12 on a weekday counts as a Sunday.
 export const WEIGHT_ROWS = [
-  ["sat24", "24-hr call, Saturday", 10, "A whole extra day, and the weekend is gone"],
-  ["sun24", "24-hr call, Sunday", 10, "A whole extra day, then back at work"],
-  ["fri24", "24-hr call, Friday", 6, "You're already there for the first half; Saturday is lost post-call"],
-  ["wk24", "24-hr call, Mon–Thu", 6, "Same reasoning as Friday"],
-  ["h2sun", "12-hr call, Sunday", 6, "A full weekend day, work again Monday"],
+  ["sat24", "24-hr call, Saturday", 10, "A whole weekend day and the night; Sunday is lost post-call. A 24 on a holiday counts here too"],
+  ["fri24", "24-hr call, Friday", 6, "Covers Friday night, since night float doesn't; Saturday is lost post-call"],
+  ["h2sun", "12-hr call, Sunday", 6, "A full weekend day, then work Monday. A 12 on a holiday counts here too"],
   ["h2sat", "12-hr call, Saturday", 5, "A full weekend day"],
-  ["h2wk", "12-hr call, weekday", 2, "A long day"],
-  ["nf", "Night float, per night", 2.5, "A 5-night week is 12.5: hours match a day week, but nights wear you down"],
+  ["nf", "Night float, per night (Sun–Thu)", 2.5, "A 5-night week is 12.5: hours match a day week, but nights wear you down"],
   ["seniorWe", "CA-3 10a–7p, weekend day", 4, "A weekend day worked"],
   ["senior", "CA-3 10a–7p, weekday", 1, "Late finish"],
   ["cardiacWe", "Cardiac home call, weekend day", 1.5, "Tied to your phone on your days off"],
@@ -28,9 +29,9 @@ export const DEFAULT_WEIGHTS = Object.fromEntries(WEIGHT_ROWS.map(([k, , v]) => 
 
 // Table columns: shift types added together for easy reading.
 export const COLUMNS = [
-  ["sat24", "Sat 24", ["sat24", "sun24"], 1],
-  ["fri24", "Fri 24", ["fri24", "wk24"], 1],
-  ["h2", "12-hr", ["h2sat", "h2sun", "h2wk"], 1],
+  ["sat24", "Sat 24", ["sat24"], 1],
+  ["fri24", "Fri 24", ["fri24"], 1],
+  ["h2", "12-hr", ["h2sat", "h2sun"], 1],
   ["nf", "Nights", ["nf"], 5],
   ["late", "Late", ["late", "lateFri"], 2],
   ["senior", "10–7", ["senior", "seniorWe"], 7],
@@ -68,8 +69,8 @@ export function dayItems(d, W) {
   const items = [];
   const add = (key) => items.push({ key, pts: W[key] ?? 0 });
   if (d.status === "work") {
-    if (d.call === "H1" || d.call === "24") add(d.dow === 6 ? "sat24" : d.dow === 0 ? "sun24" : d.dow === 5 ? "fri24" : "wk24");
-    else if (d.call === "H2") add(d.dow === 6 ? "h2sat" : d.dow === 0 ? "h2sun" : "h2wk");
+    if (d.call === "H1" || d.call === "24") add(d.dow === 5 ? "fri24" : "sat24");
+    else if (d.call === "H2") add(d.dow === 6 ? "h2sat" : "h2sun");
     else if (d.call === "NF") add("nf");
     else if (d.call === "10-7") add(d.weekend ? "seniorWe" : "senior");
     if (d.late) add(d.dow === 5 ? "lateFri" : "late");
@@ -229,7 +230,7 @@ export function samePointLastYear(model, today) {
 
 // ---------- coverage: who could take a shift ----------
 
-const SHIFT_LABEL = { sat24: "Saturday 24-hr call", sun24: "Sunday 24-hr call", fri24: "Friday 24-hr call", wk24: "24-hr call", h2sat: "Saturday 12-hr call", h2sun: "Sunday 12-hr call", h2wk: "12-hr call", nf: "Night float", senior: "CA-3 10a–7p", seniorWe: "CA-3 10a–7p", late: "Late" };
+const SHIFT_LABEL = { sat24: "Weekend 24-hr call", fri24: "Friday 24-hr call", h2sat: "Saturday 12-hr call", h2sun: "Weekend 12-hr call", nf: "Night float", senior: "CA-3 10a–7p", seniorWe: "CA-3 10a–7p", late: "Late" };
 
 // The shift someone holds that day, or their regular day.
 export function shiftOf(d, W) {

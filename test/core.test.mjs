@@ -752,7 +752,7 @@ test("minimums are typed in, saved and checked against the day", async () => {
   assert.deepEqual(shortOn(m, "2026-11-02").map((x) => [x.group, x.have, x.min]), [["Obstetrics", 1, 2], ["Acute Pain", 0, 1]]);
   const row = serviceCoverage(m, "2026-11").services.find((x) => x.group === "Acute Pain");
   assert.equal(row.min, 1);
-  assert.equal(row.zero.length, 21);
+  assert.equal(row.zero.length, 20); // 21 weekdays, less Thanksgiving
 });
 
 test("shift ratings: combined only, and small groups stay hidden", async () => {
@@ -766,4 +766,141 @@ test("shift ratings: combined only, and small groups stay hidden", async () => {
   assert.deepEqual(res.shifts.fri24, { n: 4, median: 7, low: 4, high: 10, classes: { "CA-1": 6 } });
   // One or two answers would be someone's own, so they stay hidden.
   assert.deepEqual(summarizeSurvey([{ cls: "CA-1", scores: { fri24: 4 } }, { cls: "CA-1", scores: { fri24: 6 } }]).shifts, {});
+});
+
+test("the weekly call pattern: 24s on Fri/Sat, 12s on Sat/Sun, nights Sun-Thu; anything else is flagged", async () => {
+  const { dayItems, DEFAULT_WEIGHTS, WEIGHT_ROWS } = await import("../public/core/fairness.js");
+  const { isFixedHoliday } = await import("../public/core/dates.js");
+  const keys = WEIGHT_ROWS.map(([k]) => k);
+  for (const gone of ["sun24", "wk24", "h2wk"]) assert.ok(!keys.includes(gone)); // shifts that don't exist
+  const shift = (call, dow) => dayItems({ status: "work", call, dow, roles: [] }, DEFAULT_WEIGHTS)[0].key;
+  assert.equal(shift("24", 5), "fri24");
+  assert.equal(shift("H1", 6), "sat24");
+  assert.equal(shift("H1", 0), "sat24"); // the Sunday of a holiday weekend counts like a Saturday
+  assert.equal(shift("H2", 6), "h2sat");
+  assert.equal(shift("H2", 1), "h2sun"); // a holiday Monday counts like a Sunday
+  // Labor Day, Memorial Day, Thanksgiving and observed fixed holidays.
+  assert.ok(isFixedHoliday("2026-09-07") && isFixedHoliday("2026-05-25") && isFixedHoliday("2026-11-26") && isFixedHoliday("2026-07-03"));
+  assert.ok(!isFixedHoliday("2026-09-14") && !isFixedHoliday("2026-05-18"));
+  // H1 typed on a Tuesday is flagged; on a holiday weekend it isn't.
+  const ds = fairnessDataset();
+  ds.months["2026-11"].rows.c.days[10] = { t: "H1" }; // Tuesday
+  ds.months["2026-11"].rows.c.days[29] = { t: "H1" }; // Sunday after Thanksgiving week: not near a holiday
+  ds.months["2026-11"].rows.c.days[27] = { t: "H2" }; // Friday after Thanksgiving: next to a holiday
+  const m = createModel(ds);
+  assert.equal(dayGaps(m, "2026-11-10").filter((g) => g.kind === "pattern").length, 1);
+  assert.match(dayGaps(m, "2026-11-10").find((g) => g.kind === "pattern").title, /only runs Friday and Saturday/);
+  assert.equal(dayGaps(m, "2026-11-29").filter((g) => g.kind === "pattern").length, 1);
+  assert.equal(dayGaps(m, "2026-11-27").filter((g) => g.kind === "pattern").length, 0);
+  assert.equal(m.day("c", "2026-11-26").status, "holiday"); // a blank Thanksgiving column
+});
+
+test("the alert says which day and where you are", async () => {
+  const { dailyAlert, dayWord, shouldAlert } = await import("../public/core/alerts.js");
+  assert.equal(dayWord("2026-11-10", "2026-11-09"), "Tomorrow's");
+  assert.equal(dayWord("2026-11-09", "2026-11-09"), "Today's");
+  assert.equal(dayWord("2026-11-16", "2026-11-13"), "Monday's"); // posted Friday for Monday
+  assert.equal(shouldAlert("2026-11-08", "2026-11-09"), false); // never for a past day
+  const ds = fairnessDataset();
+  ds.daily["2026-11-02"] = { date: "2026-11-02", rooms: [{ or: "4", surgeon: "Surgeon", staff: "ResA", ja: "", breaks: "" }], opsc: {}, ob: {}, pat: [], night: [] };
+  const m = createModel(ds);
+  const a = dailyAlert(m, "2026-11-02", "a", "2026-11-01");
+  assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Surgeon.", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
+  assert.equal(dailyAlert(m, "2026-11-02", "b", "2026-11-01").body, "You're on Night float.".replace("Night float", m.day("b", "2026-11-02").label));
+  assert.equal(dailyAlert(m, "2026-11-02", null, "2026-11-01").body, "Tap to see the rooms and who's where.");
+});
+
+test("reminders include alerts, for interns too, only where they can be turned on", async () => {
+  const { pendingReminders } = await import("../public/core/reminders.js");
+  assert.deepEqual(pendingReminders({ cls: "CA-2", hasHours: true, hasRated: true, alerts: "off" }), ["alerts"]);
+  assert.deepEqual(pendingReminders({ cls: "PGY-1", alerts: "install" }), ["alerts"]);
+  assert.deepEqual(pendingReminders({ cls: "PGY-1", alerts: "unsupported" }), []);
+  assert.deepEqual(pendingReminders({ cls: "CA-1", alerts: "on" }), ["hours", "rate"]);
+});
+
+test("chiefs: burnout signals, next month's targets, and logged hours", async () => {
+  const { burnoutWatch, planMonth, loggedSummary, loggedPerWeek, rotationHours, nudgeText } = await import("../public/core/chief.js");
+  const { fairnessReport, DEFAULT_WEIGHTS } = await import("../public/core/fairness.js");
+  // Resident a works every day for two weeks, with a Saturday 24 and a Sunday 12.
+  const ds = fairnessDataset();
+  for (let d = 1; d <= 21; d++) ds.months["2026-11"].rows.a.days[d] ||= { t: "BA" };
+  ds.months["2026-11"].rows.a.days[14] = { t: "H1" };
+  ds.months["2026-11"].rows.a.days[21] = { t: "H1" };
+  ds.months["2026-11"].rows.a.days[22] = { t: "H2" };
+  for (const id of ["c", "e", "f"]) for (let d = 2; d <= 20; d++) if (![7, 8, 14, 15].includes(d)) ds.months["2026-11"].rows[id].days[d] ||= { t: "BA" };
+  ds.rotations = { d: { "2026-12": "Obstetrics" } }; // from the annual schedule
+  const m = createModel(ds);
+  const watch = burnoutWatch(m, "2026-11-22");
+  const a = watch.find((w) => w.pid === "a");
+  assert.equal(watch[0].pid, "a"); // the most worn down comes first
+  assert.ok(a.signals.some((s) => /heavy calls/.test(s.text)));
+  assert.ok(a.signals.some((s) => /days in a row/.test(s.text)));
+  assert.ok(a.score >= 2);
+  // Logged hours replace the estimate when they're current.
+  const entries = [];
+  for (let i = 0; i < 28; i++) entries.push({ date: addDaysT("2026-10-26", i), start: 360, endDate: addDaysT("2026-10-26", i), end: 1200, hours: 11, type: "Duty Hours", rotation: "TEST ROT" });
+  const s = loggedSummary(entries, "2026-11-22");
+  assert.equal(Math.round(s.avg4), 77);
+  assert.equal(s.stale, false);
+  assert.equal(Math.round(loggedPerWeek(entries, "2026-10-27", "2026-11-20")), 77);
+  const withLogged = burnoutWatch(m, "2026-11-22", { shared: { c: entries } }).find((w) => w.pid === "c");
+  assert.ok(withLogged.signals.some((x) => x.level === "high" && /logged/.test(x.text)));
+  assert.deepEqual(rotationHours({ c: entries }).map((r) => [r.name, Math.round(r.median)]), [["TEST ROT", 77]]);
+  // Next month: whoever is under their share should carry more, no-call rotations carry none.
+  const rep = fairnessReport(m, { from: "2026-11-01", to: "2026-11-30" });
+  const plan = planMonth(m, "2026-11-22", rep, { watch });
+  assert.equal(plan.month, "2026-12");
+  const rows = plan.classes[0].rows;
+  const ra = rows.find((r) => r.pid === "a"), rc = rows.find((r) => r.pid === "c");
+  assert.ok(ra.target < rc.target);
+  assert.ok(ra.easy.length > 0); // flagged by the burnout watch
+  assert.equal(rows.find((r) => r.pid === "d").callable, false); // Obstetrics
+  assert.equal(nudgeText(10, DEFAULT_WEIGHTS), "About 1 Saturday 24 more than average");
+  assert.equal(nudgeText(-6, DEFAULT_WEIGHTS), "About 1 Friday 24 fewer than average");
+  assert.equal(nudgeText(1, DEFAULT_WEIGHTS), "About average");
+});
+
+function addDaysT(date, n) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+test("requests: shifts to swap, and the emails for a swap, a sick call and no-call days", async () => {
+  const R = await import("../public/core/requests.js");
+  const m = createModel(fairnessDataset());
+  // Nights are one piece; a regular day isn't something to swap.
+  assert.deepEqual(R.shiftBlock(m, "b", "2026-11-02"), { date: "2026-11-02", end: "2026-11-05", label: "Night float", kind: "NF" });
+  assert.equal(R.shiftBlock(m, "c", "2026-11-02"), null);
+  assert.deepEqual(R.upcomingShifts(m, "a", "2026-11-01").map((b) => [b.date, b.label]),
+    [["2026-11-03", "Late day (until 6p)"], ["2026-11-07", "24-hr call (H1)"], ["2026-11-13", "24-hr call"], ["2026-11-15", "12-hr call (H2)"]]);
+  assert.equal(R.lc("Night float"), "night float");
+  assert.equal(R.lc("12-hr call (H2)"), "12-hr call (H2)");
+  // A trade, agreed: both shifts in the email, to the schedule's inbox, signed by both.
+  const req = { pid: "a", ...R.shiftBlock(m, "a", "2026-11-07"), agreed: { pid: "c", date: "2026-11-15", end: "2026-11-15", label: "12-hr call (H2)" } };
+  const e = R.swapEmail(m, req);
+  assert.equal(e.subject, "Call swap: ResA ↔ ResC, Sat 11/7 and Sun 11/15");
+  assert.match(e.body, /• Sat, November 7, 24-hr call \(H1\): Test ResC will cover for Test ResA/);
+  assert.match(e.body, /• Sun, November 15, 12-hr call \(H2\): Test ResA will cover for Test ResC/);
+  assert.match(e.body, /have agreed to trade call/);
+  assert.match(e.body, /Test ResA and Test ResC$/);
+  const link = R.mailto(e.subject, e.body);
+  assert.ok(link.startsWith("mailto:dmc.ane.sch@gmail.com?subject="));
+  assert.ok(link.includes("%0D%0A")); // line breaks mail apps understand
+  // Sick call: the Jeopardy resident is found and named in the email.
+  assert.deepEqual(R.jeopardyOn(m, "2026-11-02").map((d) => d.pid), ["e"]);
+  const sick = R.sickEmail(m, "a", "2026-11-03", { jeopardy: ["e"] });
+  assert.equal(sick.subject, "Sick call: Test ResA, Tue 11/3");
+  assert.match(sick.body, /I was scheduled for Late day \(until 6p\), Basic Anesthesia\./);
+  assert.match(sick.body, /reached out to Test ResE \(Jeopardy\)/);
+  assert.match(R.sickText(m, "a", "2026-11-03", "2026-11-02", "e"), /^Hi Test, I'm sick and can't work tomorrow \(Tue 11\/3\)\./);
+  // No-call days: Friday to Sunday, each weekend split at the month's edges, reasons in the email.
+  assert.deepEqual(R.weekendsOf("2026-11")[0].days, ["2026-11-01"]);
+  assert.deepEqual(R.weekendsOf("2026-12")[0].days, ["2026-12-04", "2026-12-05", "2026-12-06"]);
+  assert.equal(R.noCallMonth("2026-11-20"), "2026-12");
+  const nc = R.noCallEmail(m, "a", "2026-12", { "2026-12-05": "Wedding", "2026-12-06": "Other", "2027-01-02": "Travel" }, "Out of state");
+  assert.equal(nc.subject, "No-call request, December 2026: Test ResA (CA-1)");
+  assert.match(nc.body, /• Sat, December 5: Wedding\n• Sun, December 6\n\nOut of state/);
+  assert.ok(!nc.body.includes("January")); // only that month's days
+  assert.match(R.noCallEmail(m, "a", "2026-12", {}).body, /don't have any no-call requests/);
 });

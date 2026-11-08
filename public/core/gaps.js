@@ -1,6 +1,18 @@
 // Coverage gaps: staffing rules (editable in Settings), the call sheet's own
 // "coverage needed" rows, and conflicts between the call sheet and the daily OR sheet.
-import { monthDates, addDays, dow } from "./dates.js";
+import { monthDates, addDays, dow, monthKey, parts, DOW_SHORT } from "./dates.js";
+
+// The weekly pattern, outside holiday weekends: 24-hr call on Friday and Saturday, 12-hr call on
+// Saturday and Sunday, night float Sunday to Thursday nights.
+const PATTERN = [
+  [(d) => d.call === "H1" || d.call === "24", [5, 6], "24-hr call", "Friday and Saturday"],
+  [(d) => d.call === "H2", [0, 6], "12-hr call (H2)", "Saturday and Sunday"],
+  [(d) => d.call === "NF", [0, 1, 2, 3, 4], "Night float", "Sunday to Thursday nights"],
+];
+const nearHoliday = (model, date) => [-1, 0, 1].some((k) => {
+  const x = addDays(date, k);
+  return model.holidays(monthKey(x)).has(parts(x).d);
+});
 
 const MATCHERS = {
   late: (d) => d.late,
@@ -33,6 +45,15 @@ export function dayGaps(model, date) {
   }
   for (const c of model.coverageNeeded(date)) {
     items.push({ date, level: "gap", kind: "sheet", title: `${c.label} coverage needed (call sheet)` });
+  }
+  // A shift on a day it never runs is usually a typo in the call sheet.
+  if (!nearHoliday(model, date)) {
+    for (const [test, days, label, when] of PATTERN) {
+      if (days.includes(wd)) continue;
+      for (const d of roster.filter((x) => x.status === "work" && test(x))) {
+        items.push({ date, level: "warn", kind: "pattern", title: `${model.name(d.pid)} has ${label} on a ${DOW_SHORT[wd]}: it only runs ${when}. Check the call sheet`, people: [d.pid] });
+      }
+    }
   }
   for (const d of roster) {
     if (d.call === "H1" || d.call === "24") {

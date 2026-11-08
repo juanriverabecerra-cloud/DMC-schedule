@@ -14,10 +14,13 @@ import { renderCall } from "./views/call.js";
 import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
 import { renderRate } from "./views/rate.js";
+import { renderSwaps, renderNoCall } from "./views/requests.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderDidactics } from "./views/didactics.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
 import { remindersFor } from "./views/reminders.js";
+import { syncAlerts } from "./push.js";
+import { retryUpload } from "./logged.js";
 
 const state = {
   ds: local.get("ds"),
@@ -89,6 +92,7 @@ function ctx() {
 function setMe(pid) {
   state.me = pid;
   if (pid) local.set("me", pid); else local.del("me");
+  syncAlerts(pid || null);
 }
 
 function topbar(r) {
@@ -117,8 +121,8 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", rate: "Rate the shifts", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = ["p", "call", "gaps", "admin", "hours", "rate"].includes(r.name);
+    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
+    const back = ["p", "call", "gaps", "admin", "hours", "rate", "swaps", "nocall"].includes(r.name);
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
@@ -148,7 +152,7 @@ function tabbar(r) {
   const toDo = remindersFor(state.model, state).length > 0;
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate"].includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
     id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null,
@@ -179,6 +183,8 @@ export function render() {
     else if (r.name === "didactics") content = renderDidactics(ctx());
     else if (r.name === "more") content = renderMore(ctx());
     else if (r.name === "rate") content = renderRate(ctx());
+    else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
+    else if (r.name === "nocall") content = renderNoCall(ctx());
     else if (r.name === "admin") content = renderAdmin(ctx());
     else if (r.name === "p" && r.arg) content = renderPerson(ctx(), r.arg);
     else content = renderToday(ctx());
@@ -201,10 +207,15 @@ window.addEventListener("online", () => reload({ quiet: true }));
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // A tapped alert asks an open window to go to that day.
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "open" && typeof e.data.url === "string" && new URL(e.data.url).origin === location.origin) location.href = e.data.url;
+  });
 }
 
 rebuild();
 render();
 reload({ quiet: !!state.ds });
+if (state.me) retryUpload(state.me);
 
 export { state, fmtDate };

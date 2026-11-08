@@ -198,9 +198,13 @@ export function openDaySheet(ctx, pid, date) {
             chips: false,
           }))), { pad: false })
         : notice("warn", "info", "No same-class resident is clearly free for this shift."));
-      holder.append(h("p", { class: "disclaimer" }, "Suggestions only: same class, free that day, not around nights or 24-hr call, and under ~80 estimated hours that week. Swaps still go through the chiefs."));
+      holder.append(h("p", { class: "disclaimer" }, "Suggestions only: same class, free that day, not around nights or 24-hr call, and under ~80 estimated hours that week. Swaps go through the schedule email."));
     } }, icon("swap"), "Who could swap this shift?");
     holder.append(btn);
+    // Your own shift: post it for your class, and the app writes the email once someone agrees.
+    if (pid === ctx.state.me && date >= ctx.state.today && ["CA-1", "CA-2", "CA-3"].includes(model.person(pid)?.cls)) {
+      holder.append(h("button", { class: "btn primary block", style: { marginTop: "8px" }, onclick: () => { document.querySelector(".sheet .iconbtn")?.click(); ctx.go(`swaps/new/${date}`); } }, icon("swap"), "Ask for a swap"));
+    }
     body.append(holder);
   }
   openSheet(fmtDate(date, "long"), body);

@@ -122,3 +122,20 @@ export function relDay(date, today) {
   if (n > 1 && n < 7) return DOW_SHORT[dow(date)];
   return fmtDate(date);
 }
+
+// The hospital holidays that fall on a set day (and the weekday they're observed on), for
+// reading call sheets that leave a holiday column blank.
+export function isFixedHoliday(date) {
+  const { y, m, d } = parts(date);
+  const wd = dow(date);
+  const nth = Math.ceil(d / 7);
+  const observed = (mm, dd) => {
+    const real = ymd(y, mm, dd);
+    const rd = dow(real);
+    return date === (rd === 6 ? addDays(real, -1) : rd === 0 ? addDays(real, 1) : real);
+  };
+  if (m === 5 && wd === 1 && d + 7 > 31) return true; // Memorial Day: last Monday of May
+  if (m === 9 && wd === 1 && nth === 1) return true; // Labor Day
+  if (m === 11 && wd === 4 && nth === 4) return true; // Thanksgiving
+  return observed(1, 1) || observed(7, 4) || observed(12, 25) || (m === 12 && d === 31 && dow(ymd(y + 1, 1, 1)) === 6);
+}

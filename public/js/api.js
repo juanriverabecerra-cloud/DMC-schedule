@@ -12,6 +12,18 @@ export const local = {
   },
 };
 
+// A random key made once per device. It's what lets this device change what it sent: its own
+// logged hours and its own swap requests and offers.
+export function deviceKey() {
+  let key = local.get("deviceKey");
+  if (!key) {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    key = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    local.set("deviceKey", key);
+  }
+  return key;
+}
+
 export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }

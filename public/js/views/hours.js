@@ -3,19 +3,21 @@ import { startOfWeek, addDays, fmtDate, monthKey, parts } from "../../core/dates
 import { hoursReport } from "../../core/hours.js";
 import { fmtTime } from "../../core/dates.js";
 import { compareLogged, hoursByRotation, mergeEntries, outlook, parseLoggedHours } from "../../core/logged.js";
-import { actualFor, clearLogged, loggedFor, saveLogged } from "../logged.js";
+import { actualFor, clearLogged, loggedFor, saveLogged, uploadLogged, removeUploaded } from "../logged.js";
 import { hoursCard } from "./today.js";
 
 // The login page, not View Hours itself: that page shows an error to anyone not signed in yet.
 const SIGN_IN = "https://www.new-innov.com/login/login.aspx";
 
+// Why it matters, in the resident's words: shown wherever hours come in.
+export const WHY_HOURS = "Your real hours are useful information for the chiefs: they show who has actually been working more than others, so the calls, shifts and rotations ahead can be divided more fairly. Everything in this app is built for fairness and preventing burnout.";
+
 // New Innovations offers no outside connection, so a resident brings their own View Hours page:
-// the Export To Excel file, or a copy and paste. Nobody hands over a password, and the numbers
-// stay in this browser.
+// the Export To Excel file, or a copy and paste. Nobody hands over a password.
 function openImport(ctx, pid) {
-  const quiet = "Nothing is uploaded. These hours stay on this device.";
+  const quiet = "No password is shared. Pick the file or paste the page.";
   const status = h("p", { class: "small muted", style: { margin: "10px 0" } }, quiet);
-  const save = h("button", { class: "btn primary block", disabled: true }, icon("check"), "Save on this device");
+  const save = h("button", { class: "btn primary block", disabled: true }, icon("check"), h("span", null, "Save"));
   let parsed = null;
   const read = (text) => {
     parsed = parseLoggedHours(text);
@@ -49,21 +51,27 @@ function openImport(ctx, pid) {
       h("button", { class: "btn", onclick: () => file.click() }, icon("upload"), "Choose file")),
     file,
     h("details", { class: "paste" }, h("summary", null, "Or paste the page instead"), box),
-    status, save));
-  save.addEventListener("click", () => {
+    status,
+    h("p", { class: "whybox" }, WHY_HOURS, " Other residents never see your hours."),
+    save));
+  save.addEventListener("click", async () => {
     const entries = mergeEntries(loggedFor(pid)?.entries, parsed.entries);
-    const kept = saveLogged(pid, entries);
+    if (!saveLogged(pid, entries)) { toast("This browser wouldn't save it. Private browsing can block this."); return; }
+    save.disabled = true;
+    save.lastChild.textContent = "Saving…";
+    // Offline or not, the hours are saved here; the app's copy catches up next time it opens.
+    await uploadLogged(pid, entries).catch(() => {});
+    toast(`Saved: ${entries.length} entries`);
     close();
-    toast(kept ? `Saved on this device: ${entries.length} entries in all` : "This browser wouldn't save it. Private browsing can block this.");
     ctx.render();
   });
 }
 
 function askForHours(ctx, pid) {
   return card("Your real hours", h("div", null,
-    h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "Bring in what you logged in New Innovations to see your real hours and a prediction based on how your days actually run."),
+    h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "Bring in what you logged in New Innovations: your true 4-week average and a prediction based on how your days actually run. Your real hours are also useful information for the chiefs, to divide calls, shifts and rotations more fairly."),
     h("button", { class: "btn primary block", onclick: () => openImport(ctx, pid) }, icon("upload"), "Add my hours"),
-    h("p", { class: "tiny muted", style: { margin: "8px 0 0" } }, "No password needed. Your hours stay on this device.")));
+    h("p", { class: "tiny muted", style: { margin: "8px 0 0" } }, "No password needed. Other residents never see your hours.")));
 }
 
 const signed = (n) => (n > 0 ? `${n} h more` : `${-n} h less`);
@@ -115,10 +123,15 @@ function loggedCard(ctx, pid) {
     peakPast ? h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, `Highest 4-week average so far: ${Math.round(peakPast.avg4)} h, ending ${fmtDate(peakPast.end)}.`) : null,
     offDays.length ? h("p", { class: "tiny muted", style: { margin: "6px 0 0" } }, `Logged this year on ${offDays.length === 1 ? "a day" : `${offDays.length} days`} the call sheet shows off: ${offDays.slice(-4).map((d) => fmtDate(d)).join(", ")}.`) : null,
     cmp.conference ? h("p", { class: "tiny muted", style: { margin: "6px 0 0" } }, `${cmp.conference} conference day${cmp.conference === 1 ? " counts" : "s count"} toward your hours but not these averages.`) : null,
-    h("p", { class: "tiny muted", style: { margin: "6px 0 12px" } }, `Logged through ${fmtDate(actual.last)}. Only this device has these hours. Your official record stays in New Innovations.`),
+    h("p", { class: "tiny muted", style: { margin: "6px 0 12px" } }, `Logged through ${fmtDate(actual.last)}. Your official record stays in New Innovations.`),
     h("div", { class: "btnrow" },
       h("button", { class: "btn", onclick: () => openImport(ctx, pid) }, icon("refresh"), "Update"),
-      h("button", { class: "btn", onclick: () => { if (confirm("Remove your logged hours from this device?")) { clearLogged(); ctx.render(); } } }, icon("x"), "Remove"))),
+      h("button", { class: "btn", onclick: async () => {
+        if (!confirm("Remove your logged hours from the app?")) return;
+        clearLogged();
+        await removeUploaded(pid).catch((err) => toast(err.message));
+        ctx.render();
+      } }, icon("x"), "Remove"))),
   );
 }
 

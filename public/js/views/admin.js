@@ -90,8 +90,14 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
   const nameOk = (text) => !text || isCrnaMark(text) || splitNames(text).every((n) => roleWord(n) || /resident|rotator/i.test(n) || match(n));
 
   const dateHint = h("p", { class: "tiny muted", style: { margin: "6px 0 0" } });
+  // The first save of a day sends everyone with alerts on a lock-screen alert. A fix to a sheet
+  // that's already out only does if this is ticked.
+  const realert = h("input", { type: "checkbox" });
+  const realertLine = h("label", { class: "checkline", style: { margin: "0 0 10px" } }, realert, h("span", null, "Send the alert again: the rooms changed enough that people should look"));
   const showHint = () => {
-    dateHint.textContent = [dateNote, ctx.state.model.ds.daily?.[date] ? "Saving replaces the sheet already saved for this day." : ""].filter(Boolean).join(" ");
+    const exists = !!ctx.state.model.ds.daily?.[date];
+    dateHint.textContent = [dateNote, exists ? "Saving replaces the sheet already saved for this day." : date >= todayLocal() ? "Saving sends a lock-screen alert to everyone who turned alerts on." : ""].filter(Boolean).join(" ");
+    realertLine.hidden = !exists || date < todayLocal();
   };
   const dateInput = h("input", { class: "input", type: "date", value: date, "aria-label": "Sheet date", onchange: (e) => { if (e.target.value) { date = e.target.value; showHint(); } } });
   showHint();
@@ -143,6 +149,7 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
       field("OB residents", data.ob.residents.join(", "), (v) => { data.ob.residents = list(v); })),
     field("Night coverage", data.night.join(", "), (v) => { data.night = list(v); }),
     h("label", { class: "field" }, h("span", null, "Notes (one per line)"), notesText),
+    realertLine,
     saveBtn,
   );
 
@@ -153,9 +160,10 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
     data.notes = notesText.value.split("\n").map((x) => x.trim()).filter(Boolean);
     data.source = source;
     try {
-      const res = await api(`/api/daily/${date}`, { method: "PUT", body: { ...data, photo: photoId } });
+      const res = await api(`/api/daily/${date}`, { method: "PUT", body: { ...data, photo: photoId, notify: realert.checked && !realertLine.hidden } });
       const fixes = [...new Set((res.changes || []).map((c) => `${c.from} → ${c.to}`))];
-      toast(`Saved for ${fmtDate(date)}${fixes.length ? ` · ${fixes.slice(0, 3).join(", ")}${fixes.length > 3 ? "…" : ""}` : ""}`);
+      const sent = res.alerted ? ` · alert sent to ${res.alerted} ${res.alerted === 1 ? "phone" : "phones"}` : "";
+      toast(`Saved for ${fmtDate(date)}${sent}${fixes.length ? ` · ${fixes.slice(0, 3).join(", ")}${fixes.length > 3 ? "…" : ""}` : ""}`);
       close();
       await ctx.reload();
       onSaved?.();

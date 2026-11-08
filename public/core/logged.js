@@ -1,8 +1,8 @@
 // Hours a resident logged in New Innovations, compared with what the schedule implies and used
 // to predict what's ahead. New Innovations has no public way to connect, so a resident brings
 // their own View Hours page: its Export To Excel file (really a web page) or a copy and paste.
-// This all runs on their device: the app has one shared passcode, so real hours are never sent
-// to the server.
+// It runs on their device, and a copy goes to the app for the admin pages (never to other
+// residents), so call, shifts and rotations can be split by real work, not just the schedule.
 import { addDays, startOfWeek, toUTC } from "./dates.js";
 
 const STAMP = "(\\d{1,2})/(\\d{1,2})/(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*([AP])M";
@@ -10,6 +10,8 @@ const ROW = new RegExp(`${STAMP}\\s+${STAMP}\\s+(\\d+(?:\\.\\d+)?)(?![\\d/:])`, 
 const ROTATION = /Rotation on \d{1,2}\/\d{1,2}\/\d{4}\s+(.+?)\s+-\s+PRG-?\d/gi;
 const NOT_WORK = /vacation|leave|sick|holiday|day off/i;
 const NOT_CLINICAL = /conference|didactic/i;
+export const isWorkEntry = (e) => !NOT_WORK.test(e.type);
+export const isAwayEntry = (e) => /vacation|leave|sick/i.test(e.type);
 
 const iso = (m, d, y) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
 const minutes = (h, min, ap) => ((Number(h) % 12) + (ap.toUpperCase() === "P" ? 12 : 0)) * 60 + Number(min);
@@ -46,6 +48,27 @@ export function parseLoggedHours(text) {
   // The page ends with a total, which is a good check that nothing was missed.
   const tail = src.slice(end).replace(new RegExp(STAMP, "gi"), " ").match(/(?:^|\s)(\d{1,4}\.\d{1,2})(?=\s|$)/);
   return { entries, summed, worked, total: tail ? Number(tail[1]) : null, first: entries[0]?.date || null, last: entries[entries.length - 1]?.date || null };
+}
+
+// Entries as the server accepts them from a resident's device: the same fields
+// the parser makes, checked and trimmed.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export function cleanEntries(list) {
+  if (!Array.isArray(list)) return [];
+  const minute = (n) => Number.isInteger(n) && n >= 0 && n < 1440;
+  const text = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
+  const seen = new Set();
+  const out = [];
+  for (const e of list.slice(0, 5000)) {
+    if (!e || !DATE_RE.test(e.date) || !DATE_RE.test(e.endDate) || !minute(e.start) || !minute(e.end)) continue;
+    const hours = Number(e.hours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 36) continue;
+    const key = `${e.date}|${e.start}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ date: e.date, start: e.start, endDate: e.endDate, end: e.end, hours, type: text(e.type, 40), rotation: text(e.rotation, 80) });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
 }
 
 // Each file adds to the running record. Only days the new file includes are updated, so a

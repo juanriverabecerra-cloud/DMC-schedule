@@ -1,7 +1,9 @@
 // What the codes and colors on the DMC call sheet mean.
 // Hours confirmed by the residents: H1 = 24 h (6a-6a), H2 = 12 h (6a-6p), NF = 6p-6a,
 // "10-7" = 10a-7p, green = late resident (finishes at their site, then helps at Harper until 6p),
-// blue on a weekday = 24-hour call (same as H1), magenta week = cardiac call, "X" in an OR = CRNA room.
+// blue on a Friday = 24-hour call (same as H1), magenta week = cardiac call, "X" in an OR = CRNA room.
+// The week: 24-hr call only Friday and Saturday (each covers its own night), 12-hr call only Saturday
+// and Sunday, night float Sunday to Thursday nights. Holiday weekends are the exception.
 // The CA-1 obstetrics rotation is officially the "11 to 9" rotation: Monday to Friday, 11a-9p.
 
 export const SITES = {

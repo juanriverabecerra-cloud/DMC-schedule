@@ -6,8 +6,13 @@ import {
 } from "../../lib/dataset.js";
 import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
-import { todayLocal } from "../../public/core/dates.js";
+import { todayLocal, addDays } from "../../public/core/dates.js";
+import { shiftBlock } from "../../public/core/requests.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
+import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
+import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
+import { cleanSubscription, subscriptionId, vapidKeys, sendPush, pushSubject } from "../../lib/push.js";
+import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -29,6 +34,41 @@ function origin(req) {
 async function bytesOf(req) {
   return new Uint8Array(await req.arrayBuffer());
 }
+
+// Lock-screen alerts: everyone who turned them on hears when a day's OR sheet is posted, with
+// where they are that day. Subscriptions that no longer exist are dropped.
+async function alertDaily(st, ds, date, site) {
+  const subs = (await st.getJSON("push/subs")) || {};
+  const list = Object.entries(subs);
+  if (!list.length) return 0;
+  const keys = await vapidKeys(st);
+  const model = createModel(ds);
+  const today = todayLocal();
+  const results = await Promise.all(list.map(async ([id, sub]) =>
+    [id, await sendPush(sub, dailyAlert(model, date, sub.pid, today), { keys, subject: pushSubject(site), urgency: "high" })]));
+  const gone = results.filter(([, r]) => r.gone).map(([id]) => id);
+  if (gone.length) {
+    const fresh = (await st.getJSON("push/subs")) || {};
+    for (const id of gone) delete fresh[id];
+    await st.setJSON("push/subs", fresh);
+  }
+  return results.filter(([, r]) => r.ok).length;
+}
+
+// Logged hours belong to the device that first sends them, so nobody else with the passcode
+// can overwrite them. An admin can delete them.
+const keyHash = (key) => crypto.createHash("sha256").update(String(key)).digest("base64url");
+const goodKey = (key) => typeof key === "string" && key.length >= 16 && key.length <= 200;
+const cleanText = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, n);
+
+// Swap requests between residents. Each request and offer remembers the device that made it,
+// so only that device can change it; what goes out never includes those keys.
+function publicSwap(r, mine) {
+  const { keyHash: k, offers, ...rest } = r;
+  return { ...rest, mine: !!mine && k === mine, offers: offers.map(({ keyHash: ok, ...o }) => ({ ...o, mine: !!mine && ok === mine })) };
+}
+const pruneSwaps = (list, today) => list.filter((r) => r.end >= addDays(today, -7) && !(r.status === "cancelled" && r.end < today));
+const SWAP_CLASSES = ["CA-1", "CA-2", "CA-3"];
 
 export default async function handler(req) {
   const url = new URL(req.url);
@@ -95,6 +135,141 @@ export default async function handler(req) {
       return json({ ok: true });
     }
 
+    // ---- lock-screen alerts ----
+    if (path === "/api/push/key" && method === "GET") {
+      return json({ publicKey: (await vapidKeys(st)).publicKey });
+    }
+    if (path === "/api/push/subscribe" && method === "POST") {
+      const body = await req.json();
+      const sub = cleanSubscription(body.subscription);
+      if (!sub) return fail(400, "That isn't a push subscription this app can use.");
+      const ds = await loadDataset(st);
+      const pid = ds.people.some((p) => p.id === body.pid) ? body.pid : null;
+      const subs = (await st.getJSON("push/subs")) || {};
+      const id = subscriptionId(sub.endpoint);
+      subs[id] = { ...sub, pid, createdAt: subs[id]?.createdAt || new Date().toISOString() };
+      await st.setJSON("push/subs", subs);
+      return json({ ok: true });
+    }
+    if (path === "/api/push/unsubscribe" && method === "POST") {
+      const body = await req.json();
+      const subs = (await st.getJSON("push/subs")) || {};
+      delete subs[subscriptionId(String(body.endpoint || ""))];
+      await st.setJSON("push/subs", subs);
+      return json({ ok: true });
+    }
+    if (path === "/api/push/test" && method === "POST") {
+      const body = await req.json();
+      const sub = ((await st.getJSON("push/subs")) || {})[subscriptionId(String(body.endpoint || ""))];
+      if (!sub) return fail(404, "Alerts aren't on for this device. Turn them on again.");
+      const r = await sendPush(sub, { title: "Alerts are on", body: "You'll hear here when the next day's OR schedule is posted.", url: "/#/today", tag: "test" },
+        { keys: await vapidKeys(st), subject: pushSubject(origin(req)), ttl: 600, urgency: "high" });
+      return r.ok ? json({ ok: true }) : fail(502, `The phone's push service said no (${r.status || "no answer"}). Turn alerts off and on again.`);
+    }
+
+    // ---- swap requests ----
+    if (path === "/api/swaps" && method === "GET") {
+      const today = todayLocal();
+      const mine = req.headers.get("x-device-key") ? keyHash(req.headers.get("x-device-key")) : null;
+      const list = ((await st.getJSON("swaps"))?.list || []).filter((r) => r.end >= addDays(today, -1) && r.status !== "cancelled");
+      return json({ swaps: list.map((r) => publicSwap(r, mine)) });
+    }
+    if (path === "/api/swaps" && method === "POST") {
+      const body = await req.json();
+      const today = todayLocal();
+      const model = createModel(await loadDataset(st));
+      const p = model.person(body.pid);
+      if (!p || !SWAP_CLASSES.includes(p.cls)) return fail(400, "Pick yourself first (CA-1 to CA-3).");
+      if (!goodKey(body.key)) return fail(400, "Missing device key");
+      if (!DATE.test(body.date || "") || body.date < today) return fail(400, "Pick an upcoming shift.");
+      const block = shiftBlock(model, p.id, body.date);
+      if (!block) return fail(400, "The call sheet shows no call shift for you that day.");
+      const data = (await st.getJSON("swaps")) || { list: [] };
+      data.list = pruneSwaps(data.list, today);
+      if (data.list.some((r) => r.pid === p.id && r.date === block.date && r.status !== "cancelled")) return fail(409, "You already asked for a swap for that shift.");
+      const r = { id: crypto.randomUUID().replace(/-/g, "").slice(0, 12), pid: p.id, cls: p.cls, ...block, note: cleanText(body.note, 200), keyHash: keyHash(body.key), status: "open", offers: [], createdAt: new Date().toISOString() };
+      data.list.push(r);
+      await st.setJSON("swaps", data);
+      return json({ ok: true, swap: publicSwap(r, r.keyHash) });
+    }
+    const swap = path.match(/^\/api\/swaps\/([a-z0-9]{6,40})$/);
+    if (swap && method === "POST") {
+      const body = await req.json();
+      const today = todayLocal();
+      const data = (await st.getJSON("swaps")) || { list: [] };
+      const r = data.list.find((x) => x.id === swap[1]);
+      if (!r || r.status === "cancelled") return fail(404, "That request is gone.");
+      const key = goodKey(body.key) ? keyHash(body.key) : null;
+      const owner = key && key === r.keyHash;
+      const now = new Date().toISOString();
+      if (body.action === "offer") {
+        if (r.status !== "open") return fail(409, "That shift already has a taker.");
+        if (!key) return fail(400, "Missing device key");
+        const model = createModel(await loadDataset(st));
+        const p = model.person(body.pid);
+        if (!p || p.id === r.pid) return fail(400, "Pick yourself first.");
+        if (p.cls !== r.cls) return fail(400, `Swaps stay within the class (${r.cls}).`);
+        let trade = null;
+        if (body.date) {
+          trade = DATE.test(body.date) && body.date >= today ? shiftBlock(model, p.id, body.date) : null;
+          if (!trade) return fail(400, "Pick one of your upcoming shifts to trade.");
+        }
+        r.offers = r.offers.filter((o) => o.pid !== p.id);
+        r.offers.push({ pid: p.id, keyHash: key, ...(trade ? { date: trade.date, end: trade.end, label: trade.label } : {}), note: cleanText(body.note, 200), at: now });
+      } else if (body.action === "withdraw") {
+        const o = r.offers.find((x) => x.pid === body.pid);
+        if (!o || o.keyHash !== key) return fail(403, "Only the device that made this offer can take it back.");
+        if (r.agreed?.pid === o.pid) { r.status = "open"; r.agreed = null; }
+        r.offers = r.offers.filter((x) => x !== o);
+      } else if (body.action === "accept") {
+        if (!owner) return fail(403, "Only the device that asked can accept an offer.");
+        const o = r.offers.find((x) => x.pid === body.offerPid);
+        if (!o) return fail(404, "That offer was taken back.");
+        r.status = "agreed";
+        r.agreed = { pid: o.pid, date: o.date || null, end: o.end || null, label: o.label || null, at: now };
+      } else if (body.action === "reopen") {
+        if (!owner) return fail(403, "Only the device that asked can change this.");
+        r.status = "open";
+        r.agreed = null;
+      } else if (body.action === "cancel") {
+        if (!owner && !isAdmin(req)) return fail(403, "Only the device that asked can cancel this.");
+        r.status = "cancelled";
+      } else if (body.action === "emailed") {
+        const taker = r.offers.find((x) => x.pid === r.agreed?.pid);
+        if (!owner && !(taker && taker.keyHash === key)) return fail(403, "Not your swap.");
+        r.emailedAt = now;
+      } else return fail(400, "Unknown action");
+      await st.setJSON("swaps", data);
+      return json({ ok: true, swap: publicSwap(r, key) });
+    }
+
+    // ---- real hours residents add (only admins can read them) ----
+    const hours = path.match(/^\/api\/hours\/([\w-]+)$/);
+    if (hours && (method === "PUT" || method === "DELETE")) {
+      const pid = hours[1];
+      const body = await req.json().catch(() => ({}));
+      const ds = await loadDataset(st);
+      if (!ds.people.some((p) => p.id === pid)) return fail(404, "No such resident");
+      const saved = await st.getJSON(`hours/${pid}`);
+      const mine = saved && body.key && saved.keyHash === keyHash(body.key);
+      if (method === "DELETE") {
+        if (saved && !mine && !isAdmin(req)) return fail(403, "Only the device that added these hours, or an admin, can remove them.");
+        await st.delete(`hours/${pid}`);
+        return json({ ok: true });
+      }
+      if (typeof body.key !== "string" || body.key.length < 16) return fail(400, "Missing device key");
+      const takeover = saved && !mine;
+      if (takeover && body.replace !== true) return fail(409, "These hours were first added from another device. Update them there, or replace them from this one.");
+      const incoming = cleanEntries(body.entries);
+      if (!incoming.length) return fail(400, "No hours found");
+      // Taking over starts from this device's hours alone; otherwise new days add to the record.
+      const entries = takeover ? incoming : mergeEntries(saved?.entries, incoming);
+      const now = new Date().toISOString();
+      const moves = [...(saved?.moves || []), ...(takeover ? [now] : [])].slice(-5);
+      await st.setJSON(`hours/${pid}`, { keyHash: keyHash(body.key), entries, sharedAt: saved?.sharedAt || now, updatedAt: now, moves });
+      return json({ ok: true, entries: entries.length, updatedAt: now });
+    }
+
     // ---- admin only below ----
     const didPdf = path.match(/^\/api\/didactics\/(\d{4}-\d{2})\/pdf$/);
     if (didPdf && method === "GET") {
@@ -134,9 +309,12 @@ export default async function handler(req) {
         }
       }
       const hasPhoto = !!(await st.getBytes(`photo/${date}`));
+      const isNew = !ds.daily[date];
       const { daily: saved, changes } = setDaily(ds, date, { ...body, hasPhoto });
       await st.setJSON("dataset", ds);
-      return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt });
+      // The first save of a day's sheet tells everyone; a later fix only when the admin asks.
+      const alerted = (isNew || body.notify === true) && shouldAlert(date, todayLocal()) ? await alertDaily(st, ds, date, origin(req)) : 0;
+      return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt, alerted });
     }
     if (daily && method === "DELETE") {
       const ds = await loadDataset(st);
@@ -216,6 +394,16 @@ export default async function handler(req) {
       const summary = setDirectory(ds, await req.json());
       await st.setJSON("dataset", ds);
       return json({ ok: true, summary, updatedAt: ds.updatedAt });
+    }
+
+    if (path === "/api/hours" && method === "GET") {
+      const ds = await loadDataset(st);
+      const out = {};
+      await Promise.all(ds.people.map(async (p) => {
+        const rec = await st.getJSON(`hours/${p.id}`);
+        if (rec?.entries?.length) out[p.id] = { entries: rec.entries, sharedAt: rec.sharedAt, updatedAt: rec.updatedAt, moves: rec.moves || [] };
+      }));
+      return json({ people: out });
     }
 
     if (path === "/api/survey/results" && method === "GET") {

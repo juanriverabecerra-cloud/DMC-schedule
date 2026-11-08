@@ -1,7 +1,7 @@
 // Turns the stored dataset into answers: where is a resident on a date, what are their
 // hours, who is on tonight. Shared by the app (browser) and the calendar feed (server).
 import { CODES, CALL_CODES, FRIDAY_24, SITES, GROUP_COLORS, normCode, rotationCode, classCode, classRotation, mergeSettings, fillFamily, isHolidayText } from "./codes.js";
-import { dow, monthKey, parts, addMonths, addDays } from "./dates.js";
+import { dow, monthKey, parts, addMonths, addDays, ymd, isFixedHoliday } from "./dates.js";
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
 import { createDidactics } from "./didactics.js";
@@ -54,11 +54,15 @@ export function createModel(ds) {
     const m = ds.months?.[month];
     if (m) {
       const rows = Object.values(m.rows);
+      const [y, mo] = month.split("-").map(Number);
       for (let d = 1; d <= (m.days || 31); d++) {
         const blanks = rows.filter((r) => !r.days[d]?.t && fillTag(r.days[d]?.f) === "off").length;
+        const empty = rows.filter((r) => !r.days[d]?.t).length / (rows.length || 1);
         // A holiday can be spelled down the column, one letter per resident.
         const words = rows.filter((r) => isHolidayText(r.days[d]?.t) || /^[HOLIDAY]$/.test(r.days[d]?.t || "")).length;
-        if (rows.length && (blanks / rows.length >= 0.6 || words >= 5)) set.add(d);
+        // Or written once across a blank column ("LABOR DAY HOLIDAY"), or left blank on a set holiday.
+        const fixed = isFixedHoliday(ymd(y, mo, d));
+        if (rows.length && (blanks / rows.length >= 0.6 || words >= 5 || (words >= 1 && empty >= 0.5) || (fixed && empty >= 0.6))) set.add(d);
       }
     }
     holidayCache.set(month, set);

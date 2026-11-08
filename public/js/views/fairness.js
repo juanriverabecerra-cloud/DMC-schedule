@@ -1,5 +1,6 @@
-// Admin › Fairness: everyone's workload by class, a grade for how evenly it's shared, who can
-// cover when someone's out, and suggested swaps. It advises; people make the decisions.
+// Admin › Fairness, laid out for the chiefs: an overview (grades, burnout watch, next month's
+// plan), covering someone who's out, the shift tables, real hours, and the settings behind it
+// all. It advises; people make the decisions.
 import { h, card, notice, emptyState, segmented, avatar, classPill, openSheet, toast, contactActions, append, icon } from "../ui.js";
 import { api, local } from "../api.js";
 import { fmtDate, fmtMonth, monthDates } from "../../core/dates.js";
@@ -8,6 +9,8 @@ import {
   coverOptions, suggestMoves, serviceCoverage, serviceList, shortOn, limitsReport, rotationBalance, insights,
 } from "../../core/fairness.js";
 import { SURVEY_ROWS, ANCHOR_VALUE, MIN_RATINGS } from "../../core/survey.js";
+import { loggedPerWeek } from "../../core/chief.js";
+import { burnoutCard, planCard, sharedHoursCard, rotationHoursCard, loadShared, sharedHours, watchFor } from "./chief.js";
 
 const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(1)}`;
 const num = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -38,9 +41,12 @@ function openResident(ctx, r, cls) {
 }
 
 // The class table: what everyone has done, colored against the class.
-function classTable(ctx, c) {
+function classTable(ctx, c, period) {
   const { model } = ctx;
   const cols = c.columns.filter((x) => x.used);
+  const shared = sharedHours();
+  const real = (pid) => (shared[pid] ? loggedPerWeek(shared[pid].entries, period.from, [period.to, ctx.state.today].sort()[0]) : null);
+  const anyReal = c.rows.some((r) => real(r.pid) != null);
   const cell = (r, col) => {
     const v = columnCount(r, col.keys);
     const off = (v - col.avg) / Math.max(col.avg, col.unit);
@@ -52,7 +58,7 @@ function classTable(ctx, c) {
       h("th", { class: "who" }, "Resident"),
       h("th", null, "Share"), h("th", null, "+/−"), h("th", null, "Pts"),
       cols.map((x) => h("th", { title: `Range ${x.min}–${x.max}` }, x.label)),
-      h("th", null, "Wknd"), h("th", null, "h/wk"), h("th", null, "Vac"))),
+      h("th", null, "Wknd"), h("th", { title: "Estimated from the schedule" }, "h/wk"), anyReal ? h("th", { title: "Logged in New Innovations, for residents who added their hours" }, "Real") : null, h("th", null, "Vac"))),
     h("tbody", null, c.rows.map((r) => h("tr", { onclick: () => openResident(ctx, r, c.cls) },
       h("td", { class: "who" }, model.person(r.pid).last),
       h("td", { class: "n" }, r.load == null ? "—" : `${Math.round(r.load)}%`),
@@ -61,11 +67,12 @@ function classTable(ctx, c) {
       cols.map((col) => cell(r, col)),
       h("td", { class: "n" }, r.weekendDays || "·"),
       h("td", { class: "n" }, r.hoursAvg == null ? "—" : Math.round(r.hoursAvg)),
+      anyReal ? h("td", { class: "n" }, real(r.pid) == null ? "·" : h("b", null, Math.round(real(r.pid)))) : null,
       h("td", { class: "n" }, r.vacation || "·")))),
     h("tfoot", null, h("tr", null,
       h("td", { class: "who" }, "Evenness"), h("td"), h("td"), h("td"),
       cols.map((x) => h("td", { class: "n" }, gradeBadge(x.grade))),
-      h("td"), h("td"), h("td")))));
+      h("td"), h("td"), anyReal ? h("td") : null, h("td")))));
 }
 
 // Someone's out: pick the person and day, get ranked options and the reason for everyone else.
@@ -289,42 +296,61 @@ export function renderFairness(ctx) {
   const dailyDays = Object.keys(model.ds.daily || {}).filter((d) => d >= year.from && d <= year.to).length;
   const pace = years[0] === ay && missing.length === 0 ? samePointLastYear(model, state.today) : null;
 
-  append(root, [
+  const tabs = [["overview", "Overview"], ["cover", "Cover"], ["shifts", "Shifts"], ["hours", "Hours"], ["setup", "Setup"]];
+  const tab = tabs.some(([k]) => k === prefs.tab) ? prefs.tab : "overview";
+  loadShared(ctx);
+  const byPid = (rep) => new Map(rep.classes.flatMap((c) => c.rows.map((r) => [r.pid, [r, c.cls]])));
+  const openByPid = (pid) => {
+    const hit = byPid(live).get(pid);
+    if (hit) openResident(ctx, hit[0], hit[1]); else ctx.go(`p/${pid}`);
+  };
+
+  root.append(h("div", { class: "fairtabs" }, segmented(tabs, tab, (v) => setPrefs({ tab: v }))));
+  const periodPicker = () => [
     years.length > 1 ? h("div", { style: { marginBottom: "8px" } }, segmented(years.map((y) => [String(y), yearLabel(y)]), String(ay), (v) => setPrefs({ year: Number(v), period: "year" }))) : null,
     h("select", { class: "input", style: { marginBottom: "8px" }, "aria-label": "Period", onchange: (e) => setPrefs({ period: e.target.value }) },
       h("option", { value: "year", selected: prefs.period === "year" }, `Whole year (${loaded.length} ${loaded.length === 1 ? "month" : "months"})`),
       loaded.map((m) => h("option", { value: m, selected: prefs.period === m }, fmtMonth(m)))),
     missing.length ? notice("warn", "info", `${missing.join(", ")} ${missing.length > 1 ? "aren't" : "isn't"} uploaded, so treat this as provisional.`) : null,
-  ]);
+  ];
 
-  // Report card
-  root.append(h("section", { class: "card card-pad reportcard" },
+  const reportCard = () => h("section", { class: "card card-pad reportcard" },
     h("div", { class: "rc-main" }, gradeBadge(report.overall, true),
       h("div", null, h("div", { class: "name" }, prefs.period === "year" ? `Fairness in ${yearLabel(ay)}` : `Fairness in ${fmtMonth(prefs.period)}`), h("div", { class: "small muted" }, GRADE_NOTE[report.overall]))),
-    h("div", { class: "rc-classes" }, report.classes.map((c) => h("button", { class: `rc-class${prefs.cls === c.cls ? " on" : ""}`, onclick: () => setPrefs({ cls: prefs.cls === c.cls ? "all" : c.cls }) },
+    h("div", { class: "rc-classes" }, report.classes.map((c) => h("button", { class: `rc-class${prefs.cls === c.cls ? " on" : ""}`, onclick: () => setPrefs({ cls: prefs.cls === c.cls ? "all" : c.cls, tab: "shifts" }) },
       gradeBadge(c.grade), h("div", null, h("b", null, c.cls), h("div", { class: "tiny muted" }, `${c.rate28.toFixed(1)} pts per 4 wks`))))),
     prefs.period !== "year" ? h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "One month always looks lumpy: a single night-float week is most of someone's month. The year grade is the one that counts.") : null,
-    prefs.period === "year" && pace ? h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, `Grades climb as a year fills in, because a few weeks of nights look uneven until everyone has had theirs. Last year was at ${pace.overall} at this point and finished at ${pace.final}.`) : null));
+    prefs.period === "year" && pace ? h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, `Grades climb as a year fills in, because a few weeks of nights look uneven until everyone has had theirs. Last year was at ${pace.overall} at this point and finished at ${pace.final}.`) : null);
 
-  const facts = insights(model, yearReport, state.today);
-  if (facts.length && prefs.period === "year") {
-    root.append(card("What stands out", h("ul", { class: "facts" }, facts.map((f) => h("li", { class: f.level }, f.text)))));
+  if (tab === "overview") {
+    const current = years[0] === ay;
+    append(root, [
+      periodPicker(),
+      reportCard(),
+      current ? (() => { const watch = watchFor(ctx); return [burnoutCard(ctx, watch, openByPid), planCard(ctx, live, watch)]; })() : notice("", "info", "Burnout watch and next month's plan are for the current year."),
+    ]);
+    const facts = insights(model, yearReport, state.today);
+    if (facts.length && prefs.period === "year") root.append(card("What stands out", h("ul", { class: "facts" }, facts.map((f) => h("li", { class: f.level }, f.text)))));
+    root.append(h("p", { class: "disclaimer" }, "Everything here is a suggestion for the chiefs. The call sheet stays the official schedule."));
+  } else if (tab === "cover") {
+    root.append(coverTool(ctx, live), movesCard(ctx, live));
+  } else if (tab === "shifts") {
+    append(root, periodPicker());
+    for (const c of report.classes) {
+      if (prefs.cls !== "all" && prefs.cls !== c.cls) continue;
+      root.append(h("div", { class: "section-title" }, c.cls, h("span", { class: "count" }, GRADE_NOTE[c.grade])), h("section", { class: "card" }, classTable(ctx, c, report)));
+    }
+    if (prefs.cls !== "all") root.append(h("button", { class: "btn block", style: { marginBottom: "12px" }, onclick: () => setPrefs({ cls: "all" }) }, "Show every class"));
+    root.append(h("p", { class: "disclaimer" }, `Share: points compared with a fair share for the days each resident could take call (100% is even). +/−: points over or under that share. Red is above the class, blue below. h/wk is estimated from the schedule; Real is logged, for residents who added their hours. Tap a resident for every scored shift. Balances start over every July. Breaks only count days with a daily sheet: ${dailyDays} this year.`));
+    const byYear = yearsCard(ctx);
+    if (byYear) root.append(byYear);
+    const svc = servicesCard(ctx, prefs.period === "year" ? loaded[loaded.length - 1] : prefs.period);
+    if (svc) root.append(svc);
+    root.append(rotationsCard(ctx, ay));
+  } else if (tab === "hours") {
+    append(root, [sharedHoursCard(ctx), rotationHoursCard(ctx), limitsCard(ctx, monthRange || year)]);
+  } else {
+    root.append(minimumsCard(ctx), surveyCard(ctx), weightsCard(ctx));
   }
-
-  root.append(coverTool(ctx, live));
-  const byYear = yearsCard(ctx);
-  if (byYear) root.append(byYear);
-
-  for (const c of report.classes) {
-    if (prefs.cls !== "all" && prefs.cls !== c.cls) continue;
-    root.append(h("div", { class: "section-title" }, c.cls, h("span", { class: "count" }, GRADE_NOTE[c.grade])), h("section", { class: "card" }, classTable(ctx, c)));
-  }
-  root.append(h("p", { class: "disclaimer" }, `Share: points compared with a fair share for the days each resident could take call (100% is even). +/−: points over or under that share. Red is above the class, blue below. Tap a resident for every scored shift. Balances start over every July. Breaks only count days with a daily sheet: ${dailyDays} this year.`));
-
-  root.append(limitsCard(ctx, monthRange || year));
-  root.append(movesCard(ctx, live));
-  const svc = servicesCard(ctx, prefs.period === "year" ? loaded[loaded.length - 1] : prefs.period);
-  if (svc) root.append(svc);
-  root.append(minimumsCard(ctx), rotationsCard(ctx, ay), surveyCard(ctx), weightsCard(ctx));
   return root;
 }

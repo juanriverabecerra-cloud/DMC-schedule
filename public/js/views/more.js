@@ -4,12 +4,15 @@ import { monthKey, fmtMonth } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeCard } from "./common.js";
 import { remindersFor } from "./reminders.js";
+import { openAlerts, ALERT_SUB } from "./alerts.js";
+import { alertStatus } from "../push.js";
+import { requestsCard } from "./requests.js";
 
 const LEGEND = [
   ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
-  ["call24", "24-hr call", "H1, or blue on a weekday (Friday). 6a to 6a."],
-  ["call12", "12-hr call", "H2. 6a to 6p."],
-  ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights."],
+  ["call24", "24-hr call", "Friday (blue) and Saturday (H1) only. 6a to 6a, so it covers that night."],
+  ["call12", "12-hr call", "H2. Saturday and Sunday only, 6a to 6p."],
+  ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights. Friday and Saturday nights belong to the 24."],
   ["senior", "CA-3 10a–7p", "\"10-7\" on the call sheet."],
   ["ob", "11 to 9", "CA-1 OB rotation at Hutzel. Monday to Friday, 11a to 9p (\"11-9\" on the call sheet)."],
   ["cardiac", "Cardiac call", "Magenta week on the call sheet."],
@@ -36,6 +39,8 @@ export function renderMore(ctx) {
     me ? h("li", { class: "row tap", onclick: () => ctx.go("pick") }, h("div", { class: "main" }, "Not you? Change"), icon("right")) : null,
   )));
 
+  if (me) root.append(requestsCard(ctx));
+
   const pending = remindersFor(model, state);
   const todo = (key) => (pending.includes(key) ? h("span", { class: "pill todo" }, "To do") : null);
   const month = monthKey(state.today);
@@ -46,6 +51,13 @@ export function renderMore(ctx) {
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("phone")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Call"), h("div", { class: "sub" }, dirCount ? `${dirCount} people, rooms and units` : "Phone directory")),
       icon("right")),
+    (() => {
+      const status = alertStatus();
+      return h("li", { class: "row tap", onclick: () => openAlerts(ctx) },
+        h("div", { class: "avatar", style: { "--c": status === "on" ? "var(--late)" : "var(--accent)" } }, icon("bell")),
+        h("div", { class: "main" }, h("div", { class: "name" }, "Alerts", todo("alerts")), h("div", { class: "sub" }, ALERT_SUB[status])),
+        icon("right"));
+    })(),
     h("li", { class: "row tap", onclick: () => ctx.go("gaps") },
       h("div", { class: "avatar", style: { "--c": gaps.length ? "var(--gap)" : "var(--late)" } }, icon(gaps.length ? "alert" : "check")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Coverage gaps"), h("div", { class: "sub" }, gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month")),

@@ -1,5 +1,6 @@
-// A resident's logged hours, kept in this browser only. They are never sent to the server.
-import { local } from "./api.js";
+// A resident's logged hours, kept in this browser, with a copy in the app for the admin pages.
+// Other residents never see them.
+import { api, local, deviceKey } from "./api.js";
 import { actualHours } from "../core/logged.js";
 
 const KEY = "loggedHours";
@@ -23,4 +24,37 @@ export function hoursBasis(actual, week) {
   if (!actual) return "estimate";
   if (week.end <= actual.last) return "logged";
   return week.start > actual.last ? "predicted" : "logged + predicted";
+}
+
+// ---- a copy in the app ----
+// Saved hours also go to the app's server, for the admin pages. Only the device that first sent
+// a resident's hours can update or remove them.
+
+const send = (pid, entries, replace) => api(`/api/hours/${pid}`, { method: "PUT", body: { key: deviceKey(), entries, replace } });
+
+// `quiet` is the retry when the app opens: it never asks anything.
+export async function uploadLogged(pid, entries, { quiet = false } = {}) {
+  local.set("hoursSync", { pid, pending: true });
+  try {
+    await send(pid, entries, false);
+  } catch (err) {
+    if (err.status !== 409) throw err;
+    local.set("hoursSync", { pid, pending: false });
+    if (quiet || !confirm("Your hours were first added from another device, maybe Safari before you added the app to your Home Screen. Use the hours on this device from now on?")) return false;
+    await send(pid, entries, true);
+  }
+  local.set("hoursSync", { pid, pending: false, at: new Date().toISOString() });
+  return true;
+}
+
+// Hours saved while offline go up the next time the app opens.
+export function retryUpload(pid) {
+  const sync = local.get("hoursSync");
+  const saved = loggedFor(pid);
+  if (sync?.pending && sync.pid === pid && saved) uploadLogged(pid, saved.entries, { quiet: true }).catch(() => {});
+}
+
+export async function removeUploaded(pid) {
+  await api(`/api/hours/${pid}`, { method: "DELETE", body: { key: deviceKey() } }).catch((err) => { if (err.status !== 404) throw err; });
+  local.del("hoursSync");
 }
