@@ -27,9 +27,19 @@ export async function turnOnAlerts(pid) {
   let sub = await reg.pushManager.getSubscription();
   if (sub && local.get("alerts")?.key !== publicKey) { await sub.unsubscribe(); sub = null; }
   sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(publicKey) });
-  await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid } });
-  local.set("alerts", { endpoint: sub.endpoint, key: publicKey, pid, on: new Date().toISOString() });
+  const mode = local.get("alerts")?.mode || "smart";
+  await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode } });
+  local.set("alerts", { endpoint: sub.endpoint, key: publicKey, pid, mode, admin: !!local.get("adminKey"), on: new Date().toISOString() });
 }
+
+// Admins choose how much they hear about residents' requests: "smart", "sick" or "off".
+export async function setRequestMode(mode) {
+  const saved = local.get("alerts");
+  if (!saved?.endpoint) throw new Error("Turn on alerts on this phone first.");
+  await api("/api/push/mode", { method: "POST", body: { endpoint: saved.endpoint, mode } });
+  local.set("alerts", { ...saved, mode });
+}
+export const requestModeHere = () => local.get("alerts")?.mode || "smart";
 
 export async function turnOffAlerts() {
   const saved = local.get("alerts");
@@ -44,14 +54,15 @@ export async function turnOffAlerts() {
 
 export const testAlert = () => api("/api/push/test", { method: "POST", body: { endpoint: local.get("alerts")?.endpoint } });
 
-// When someone changes who they are, the alerts follow them.
+// When someone changes who they are, or signs in or out as an admin, the alerts follow.
 export async function syncAlerts(pid) {
   const saved = local.get("alerts");
-  if (!saved?.endpoint || saved.pid === pid || alertStatus() !== "on") return;
+  const admin = !!local.get("adminKey");
+  if (!saved?.endpoint || (saved.pid === pid && !!saved.admin === admin) || alertStatus() !== "on") return;
   try {
     const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
     if (!sub) { local.del("alerts"); return; }
-    await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid } });
-    local.set("alerts", { ...saved, pid });
+    await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode: saved.mode } });
+    local.set("alerts", { ...saved, pid, admin });
   } catch { /* try again next time */ }
 }

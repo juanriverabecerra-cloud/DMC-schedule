@@ -527,3 +527,8 @@ table.fair .bal.under { color: var(--info); font-weight: 700; }
 .daychip.on { background: var(--accent); border-color: var(--accent); color: #fff; } .daychip.on span { color: #fff; opacity: .85; }
 .daychip i { position: absolute; top: 2px; right: 6px; color: var(--warn); font-style: normal; }
 select.reason { width: auto; max-width: 52%; flex: none; }
+
+/* A setting or prompt box at the top of a page */
+.setbox { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin: 0 0 12px; border-radius: 12px; background: var(--surface-2); }
+.setbox .main { flex: 1; min-width: 0; }
+.setbox .btn { flex: none; }

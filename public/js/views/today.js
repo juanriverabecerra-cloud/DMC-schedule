@@ -10,6 +10,7 @@ import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { reminderCard } from "./reminders.js";
 import { swapsTodayCard } from "./requests.js";
+import { inboxTodayCard } from "./inbox.js";
 
 function shortCode(d) {
   if (d.call === "NF") return "NF";
@@ -105,6 +106,9 @@ export function renderToday(ctx) {
   const pid = state.me;
   const d = model.day(pid, state.date);
   const p = model.person(pid);
+  // Admins: a sick call or this week's swaps, before anything else.
+  const requests = state.date === state.today ? inboxTodayCard(ctx) : null;
+  if (requests) root.append(requests);
   const reminder = reminderCard(ctx);
   if (reminder) root.append(reminder);
   // Swaps waiting on you come before your own day: someone's waiting on an answer.

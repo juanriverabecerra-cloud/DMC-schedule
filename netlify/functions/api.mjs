@@ -8,10 +8,11 @@ import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal, addDays } from "../../public/core/dates.js";
 import { shiftBlock } from "../../public/core/requests.js";
+import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick } from "../../lib/reqlog.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
 import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
-import { cleanSubscription, subscriptionId, vapidKeys, sendPush, pushSubject } from "../../lib/push.js";
+import { cleanSubscription, subscriptionId, vapidKeys, sendPush, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -38,21 +39,9 @@ async function bytesOf(req) {
 // Lock-screen alerts: everyone who turned them on hears when a day's OR sheet is posted, with
 // where they are that day. Subscriptions that no longer exist are dropped.
 async function alertDaily(st, ds, date, site) {
-  const subs = (await st.getJSON("push/subs")) || {};
-  const list = Object.entries(subs);
-  if (!list.length) return 0;
-  const keys = await vapidKeys(st);
   const model = createModel(ds);
   const today = todayLocal();
-  const results = await Promise.all(list.map(async ([id, sub]) =>
-    [id, await sendPush(sub, dailyAlert(model, date, sub.pid, today), { keys, subject: pushSubject(site), urgency: "high" })]));
-  const gone = results.filter(([, r]) => r.gone).map(([id]) => id);
-  if (gone.length) {
-    const fresh = (await st.getJSON("push/subs")) || {};
-    for (const id of gone) delete fresh[id];
-    await st.setJSON("push/subs", fresh);
-  }
-  return results.filter(([, r]) => r.ok).length;
+  return sendToSubs(st, () => true, (sub) => dailyAlert(model, date, sub.pid, today), { site, urgency: "high" });
 }
 
 // Logged hours belong to the device that first sends them, so nobody else with the passcode
@@ -147,7 +136,9 @@ export default async function handler(req) {
       const pid = ds.people.some((p) => p.id === body.pid) ? body.pid : null;
       const subs = (await st.getJSON("push/subs")) || {};
       const id = subscriptionId(sub.endpoint);
-      subs[id] = { ...sub, pid, createdAt: subs[id]?.createdAt || new Date().toISOString() };
+      // Admin devices also hear about residents' requests, as often as the admin chose.
+      const mode = REQUEST_MODES.includes(body.mode) ? body.mode : subs[id]?.mode || "smart";
+      subs[id] = { ...sub, pid, admin: isAdmin(req), mode, createdAt: subs[id]?.createdAt || new Date().toISOString() };
       await st.setJSON("push/subs", subs);
       return json({ ok: true });
     }
@@ -219,7 +210,7 @@ export default async function handler(req) {
       } else if (body.action === "withdraw") {
         const o = r.offers.find((x) => x.pid === body.pid);
         if (!o || o.keyHash !== key) return fail(403, "Only the device that made this offer can take it back.");
-        if (r.agreed?.pid === o.pid) { r.status = "open"; r.agreed = null; }
+        if (r.agreed?.pid === o.pid) { r.status = "open"; r.agreed = null; await swapUndone(st, r.id); }
         r.offers = r.offers.filter((x) => x !== o);
       } else if (body.action === "accept") {
         if (!owner) return fail(403, "Only the device that asked can accept an offer.");
@@ -227,12 +218,15 @@ export default async function handler(req) {
         if (!o) return fail(404, "That offer was taken back.");
         r.status = "agreed";
         r.agreed = { pid: o.pid, date: o.date || null, end: o.end || null, label: o.label || null, at: now };
+        await upsert(st, swapItem(r), (i) => i.type === "swap" && i.swapId === r.id);
       } else if (body.action === "reopen") {
         if (!owner) return fail(403, "Only the device that asked can change this.");
         r.status = "open";
         r.agreed = null;
+        await swapUndone(st, r.id);
       } else if (body.action === "cancel") {
         if (!owner && !isAdmin(req)) return fail(403, "Only the device that asked can cancel this.");
+        if (r.status === "agreed") await swapUndone(st, r.id);
         r.status = "cancelled";
       } else if (body.action === "emailed") {
         const taker = r.offers.find((x) => x.pid === r.agreed?.pid);
@@ -241,6 +235,30 @@ export default async function handler(req) {
       } else return fail(400, "Unknown action");
       await st.setJSON("swaps", data);
       return json({ ok: true, swap: publicSwap(r, key) });
+    }
+
+    // ---- a sick call or a no-call list, logged for the admins' inbox ----
+    if (path === "/api/requests" && method === "POST") {
+      const body = await req.json();
+      const today = todayLocal();
+      const ds = await loadDataset(st);
+      const model = createModel(ds);
+      if (body.type === "sick") {
+        if (!DATE.test(body.date || "") || body.date < addDays(today, -1) || body.date > addDays(today, 7)) return fail(400, "Pick today or tomorrow.");
+        const item = sickItem(model, body.pid, body.date);
+        if (!item) return fail(400, "Pick yourself first.");
+        const { isNew } = await upsert(st, item, (i) => i.type === "sick" && i.pid === item.pid && i.date === item.date);
+        // Only the first time: opening the email twice shouldn't buzz anyone twice.
+        const alerted = isNew ? await alertSick(st, model, item, origin(req)) : 0;
+        return json({ ok: true, alerted });
+      }
+      if (body.type === "nocall") {
+        const item = noCallItem(model, body.pid, body.month, body.picks, body.note);
+        if (!item || body.month < today.slice(0, 7)) return fail(400, "Pick yourself and a month.");
+        await upsert(st, item, (i) => i.type === "nocall" && i.pid === item.pid && i.month === item.month);
+        return json({ ok: true });
+      }
+      return fail(400, "Unknown request");
     }
 
     // ---- real hours residents add (only admins can read them) ----
@@ -394,6 +412,27 @@ export default async function handler(req) {
       const summary = setDirectory(ds, await req.json());
       await st.setJSON("dataset", ds);
       return json({ ok: true, summary, updatedAt: ds.updatedAt });
+    }
+
+    if (path === "/api/requests" && method === "GET") {
+      const log = await readLog(st);
+      return json({ items: liveItems(log.list, todayLocal()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), digestAt: log.digestAt });
+    }
+    if (path === "/api/requests/done" && method === "POST") {
+      const body = await req.json();
+      const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
+      const log = await markDone(st, ids, body.done !== false);
+      return json({ ok: true, items: liveItems(log.list, todayLocal()) });
+    }
+    if (path === "/api/push/mode" && method === "POST") {
+      const body = await req.json();
+      if (!REQUEST_MODES.includes(body.mode)) return fail(400, "Unknown setting");
+      const subs = (await st.getJSON("push/subs")) || {};
+      const sub = subs[subscriptionId(String(body.endpoint || ""))];
+      if (!sub) return fail(404, "Alerts aren't on for this device.");
+      Object.assign(sub, { admin: true, mode: body.mode });
+      await st.setJSON("push/subs", subs);
+      return json({ ok: true });
     }
 
     if (path === "/api/hours" && method === "GET") {

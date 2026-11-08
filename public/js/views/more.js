@@ -7,6 +7,7 @@ import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus } from "../push.js";
 import { requestsCard } from "./requests.js";
+import { inboxCounts } from "./inbox.js";
 
 const LEGEND = [
   ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
@@ -88,7 +89,11 @@ export function renderMore(ctx) {
   root.append(card("Appearance", segmented([["system", "System"], ["light", "Light"], ["dark", "Dark"]], local.get("theme", "system"), (v) => { local.set("theme", v); applyTheme(v); ctx.render(); })));
 
   root.append(h("div", { class: "btnrow", style: { marginTop: "12px" } },
-    h("button", { class: "btn", onclick: () => ctx.go("admin") }, icon("shield"), state.admin ? "Admin" : "Admin sign-in"),
+    (() => {
+      const waiting = state.admin ? inboxCounts(state.today) : { open: 0, urgent: 0 };
+      return h("button", { class: "btn", onclick: () => ctx.go(waiting.open ? "admin/requests" : "admin") }, icon("shield"), state.admin ? "Admin" : "Admin sign-in",
+        waiting.open ? h("span", { class: "pill", style: { "--c": waiting.urgent ? "var(--gap)" : "var(--accent)" } }, `${waiting.open} ${waiting.open === 1 ? "request" : "requests"}`) : null);
+    })(),
     h("button", { class: "btn danger", onclick: () => {
       if (!confirm("Sign out on this device?")) return;
       for (const k of ["passcode", "adminKey", "ds", "etag", "me"]) local.del(k);

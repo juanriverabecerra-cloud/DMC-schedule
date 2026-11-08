@@ -15,13 +15,25 @@ const firstName = (model, pid) => model.person(pid)?.preferred || model.person(p
 // ---------- shared pieces ----------
 
 // Text with the message already written, plus a call button. Numbers are never shown.
-function contactPills(model, pid, message) {
+// `onAct` runs on any of them (a sick call is logged the moment someone reaches out).
+function contactPills(model, pid, message, onAct) {
   const r = model.dir.resident(pid);
   const dial = r?.mobile ? model.dir.dial(r.mobile) : null;
+  const call = r?.numbers?.length ? callChip(model.dir, "Call", r.numbers) : null;
+  call?.addEventListener("click", () => onAct?.());
   return h("div", { class: "numrow" },
-    dial ? h("a", { class: "numbtn", href: smsHref(dial, message), onclick: (e) => e.stopPropagation() }, icon("message"), "Text") : null,
-    r?.numbers?.length ? callChip(model.dir, "Call", r.numbers) : null,
-    h("button", { class: "numbtn copy", type: "button", onclick: (e) => { e.stopPropagation(); copyText(message, "Message"); } }, icon("copy"), "Copy message"));
+    dial ? h("a", { class: "numbtn", href: smsHref(dial, message), onclick: (e) => { e.stopPropagation(); onAct?.(); } }, icon("message"), "Text") : null,
+    call,
+    h("button", { class: "numbtn copy", type: "button", onclick: (e) => { e.stopPropagation(); copyText(message, "Message"); onAct?.(); } }, icon("copy"), "Copy message"));
+}
+
+// Lets the chiefs see it in Admin › Requests too. Once per sick day or month is enough; the
+// server ignores repeats for alerts.
+const logged = new Set();
+function logRequest(body, key) {
+  if (logged.has(key)) return;
+  logged.add(key);
+  api("/api/requests", { method: "POST", body }).catch(() => logged.delete(key));
 }
 
 // The draft email: one tap opens it in the mail app, ready to send. `draft` can be a function,
@@ -66,6 +78,7 @@ export function openSickCall(ctx) {
     const jeopardy = intern ? [] : jeopardyOn(model, date).map((x) => x.pid).filter((id) => id !== pid);
     const others = !intern && shiftName(d) ? swapCandidates(model, pid, date).slice(0, 3) : [];
     const email = sickEmail(model, pid, date, { jeopardy });
+    const log = () => logRequest({ type: "sick", pid, date }, `sick|${pid}|${date}`);
     body.replaceChildren();
     append(body, [
       segmented([[state.today, `Today, ${fmtDate(state.today, "md")}`], [addDays(state.today, 1), `Tomorrow, ${fmtDate(addDays(state.today, 1), "md")}`]], date, (v) => { date = v; draw(); }),
@@ -75,16 +88,16 @@ export function openSickCall(ctx) {
         : jeopardy.length ? h("ul", { class: "list flush" }, jeopardy.map((id) => h("li", { class: "row", style: { alignItems: "flex-start" } },
           avatar(model, id, "sm"),
           h("div", { class: "main" }, h("div", { class: "name" }, model.name(id), h("span", { class: "pill", style: { "--c": "var(--ob)" } }, "Jeopardy")),
-            contactPills(model, id, sickText(model, pid, date, state.today, id))))))
+            contactPills(model, id, sickText(model, pid, date, state.today, id), log)))))
           : h("p", { class: "small muted" }, `No Jeopardy resident is listed for ${fmtDate(date)}.`),
       others.length ? h("details", { class: "paste", style: { margin: "6px 0 0" } }, h("summary", null, `Classmates who look free (${others.length})`),
         h("ul", { class: "list flush" }, others.map((c) => h("li", { class: "row", style: { alignItems: "flex-start" } },
           avatar(model, c.pid, "sm"),
           h("div", { class: "main" }, h("div", { class: "name" }, model.name(c.pid)), h("div", { class: "sub" }, c.status || "Off"),
-            contactPills(model, c.pid, sickText(model, pid, date, state.today, c.pid))))))) : null,
+            contactPills(model, c.pid, sickText(model, pid, date, state.today, c.pid), log)))))) : null,
       h("h4", { class: "steptitle" }, h("span", null, "2"), "Email the schedule"),
-      emailBlock(email),
-      h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "Feel better. The call sheet is updated from the email, not from the app."),
+      emailBlock(email, { onOpen: log }),
+      h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "Texting, calling or emailing also lets the chiefs know in the app. Feel better."),
     ]);
   };
   draw();
@@ -261,7 +274,7 @@ export function renderSwaps(ctx, arg) {
   root.append(h("div", { class: "section-title" }, `${me.cls} requests`, h("span", { class: "count" }, theirs.length || "")));
   root.append(theirs.length ? h("section", { class: "card" }, h("ul", { class: "list" }, theirs.map((r) => theirRow(ctx, r))))
     : h("p", { class: "small muted", style: { margin: "0 4px 12px" } }, "No open requests in your class."));
-  root.append(h("p", { class: "disclaimer" }, `Swaps stay within the class. Once you both agree, the app writes the email to ${SCHEDULE_EMAIL}; the call sheet changes only after that email. "Look free" is from the call sheet: free that day, not around nights or 24-hr call, and under about 80 hours that week.`));
+  root.append(h("p", { class: "disclaimer" }, `Swaps stay within the class. Once you both agree, the app writes the email to ${SCHEDULE_EMAIL} and the chiefs see the swap in the app; the call sheet changes only after that email. "Look free" is from the call sheet: free that day, not around nights or 24-hr call, and under about 80 hours that week.`));
   return root;
 }
 
@@ -338,7 +351,15 @@ export function renderNoCall(ctx) {
     card("Anything to add", h("textarea", { class: "input", style: { minHeight: "64px", fontSize: "16px" }, placeholder: "Optional, e.g. the wedding is out of state", maxlength: "500", "aria-label": "Note", oninput: (e) => { entry.note = e.target.value; store(); } }, entry.note)),
     picked.length ? null : h("p", { class: "small muted", style: { margin: "0 4px 10px" } }, "No days picked: the email says you have no requests this month."),
     entry.sentAt ? notice("", "check", `Email drafted ${fmtDate(entry.sentAt.slice(0, 10))}. Change anything and send it again.`) : null,
-    emailBlock(() => noCallEmail(model, me.id, month, entry.picks, entry.note), { onOpen: () => { entry.sentAt = new Date().toISOString(); store(); setTimeout(() => ctx.render(), 800); } }),
+    emailBlock(() => noCallEmail(model, me.id, month, entry.picks, entry.note), { onOpen: () => {
+      entry.sentAt = new Date().toISOString();
+      store();
+      // The chiefs see every list for the month in one place; a changed list replaces the old one.
+      logged.delete(`nocall|${month}`);
+      logRequest({ type: "nocall", pid: me.id, month, picks: entry.picks, note: entry.note }, `nocall|${month}`);
+      setTimeout(() => ctx.render(), 800);
+    } }),
+    h("p", { class: "tiny muted", style: { margin: "10px 4px 0" } }, "Sending it also puts your days in the chiefs' list for the month in the app."),
   ]);
   return root;
 }

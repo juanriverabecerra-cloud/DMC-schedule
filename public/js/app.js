@@ -21,6 +21,7 @@ import { renderSetup, renderPickMe } from "./views/setup.js";
 import { remindersFor } from "./views/reminders.js";
 import { syncAlerts } from "./push.js";
 import { retryUpload } from "./logged.js";
+import { loadInbox, inboxCounts } from "./views/inbox.js";
 
 const state = {
   ds: local.get("ds"),
@@ -74,6 +75,9 @@ async function reload({ quiet = false } = {}) {
       render();
     }
     state.error = null;
+    // Admin devices check the requests inbox whenever the app comes back into view.
+    if (state.model) loadInbox(ctx(), { force: true });
+    syncAlerts(state.me || null);
   } catch (err) {
     if (err.status === 401) {
       local.del("passcode");
@@ -150,13 +154,16 @@ function tabbar(r) {
   const gapsSoon = state.model ? [0, 1, 2].some((i) => dayGaps(state.model, addDays(state.today, i)).some((g) => g.level === "gap")) : false;
   const didToday = sessionsToday();
   const toDo = remindersFor(state.model, state).length > 0;
+  // Admins: red for a sick call today or tomorrow, blue for anything else waiting in Requests.
+  const inbox = state.admin ? inboxCounts(state.today) : { open: 0, urgent: 0 };
+  const red = gapsSoon || inbox.urgent > 0;
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
       class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall"].includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
-    id === "more" && gapsSoon ? h("i", { class: "dot", "aria-label": "Coverage gaps soon" }) : null,
-    id === "more" && toDo && !gapsSoon ? h("i", { class: "dot soon", "aria-label": "Something to do" }) : null,
+    id === "more" && red ? h("i", { class: "dot", "aria-label": inbox.urgent ? "Sick call" : "Coverage gaps soon" }) : null,
+    id === "more" && (toDo || inbox.open > 0) && !red ? h("i", { class: "dot soon", "aria-label": inbox.open ? "Requests waiting" : "Something to do" }) : null,
     id === "didactics" && didToday ? h("i", { class: `dot${didToday === "live" ? "" : " soon"}`, "aria-label": didToday === "live" ? "Session live now" : "Session today" }) : null)));
   nav.replaceChildren(inner);
 }
@@ -185,7 +192,7 @@ export function render() {
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
     else if (r.name === "nocall") content = renderNoCall(ctx());
-    else if (r.name === "admin") content = renderAdmin(ctx());
+    else if (r.name === "admin") content = renderAdmin(ctx(), r.arg);
     else if (r.name === "p" && r.arg) content = renderPerson(ctx(), r.arg);
     else content = renderToday(ctx());
   } catch (err) {

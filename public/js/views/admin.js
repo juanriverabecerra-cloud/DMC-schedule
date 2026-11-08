@@ -5,6 +5,7 @@ import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
 import { renderFairness } from "./fairness.js";
+import { renderInbox, inboxCounts, loadInbox } from "./inbox.js";
 import { roleWord } from "../../core/model.js";
 import { formatDirectoryText } from "../../core/directory.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
@@ -591,12 +592,17 @@ function backupSection(ctx) {
       }))));
 }
 
-export function renderAdmin(ctx) {
+export function renderAdmin(ctx, arg) {
   const root = h("div");
   if (!local.get("adminKey")) { root.append(adminLogin(ctx)); return root; }
+  // An alert or the Today card links straight to the requests.
+  if (arg === "requests") { local.set("adminTab", "requests"); history.replaceState(null, "", "#/admin"); }
   const tab = local.get("adminTab", "uploads");
-  root.append(h("div", { style: { marginBottom: "12px" } }, segmented([["uploads", "Uploads"], ["fairness", "Fairness"]], tab, (v) => { local.set("adminTab", v); ctx.render(); })));
+  loadInbox(ctx);
+  const waiting = inboxCounts(ctx.state.today).open;
+  root.append(h("div", { style: { marginBottom: "12px" } }, segmented([["uploads", "Uploads"], ["fairness", "Fairness"], ["requests", waiting ? `Requests · ${waiting}` : "Requests"]], tab, (v) => { local.set("adminTab", v); ctx.render(); })));
   if (tab === "fairness") { root.append(renderFairness(ctx)); return root; }
+  if (tab === "requests") { root.append(renderInbox(ctx)); return root; }
   const statusHolder = h("div");
   const dailyHolder = h("div");
   const didHolder = h("div");

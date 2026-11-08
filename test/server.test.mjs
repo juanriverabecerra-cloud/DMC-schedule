@@ -189,3 +189,77 @@ test("swap requests: post, offer within the class, accept only by the asker, the
   assert.equal((await call("POST", `/api/swaps/${id}`, { action: "cancel", key: ka }, viewer)).body.swap.status, "cancelled");
   assert.deepEqual((await call("GET", "/api/swaps", undefined, viewer)).body.swaps, []);
 });
+
+test("the chiefs' inbox: sick calls alert admins once, swaps and no-call lists wait for one evening summary", async () => {
+  const st = openStore();
+  const { sendDigest } = await import("../lib/reqlog.js");
+  const today = todayLocal();
+  const tomorrow = addDays(today, 1);
+  const months = {};
+  const row = (rotation) => ({ rotation, days: {} });
+  for (const date of [today, tomorrow, addDays(today, 3), addDays(today, 5)]) {
+    months[date.slice(0, 7)] ||= { rows: { a: row("Basic Anesthesia"), b: row("Basic Anesthesia"), e: row("Elective - Jeopardy") }, days: 31 };
+  }
+  const set = (pid, date, t) => { months[date.slice(0, 7)].rows[pid].days[Number(date.slice(8))] = { t }; };
+  set("a", tomorrow, "BA"); set("e", tomorrow, "ELECT-J"); set("a", addDays(today, 3), "H1"); set("b", addDays(today, 5), "H2");
+  const person = (id, cls) => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Test", cls, canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  await st.setJSON("dataset", { people: [person("a", "CA-1"), person("b", "CA-1"), person("e", "CA-3")], months, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.setJSON("reqlog", { list: [], digestAt: null });
+  const chief = await fakePhone(), quiet = await fakePhone(), sickOnly = await fakePhone(), resident = await fakePhone();
+  await st.setJSON("push/subs", {
+    c: { ...chief.sub, pid: null, admin: true, mode: "smart" },
+    q: { ...quiet.sub, pid: null, admin: true, mode: "off" },
+    s: { ...sickOnly.sub, pid: null, admin: true, mode: "sick" },
+    r: { ...resident.sub, pid: "b", admin: false },
+  });
+  // A sick call: admins who want them hear right away; residents and "off" don't.
+  const sick = await call("POST", "/api/requests", { type: "sick", pid: "a", date: tomorrow }, viewer);
+  assert.equal(sick.body.alerted, 2);
+  const msg = chief.open(chief.received[0].body);
+  assert.equal(msg.title, "Sick call: Test ResA");
+  assert.match(msg.body, /^Tomorrow \(.+\): Basic Anesthesia\. Jeopardy: Test ResE\.$/);
+  assert.equal(msg.url, "/#/admin/requests");
+  assert.equal(quiet.received.length + resident.received.length, 0);
+  assert.equal((await call("POST", "/api/requests", { type: "sick", pid: "a", date: tomorrow }, viewer)).body.alerted, 0); // no second buzz
+  // A no-call list, sent twice: the second replaces the first. Weekdays and odd reasons are cleaned.
+  const month = addDays(today, 40).slice(0, 7);
+  const fri = (await import("../public/core/requests.js")).weekendsOf(month)[1].days[0];
+  await call("POST", "/api/requests", { type: "nocall", pid: "b", month, picks: { [fri]: "Wedding" } }, viewer);
+  await call("POST", "/api/requests", { type: "nocall", pid: "b", month, picks: { [fri]: "Travel", [addDays(fri, -2)]: "Wedding", [addDays(fri, 1)]: "Because" }, note: "Out of town" }, viewer);
+  // An agreed swap goes in too.
+  const ka = "a".repeat(40), kb = "b".repeat(40);
+  const id = (await call("POST", "/api/swaps", { pid: "a", date: addDays(today, 3), key: ka }, viewer)).body.swap.id;
+  await call("POST", `/api/swaps/${id}`, { action: "offer", pid: "b", key: kb }, viewer);
+  await call("POST", `/api/swaps/${id}`, { action: "accept", offerPid: "b", key: ka }, viewer);
+  assert.equal((await call("GET", "/api/requests", undefined, viewer)).status, 403); // admins only
+  let items = (await call("GET", "/api/requests", undefined, admin)).body.items;
+  assert.deepEqual(items.map((i) => i.type).sort(), ["nocall", "sick", "swap"]);
+  const list = items.find((i) => i.type === "nocall");
+  assert.deepEqual(list.picks, { [fri]: "Travel", [addDays(fri, 1)]: "Other" });
+  assert.equal(list.note, "Out of town");
+  assert.equal(chief.received.length, 1); // still only the sick call: swaps and lists wait
+  // The evening summary: once, to "smart" admins only, and not again with nothing new.
+  const d1 = await sendDigest(st);
+  assert.deepEqual(d1, { items: 2, sent: 1 });
+  const digest = chief.open(chief.received[1].body);
+  assert.equal(digest.title, "Requests waiting");
+  assert.match(digest.body, /^1 swap for the call sheet · 1 no-call list for /);
+  assert.equal(sickOnly.received.length, 1);
+  assert.deepEqual(await sendDigest(st), { items: 0, sent: 0 });
+  // Done is shared; a swap undone before anyone acted simply leaves the inbox.
+  const swapItem = items.find((i) => i.type === "swap");
+  await call("POST", "/api/requests/done", { ids: [items.find((i) => i.type === "sick").id] }, admin);
+  await call("POST", `/api/swaps/${id}`, { action: "reopen", key: ka }, viewer);
+  items = (await call("GET", "/api/requests", undefined, admin)).body.items;
+  assert.ok(!items.some((i) => i.id === swapItem.id));
+  assert.ok(items.find((i) => i.type === "sick").done);
+  // Accepted again and marked done, then cancelled: it comes back flagged, so the sheet gets fixed.
+  await call("POST", `/api/swaps/${id}`, { action: "accept", offerPid: "b", key: ka }, viewer);
+  const again = (await call("GET", "/api/requests", undefined, admin)).body.items.find((i) => i.type === "swap");
+  await call("POST", "/api/requests/done", { ids: [again.id] }, admin);
+  await call("POST", `/api/swaps/${id}`, { action: "cancel", key: ka }, viewer);
+  const flagged = (await call("GET", "/api/requests", undefined, admin)).body.items.find((i) => i.type === "swap");
+  assert.equal(flagged.cancelled, true);
+  assert.equal(flagged.done, null);
+  for (const p of [chief, quiet, sickOnly, resident]) p.close();
+});
