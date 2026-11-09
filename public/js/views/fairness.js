@@ -11,6 +11,7 @@ import {
 import { SURVEY_ROWS, SCALE, MIN_RATINGS } from "../../core/survey.js";
 import { loggedPerWeek } from "../../core/chief.js";
 import { burnoutCard, planCard, sharedHoursCard, rotationHoursCard, loadShared, sharedHours, watchFor } from "./chief.js";
+import { noCallCard } from "./nocall.js";
 
 const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(1)}`;
 const num = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -342,6 +343,7 @@ export function renderFairness(ctx) {
     }
     if (prefs.cls !== "all") root.append(h("button", { class: "btn block", style: { marginBottom: "12px" }, onclick: () => setPrefs({ cls: "all" }) }, "Show every class"));
     root.append(h("p", { class: "disclaimer" }, `Share: points compared with a fair share for the days each resident could take call (100% is even). +/−: points over or under that share. Red is above the class, blue below. h/wk is estimated from the schedule; Real is logged, for residents who added their hours. Tap a resident for every scored shift. Balances start over every July. Breaks only count days with a daily sheet: ${dailyDays} this year.`));
+    root.append(noCallCard(ctx, ay));
     const byYear = yearsCard(ctx);
     if (byYear) root.append(byYear);
     const svc = servicesCard(ctx, prefs.period === "year" ? loaded[loaded.length - 1] : prefs.period);

@@ -15,6 +15,8 @@ import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
 import { renderRate } from "./views/rate.js";
 import { renderSwaps, renderNoCall } from "./views/requests.js";
+import { renderDaysOff } from "./views/daysoff.js";
+import { renderExams } from "./views/exams.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderDidactics } from "./views/didactics.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
@@ -43,6 +45,7 @@ const TABS = [
 ];
 
 const DATED = new Set(["today", "tonight", "board"]);
+const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams"];
 
 function route() {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -130,8 +133,8 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = ["p", "call", "gaps", "admin", "hours", "rate", "swaps", "nocall"].includes(r.name);
+    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
+    const back = MORE_PAGES.includes(r.name) || r.name === "p";
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
@@ -164,7 +167,7 @@ function tabbar(r) {
   const red = gapsSoon || inbox.urgent > 0;
   const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall"].includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && MORE_PAGES.includes(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
     id === "more" && red ? h("i", { class: "dot", "aria-label": inbox.urgent ? "Sick call" : "Coverage gaps soon" }) : null,
@@ -197,6 +200,8 @@ export function render() {
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
     else if (r.name === "nocall") content = renderNoCall(ctx());
+    else if (r.name === "off") content = renderDaysOff(ctx());
+    else if (r.name === "exams") content = renderExams(ctx());
     else if (r.name === "admin") content = renderAdmin(ctx(), r.arg);
     else if (r.name === "p" && r.arg) content = renderPerson(ctx(), r.arg);
     else content = renderToday(ctx());

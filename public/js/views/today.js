@@ -11,6 +11,7 @@ import { quickContacts, contactRow } from "./call.js";
 import { reminderCard } from "./reminders.js";
 import { swapsTodayCard } from "./requests.js";
 import { inboxTodayCard } from "./inbox.js";
+import { aheadCard } from "./exams.js";
 
 function shortCode(d) {
   if (d.call === "NF") return "NF";
@@ -183,6 +184,9 @@ export function renderToday(ctx) {
   if (hc) root.append(hc);
 
   root.append(card("Coming up", upcomingList(ctx, pid, state.date), { pad: false }));
+
+  const ahead = state.date === state.today ? aheadCard(ctx, pid) : null;
+  if (ahead) root.append(ahead);
 
   const next = addMonths(monthKey(state.date), 1);
   const nextRot = model.rotationFor(pid, next);

@@ -8,6 +8,7 @@ import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus, turnOffAlerts } from "../push.js";
 import { requestsCard } from "./requests.js";
 import { inboxCounts } from "./inbox.js";
+import { examsNow, countdownWord } from "./exams.js";
 
 const LEGEND = [
   ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
@@ -67,6 +68,17 @@ export function renderMore(ctx) {
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours", todo("hours")), h("div", { class: "sub" }, "Your real hours, and estimates for everyone")),
       icon("right")),
+    me ? h("li", { class: "row tap", onclick: () => ctx.go("off") },
+      h("div", { class: "avatar", style: { "--c": "var(--late)" } }, icon("calendar")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Days off"), h("div", { class: "sub" }, "Golden weekends, and days you're off with friends")),
+      icon("right")) : null,
+    me ? (() => {
+      const exam = examsNow(ctx).exams[0];
+      return h("li", { class: "row tap", onclick: () => ctx.go("exams") },
+        h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("book")),
+        h("div", { class: "main" }, h("div", { class: "name" }, "Exams"), h("div", { class: "sub" }, exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns")),
+        icon("right"));
+    })() : null,
     h("li", { class: "row tap", onclick: () => ctx.go("rate") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("sparkle")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts", todo("rate")), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),

@@ -967,3 +967,87 @@ test("the fairness roster leaves out anyone an admin hid", async () => {
   const model = createModel({ people: hidden, months: {}, daily: {}, settings: {}, directory: { people: {}, places: [] }, rosters: { 2026: { "doe-jane": "CA-1", "lee-sam": "CA-1" } } });
   assert.deepEqual(Object.keys(rosterOf(model, 2026)), ["doe-jane"]);
 });
+
+function weekendData() {
+  // November 2026: Saturdays are the 7th, 14th, 21st and 28th.
+  const rows = {
+    a: { rotation: "Basic Anesthesia", days: { 6: { t: "BA", f: "C9DAF8" }, 14: { t: "H1" }, 22: { t: "H2" }, 27: { t: "Vac" }, 28: { t: "Vac" }, 29: { t: "Vac" }, 30: { t: "Vac" } } },
+    b: { rotation: "Basic Anesthesia", days: { 8: { t: "NF" } } },
+    c: { rotation: "Cardiac", days: { 7: { f: "FF00FF" }, 14: { t: "H2" } } },
+    d: { rotation: "Obstetrics", days: { 21: { t: "H2" } } },
+  };
+  const person = (id) => ({ id, last: id.toUpperCase(), first: "T", preferred: "T", cls: "CA-1" });
+  return { people: ["a", "b", "c", "d"].map(person), months: { "2026-11": { days: 30, rows } }, daily: {}, settings: {}, directory: { people: {}, places: [] } };
+}
+
+test("golden weekends: only both days truly free", async () => {
+  const { weekendsFor, goldenSummary, busyReason } = await import("../public/core/daysoff.js");
+  const model = createModel(weekendData());
+  assert.equal(busyReason(model, "a", "2026-11-07"), "Post-call"); // the sheet leaves it blank after a Friday 24
+  const list = weekendsFor(model, "a", "2026-11-01", "2026-11-30");
+  assert.deepEqual(list.map((w) => [w.sat, w.golden]), [["2026-11-07", false], ["2026-11-14", false], ["2026-11-21", false], ["2026-11-28", true]]);
+  assert.deepEqual(list[0].why, ["Sat: Post-call"]);
+  assert.deepEqual(list[1].why, ["Sat: 24-hr call", "Sun: Post-call"]);
+  assert.equal(list[3].vacation, true);
+  assert.equal(weekendsFor(model, "b", "2026-11-07", "2026-11-08")[0].golden, false); // Sunday night float
+  assert.equal(weekendsFor(model, "c", "2026-11-07", "2026-11-08")[0].golden, false); // cardiac home call
+  const s = goldenSummary(model, "b", "2026-11-10");
+  assert.equal(s.past, 0);
+  assert.equal(s.next.sat, "2026-11-14");
+  assert.equal(s.ahead, 3);
+  assert.equal(weekendsFor(model, "b", "2026-12-01", "2026-12-31").length, 0); // no call sheet, no claim
+});
+
+test("off together: everyone free, whole weekends marked, and who's the one holding it up", async () => {
+  const { sharedOff } = await import("../public/core/daysoff.js");
+  const model = createModel(weekendData());
+  const two = sharedOff(model, ["b", "d"], "2026-11-13", "2026-11-22");
+  assert.deepEqual(two.runs.map((r) => [r.from, r.to, r.wholeWeekend]), [["2026-11-14", "2026-11-15", true], ["2026-11-22", "2026-11-22", false]]); // d works the 21st
+  const three = sharedOff(model, ["a", "b", "c"], "2026-11-14", "2026-11-22");
+  assert.deepEqual(three.runs.map((r) => r.from), ["2026-11-21"]);
+  assert.deepEqual(three.almost.find((x) => x.date === "2026-11-22"), { date: "2026-11-22", pid: "a", why: "12-hr call" });
+});
+
+test("exams: ITE for everyone, the rest by resident, and the call sheet's own day wins", async () => {
+  const { examsFor, sheetMarks, windowLabel } = await import("../public/core/exams.js");
+  const today = "2026-11-08";
+  const person = (id, cls) => ({ id, last: id, first: "T", preferred: "T", cls });
+  const rows = { a: { rotation: "Basic Anesthesia", days: {} }, b: { rotation: "Basic Anesthesia", days: { 13: { t: "BASIC" } } } };
+  const model = createModel({ people: [person("a", "CA-1"), person("b", "CA-2"), person("c", "CA-3"), person("d", "CA-2"), person("i", "PGY-1")], months: { "2026-11": { days: 30, rows } }, daily: {}, settings: {}, directory: { people: {}, places: [] } });
+  const kinds = (pid, plan) => examsFor(model, pid, plan, today).exams.map((e) => e.kind);
+  assert.deepEqual(kinds("a"), ["ite", "basic"]);
+  assert.equal(examsFor(model, "a", null, today).exams[1].from, "2027-06-04");
+  assert.deepEqual(kinds("c"), ["ite", "advanced"]);
+  assert.equal(examsFor(model, "c", null, today).exams[1].from, "2027-07-16"); // after graduating
+  assert.deepEqual(kinds("d"), ["ite"]);
+  assert.deepEqual(kinds("i"), ["ite"]);
+  assert.deepEqual(kinds("d", { pid: "d", track: "basic" }), ["ite", "basic"]); // a retake is the resident's own choice
+  assert.deepEqual(kinds("d", { pid: "someone-else", track: "basic" }), ["ite"]);
+  assert.deepEqual(kinds("c", { pid: "c", track: "advanced", kind: "advanced", session: "2027-winter" }), ["advanced", "ite"]);
+  assert.deepEqual(sheetMarks(model, "b", today), { basic: "2026-11-13" });
+  const picked = examsFor(model, "a", { pid: "a", track: "basic", kind: "basic", session: "2027-summer", day: "2027-06-05" }, today).exams[1];
+  assert.equal(picked.day, "2027-06-05");
+  assert.equal(picked.days, 209);
+  assert.equal(picked.source, "you");
+  assert.equal(picked.registration, "Registration opens Feb 10, 2027");
+  assert.match(picked.notes[0].text, /call sheet isn't out yet/);
+  assert.equal(windowLabel("2027-02-04", "2027-02-08"), "Feb 4–8, 2027");
+});
+
+test("no-call scorecard: honored, missed, not counted and waiting", async () => {
+  const { noCallScorecard, noCallOutcome } = await import("../public/core/nocall.js");
+  const ds = weekendData();
+  ds.rosters = {};
+  const model = createModel(ds);
+  assert.deepEqual(noCallOutcome(model, "a", "2026-11-07"), { result: "missed", why: "Post-call from a 24" });
+  assert.deepEqual(noCallOutcome(model, "a", "2026-11-14"), { result: "missed", why: "24-hr call" });
+  assert.equal(noCallOutcome(model, "a", "2026-11-28").result, "excluded"); // vacation
+  assert.equal(noCallOutcome(model, "d", "2026-11-21").result, "excluded"); // rotation with no call
+  assert.equal(noCallOutcome(model, "b", "2026-11-14").result, "honored");
+  assert.equal(noCallOutcome(model, "b", "2026-12-05").result, "waiting");
+  const history = { "2026-11": { a: { picks: { "2026-11-14": "Wedding", "2026-11-21": "Travel", "2026-11-28": "Travel" } }, b: { picks: { "2026-11-14": "Other", "2026-11-15": "Other" } } }, "2026-12": { b: { picks: { "2026-12-05": "Other" } } }, "2025-11": { a: { picks: { "2025-11-08": "Other" } } } };
+  const [c] = noCallScorecard(model, history, 2026);
+  assert.equal(c.cls, "CA-1");
+  assert.deepEqual(c.rows.map((r) => [r.pid, r.honored, r.missed, r.excluded, r.waiting, r.rate]), [["a", 1, 1, 1, 0, 50], ["b", 2, 0, 0, 1, 100]]);
+  assert.equal(c.rate, 75);
+});

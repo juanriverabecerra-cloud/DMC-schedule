@@ -608,3 +608,29 @@ test("saves stay safe on the real Netlify storage client, not just the local fol
     await server.stop();
   }
 });
+
+test("no-call lists stay for the scorecard, and a list sent after the call sheet doesn't count", async () => {
+  const st = openStore();
+  const person = (id) => ({ id, last: id.toUpperCase(), first: "T", preferred: "T", cls: "CA-1", canonical: `${id}, T`, aliases: [] });
+  const month = addDays(todayLocal(), 45).slice(0, 7);
+  const sat = (() => { for (let d = `${month}-01`; ; d = addDays(d, 1)) if (new Date(`${d}T12:00:00Z`).getUTCDay() === 6) return d; })();
+  await st.setJSON("dataset", { people: [person("a"), person("b")], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("nocall-history");
+  await st.delete("reqlog");
+  const send = (pid, picks) => call("POST", "/api/requests", { type: "nocall", pid, month, picks }, viewer);
+  assert.equal((await send("a", { [sat]: "Wedding" })).status, 200);
+  assert.equal((await call("GET", "/api/requests/no-call-history", undefined, viewer)).status, 403);
+  let res = await call("GET", "/api/requests/no-call-history", undefined, admin);
+  assert.deepEqual(res.body.history[month].a.picks, { [sat]: "Wedding" });
+  const ds = await st.getJSON("dataset");
+  ds.months[month] = { days: 30, rows: {}, uploadedAt: new Date().toISOString() };
+  await st.setJSON("dataset", ds);
+  await new Promise((r) => setTimeout(r, 5));
+  await send("a", { [sat]: "Travel" });
+  await send("b", { [sat]: "Travel" });
+  res = await call("GET", "/api/requests/no-call-history", undefined, admin);
+  assert.equal(res.body.history[month].a.picks[sat], "Wedding"); // changing it afterward doesn't rewrite what was asked
+  assert.equal(res.body.history[month].b, undefined);
+  assert.equal((await call("DELETE", "/api/people/a", undefined, admin)).status, 200);
+  assert.equal((await call("GET", "/api/requests/no-call-history", undefined, admin)).body.history[month].a, undefined);
+});

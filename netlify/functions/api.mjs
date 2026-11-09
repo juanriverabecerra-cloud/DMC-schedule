@@ -11,7 +11,7 @@ import { shiftBlock } from "../../public/core/requests.js";
 import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock } from "../../lib/daily-sync.js";
 import { readXlsx } from "../../lib/xlsx.js";
 import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
-import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick } from "../../lib/reqlog.js";
+import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick, keepNoCallList, noCallHistory, forgetNoCallLists } from "../../lib/reqlog.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
 import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
@@ -301,6 +301,7 @@ export default async function handler(req) {
         const item = noCallItem(model, body.pid, body.month, body.picks, body.note);
         if (!item || body.month < today.slice(0, 7)) return fail(400, "Pick yourself and a month.");
         await upsert(st, item, (i) => i.type === "nocall" && i.pid === item.pid && i.month === item.month);
+        await keepNoCallList(st, ds, item);
         return json({ ok: true });
       }
       return fail(400, "Unknown request");
@@ -481,6 +482,9 @@ export default async function handler(req) {
       const log = await readLog(st);
       return json({ items: liveItems(log.list, todayLocal()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), digestAt: log.digestAt });
     }
+    if (path === "/api/requests/no-call-history" && method === "GET") {
+      return json({ history: await noCallHistory(st, await loadDataset(st)) });
+    }
     if (path === "/api/requests/done" && method === "POST") {
       const body = await req.json();
       const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
@@ -542,7 +546,8 @@ export default async function handler(req) {
         if (!gone) throw new HttpError(404, "No such person");
         return gone;
       });
-      await st.delete(`hours/${p.id}`); // their logged hours leave with them
+      await st.delete(`hours/${p.id}`); // their logged hours and requests leave with them
+      await forgetNoCallLists(st, p.id);
       return json({ ok: true, removed: p.id, updatedAt: ds.updatedAt });
     }
 
