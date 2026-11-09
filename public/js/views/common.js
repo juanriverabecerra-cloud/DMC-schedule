@@ -169,6 +169,14 @@ export function upcomingList(ctx, pid, from) {
   )));
 }
 
+// A future day's sheet that's read live from the board runner's workbook and not final yet.
+export function draftNote(ctx, date) {
+  const sheet = ctx.model.ds.daily?.[date];
+  if (!sheet?.draft || date <= ctx.state.today) return null;
+  const at = sheet.sheetAt ? new Date(sheet.sheetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  return notice("warn", "info", h("b", null, "Still being finalized. "), `Rooms can change${at ? `; last update ${at}` : ""}.`);
+}
+
 export function openDaySheet(ctx, pid, date) {
   const { model } = ctx;
   const d = model.day(pid, date);

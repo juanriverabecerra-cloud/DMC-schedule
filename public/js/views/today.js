@@ -5,7 +5,7 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
-import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet } from "./common.js";
+import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { reminderCard } from "./reminders.js";
@@ -118,6 +118,9 @@ export function renderToday(ctx) {
   if (!model.hasCall(state.date) && d.source !== "intern") {
     root.append(notice("warn", "info", `The ${fmtMonth(monthKey(state.date))} call sheet hasn't been uploaded yet${d.rotation ? `. Planned rotation: ${d.rotation}.` : "."}`));
   }
+
+  const draft = draftNote(ctx, state.date);
+  if (draft) root.append(draft);
 
   const site = SITES[d.site]?.name;
   const sub = [d.roles.length ? d.rotation || d.label : (d.rotation && d.rotation !== d.label ? d.rotation : ""), site].filter(Boolean).join(" · ");

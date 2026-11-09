@@ -1,6 +1,6 @@
 // Offline support: the app shell is cached; schedule data is cached by the app itself
 // (localStorage), so API and calendar requests always go to the network.
-const CACHE = "dmc-shell-v17";
+const CACHE = "dmc-shell-v18";
 const SHELL = [
   "/", "/index.html", "/css/app.css", "/manifest.webmanifest",
   "/js/app.js", "/js/api.js", "/js/ui.js", "/js/logged.js", "/js/push.js",

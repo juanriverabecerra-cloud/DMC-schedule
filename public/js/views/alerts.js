@@ -19,7 +19,7 @@ export function openAlerts(ctx) {
     const busy = (btn, label) => { btn.disabled = true; btn.lastChild.textContent = label; };
     body.replaceChildren();
     append(body, [
-      h("p", { class: "small", style: { marginTop: 0 } }, "When the next day's OR sheet is posted, your phone shows it on the lock screen with where you are, like \"Tomorrow's OR schedule is posted. You're in OR 7.\" Tap it to open that day."),
+      h("p", { class: "small", style: { marginTop: 0 } }, "Once the next day's OR sheet is final, your phone shows it on the lock screen with where you are, like \"Tomorrow's OR schedule is posted. You're in OR 7.\" One alert, not one for every edit. If your own room changes after that, you'll hear once more."),
       status === "install" ? h("div", null,
         h("ol", { class: "steps" },
           h("li", null, "In Safari, tap the Share button (the square with an arrow)."),

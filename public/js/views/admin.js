@@ -1,6 +1,6 @@
 // Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
 // phone directory, people, settings and backups. Every call sends the admin key.
-import { h, icon, card, toast, notice, openSheet, avatar, classPill, segmented } from "../ui.js";
+import { h, icon, card, toast, notice, openSheet, avatar, classPill, segmented, append } from "../ui.js";
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
@@ -237,7 +237,7 @@ function dailySection(ctx, status) {
     const today = todayLocal();
     const tomorrow = addDays(today, 1);
     holder.replaceChildren(
-      h("p", { class: "small muted", style: { marginTop: 0 } }, "Upload the WhatsApp photo when it's posted. The date comes from the sheet itself, so the evening-before sheet is filed under tomorrow automatically."),
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "A backup to the live sheet above: upload the WhatsApp photo. The date comes from the sheet itself, so the evening-before sheet is filed under tomorrow automatically."),
       h("div", { class: "btnrow" },
         fileButton(status?.configured?.ai ? "Read a photo" : "Upload photo", "camera", "image/*", readPhoto, { primary: true }),
         h("button", { class: "btn", onclick: () => openEditor(ctx, tomorrow, daily(tomorrow) || {}, { onSaved: draw }) }, icon("edit"), "Enter by hand")),
@@ -575,6 +575,49 @@ function settingsSection(ctx) {
     h("p", { class: "disclaimer" }, `Defaults: regular day ${fmtTime(DEFAULT_SETTINGS.dayHours[0])}–${fmtTime(DEFAULT_SETTINGS.dayHours[1])}, late until ${fmtTime(DEFAULT_SETTINGS.lateEnd)}.`)));
 }
 
+// The board runner's live workbook. The link goes to the server and never comes back: this
+// screen only ever shows whether it's connected and how it's doing.
+function liveSheetCard(ctx) {
+  const body = h("div", null, h("p", { class: "small muted", style: { margin: 0 } }, "Loading…"));
+  const stamp = (iso) => (iso ? `${fmtDate(todayLocal(new Date(iso)))}, ${new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "—");
+  const run = async (btn, job, done) => {
+    btn.disabled = true;
+    try { const s = await job(); if (done) toast(typeof done === "function" ? done(s) : done); await ctx.reload({ quiet: true }); draw(s); } catch (err) { toast(err.message); btn.disabled = false; }
+  };
+  function draw(s) {
+    body.replaceChildren();
+    if (!s.connected) {
+      const input = h("input", { class: "input", type: "url", autocomplete: "off", placeholder: "Paste the Google Sheets link", "aria-label": "Google Sheets link" });
+      const go = h("button", { class: "btn primary", style: { marginTop: "8px" } }, icon("link"), "Connect");
+      go.addEventListener("click", () => run(go, () => api("/api/daily-source", { method: "PUT", body: { url: input.value } }), "Connected"));
+      append(body, [
+        h("p", { class: "small muted", style: { marginTop: 0 } }, "Connect the board runner's sheet once, and the app reads it every 3 minutes from about 5a to midnight. The link stays on the server: residents never see it, and it isn't in backups."),
+        input, go,
+      ]);
+      return;
+    }
+    const check = h("button", { class: "btn sm" }, icon("refresh"), "Check now");
+    check.addEventListener("click", () => run(check, () => api("/api/daily-source/check", { method: "POST" })));
+    const alertBtn = h("button", { class: "btn sm" }, icon("bell"), "Send alert now");
+    alertBtn.addEventListener("click", () => { if (confirm("Tell everyone with alerts on that this sheet is ready?")) run(alertBtn, () => api("/api/daily-source/alert", { method: "POST" }), (r) => `Alert sent to ${r.alerted} ${r.alerted === 1 ? "phone" : "phones"}`); });
+    const off = h("button", { class: "btn sm danger" }, "Disconnect");
+    off.addEventListener("click", () => { if (confirm("Stop reading the sheet automatically?")) run(off, () => api("/api/daily-source", { method: "DELETE" }), "Disconnected"); });
+    append(body, [
+      s.error ? notice("gap", "alert", h("b", null, "Can't read the sheet. "), `${s.error} The app keeps the last good version. The photo upload below still works.`) : null,
+      s.held ? notice("warn", "info", h("b", null, "Latest version not shown. "), s.held) : null,
+      h("dl", { class: "kv" },
+        h("dt", null, "Sheet date"), h("dd", null, s.date ? fmtDate(s.date) : "—"),
+        h("dt", null, "Last checked"), h("dd", null, stamp(s.checkedAt)),
+        h("dt", null, "Last change"), h("dd", null, stamp(s.changedAt)),
+        h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles")),
+      h("p", { class: "tiny muted" }, "Every change shows in the app within a few minutes, marked as still being finalized. Phones get one alert, after 2p, once the sheet has sat unchanged for 45 minutes with every room staffed. After that, only residents whose own assignment changed hear about it, once."),
+      h("div", { class: "btnrow" }, check, s.alertedAt ? null : alertBtn, off),
+    ]);
+  }
+  api("/api/daily-source").then(draw).catch(() => body.replaceChildren(h("p", { class: "small muted", style: { margin: 0 } }, "Couldn't load the sheet's status.")));
+  return card("Live daily sheet", body);
+}
+
 function backupSection(ctx) {
   return card("Backup", h("div", null,
     h("p", { class: "small muted", style: { marginTop: 0 } }, "Download everything (schedules, daily sheets, directory, settings) as one file, or restore from one. Keep backups private: they contain everyone's schedule."),
@@ -615,6 +658,7 @@ export function renderAdmin(ctx, arg) {
     didHolder.replaceChildren(didacticsSection(ctx, status));
   }).catch(() => { dailyHolder.replaceChildren(dailySection(ctx, null)); didHolder.replaceChildren(didacticsSection(ctx, null)); });
   root.append(
+    liveSheetCard(ctx),
     dailyHolder,
     uploadSection(ctx, "Monthly call schedule", "The .xlsx the program coordinator emails each month. Re-uploading a month replaces it; other months are kept.", "/api/upload/call"),
     uploadSection(ctx, "Annual rotations", "The yearly rotations-by-site .xlsx. Used for months that don't have a call sheet yet.", "/api/upload/rotations", true),

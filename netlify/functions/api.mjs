@@ -8,6 +8,9 @@ import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal, addDays } from "../../public/core/dates.js";
 import { shiftBlock } from "../../public/core/requests.js";
+import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced } from "../../lib/daily-sync.js";
+import { readXlsx } from "../../lib/xlsx.js";
+import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
 import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick } from "../../lib/reqlog.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
 import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
@@ -327,11 +330,16 @@ export default async function handler(req) {
         }
       }
       const hasPhoto = !!(await st.getBytes(`photo/${date}`));
-      const isNew = !ds.daily[date];
+      const sync = await readState(st);
+      // A sheet that only came from the live workbook hasn't been announced yet: saving it here counts.
+      const isNew = !ds.daily[date] || (ds.daily[date].source === "sheet" && !sync.days[date]?.alertedAt);
       const { daily: saved, changes } = setDaily(ds, date, { ...body, hasPhoto });
-      await st.setJSON("dataset", ds);
       // The first save of a day's sheet tells everyone; a later fix only when the admin asks.
-      const alerted = (isNew || body.notify === true) && shouldAlert(date, todayLocal()) ? await alertDaily(st, ds, date, origin(req)) : 0;
+      const send = (isNew || body.notify === true) && shouldAlert(date, todayLocal());
+      if (send) markAnnounced(sync, ds, date);
+      await st.setJSON("dataset", ds);
+      if (send) await saveState(st, sync);
+      const alerted = send ? await alertDaily(st, ds, date, origin(req)) : 0;
       return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt, alerted });
     }
     if (daily && method === "DELETE") {
@@ -412,6 +420,40 @@ export default async function handler(req) {
       const summary = setDirectory(ds, await req.json());
       await st.setJSON("dataset", ds);
       return json({ ok: true, summary, updatedAt: ds.updatedAt });
+    }
+
+    // ---- the live daily sheet (the link stays on the server) ----
+    if (path === "/api/daily-source" && method === "GET") {
+      return json(publicStatus(await readSource(st), await readState(st)));
+    }
+    if (path === "/api/daily-source" && method === "PUT") {
+      const body = await req.json();
+      const id = sheetIdFrom(body.url);
+      if (!id) return fail(400, "That doesn't look like a Google Sheets link.");
+      try {
+        parseDailyWorkbook(readXlsx(await fetchSheet(id)));
+      } catch (err) {
+        return fail(400, `The app couldn't read that sheet: ${err?.message || "unknown problem"}`);
+      }
+      await saveSource(st, id);
+      const state = await syncDaily(st, { site: origin(req) });
+      return json(publicStatus(await readSource(st), state));
+    }
+    if (path === "/api/daily-source" && method === "DELETE") {
+      await disconnect(st);
+      return json(publicStatus(null, null));
+    }
+    if (path === "/api/daily-source/check" && method === "POST") {
+      const state = await syncDaily(st, { site: origin(req) });
+      return json({ ...publicStatus(await readSource(st), state), updatedAt: (await loadDataset(st)).updatedAt });
+    }
+    if (path === "/api/daily-source/alert" && method === "POST") {
+      const state = await readState(st);
+      const ds = await loadDataset(st);
+      if (!state.date || !ds.daily[state.date] || !shouldAlert(state.date, todayLocal())) return fail(400, "There's no upcoming sheet to announce.");
+      const sent = await announce(st, ds, state, state.date, { site: origin(req) });
+      await saveState(st, state);
+      return json({ ...publicStatus(await readSource(st), state), alerted: sent });
     }
 
     if (path === "/api/requests" && method === "GET") {

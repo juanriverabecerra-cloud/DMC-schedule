@@ -64,7 +64,7 @@ function rebuild() {
   state.model = state.ds ? createModel(state.ds) : null;
 }
 
-async function reload({ quiet = false } = {}) {
+async function reload({ quiet = false, soft = false } = {}) {
   if (!local.get("passcode") && !local.get("adminKey")) return;
   state.loading = true;
   try {
@@ -72,7 +72,8 @@ async function reload({ quiet = false } = {}) {
     if (changed || !state.model) {
       state.ds = ds;
       rebuild();
-      render();
+      // A background refresh repaints the schedule screens, never a form someone is filling in.
+      if (!soft || DATED.has(route().name)) render();
     }
     state.error = null;
     // Admin devices check the requests inbox whenever the app comes back into view.
@@ -211,6 +212,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 window.addEventListener("online", () => reload({ quiet: true }));
+// The daily sheet can change through the afternoon: keep an open app current.
+setInterval(() => { if (document.visibilityState === "visible") reload({ quiet: true, soft: true }); }, 2 * 60 * 1000);
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -2,7 +2,7 @@ import { h, icon, personRow, emptyState, segmented, openSheet, notice } from "..
 import { BOARD_ORDER, headline } from "../../core/model.js";
 import { fmtDate } from "../../core/dates.js";
 import { local } from "../api.js";
-import { roomSummary, roomCallChips } from "./common.js";
+import { roomSummary, roomCallChips, draftNote } from "./common.js";
 
 const HIDE_BY_DEFAULT = new Set(["Off", "Vacation", "Post-call", "No schedule"]);
 
@@ -57,6 +57,8 @@ export function openDailySheet(ctx, date) {
 export function renderBoard(ctx) {
   const { model, state } = ctx;
   const root = h("div");
+  const draft = draftNote(ctx, state.date);
+  if (draft) root.append(draft);
   const prefs = local.get("boardPrefs", { cls: "all", showOff: false });
   const search = h("input", { class: "input", type: "search", placeholder: "Search name or place", "aria-label": "Search", value: state.boardQuery || "" });
   const listHolder = h("div");

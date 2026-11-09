@@ -263,3 +263,138 @@ test("the chiefs' inbox: sick calls alert admins once, swaps and no-call lists w
   assert.equal(flagged.done, null);
   for (const p of [chief, quiet, sickOnly, resident]) p.close();
 });
+
+// A small workbook in the board runner's layout: `rooms` are [or, surgeon, time, mda, staff].
+async function fakeWorkbook(date, rooms, { egressDate = date } = {}) {
+  const { zipSync, strToU8 } = await import("fflate");
+  const cell = (ref, v) => (typeof v === "number" ? `<c r="${ref}"><v>${v}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>`);
+  const row = (n, cells) => `<row r="${n}">${cells.map(([c, v]) => cell(`${c}${n}`, v)).join("")}</row>`;
+  const sheet = (rows) => `<worksheet><sheetData>${rows.join("")}</sheetData></worksheet>`;
+  const [y, m, d] = date.split("-");
+  const stamp = (x) => { const [yy, mm, dd] = x.split("-"); return `${Number(mm)}/${Number(dd)}/${yy.slice(2)}`; };
+  void y; void m; void d;
+  const rows = [
+    row(1, [["A", stamp(date)]]),
+    row(2, [["A", "OR"], ["B", "Surgeon"], ["C", "Time"], ["D", "# of cases"], ["E", "MDA"], ["F", "Resident/CRNA"], ["G", "JA"], ["H", "Breaks"], ["L", "Resident"]]),
+    ...rooms.map((r, i) => row(4 + i, [["A", r[0]], ...(r[1] ? [["B", r[1]], ["C", 0.3125], ["D", 2], ["E", r[3] || "Attending"]] : []), ...(r[4] ? [["F", r[4]]] : []), ["L", "Ignored"]])),
+    row(30, [["A", "OPSC (3)"], ["B", "OpscMda"], ["G", "PAT"]]),
+    row(31, [["B", "Residents"], ["G", "ResC"]]),
+    row(32, [["B", "ResE"]]),
+    row(34, [["C", "Cath lab (2)"], ["E", "CathMda"], ["G", "OB"], ["I", "Night coverage"]]),
+    row(35, [["C", "Some note for the day"], ["G", "ObMda"], ["I", "ResF"]]),
+    row(36, [["G", "Residents"]]),
+    row(37, [["G", "ResG"]]),
+  ];
+  return zipSync({
+    "xl/workbook.xml": strToU8('<workbook><sheets><sheet name="OR Schedule Assignments" r:id="rId1"/><sheet name="Egress List" r:id="rId2"/></sheets></workbook>'),
+    "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>'),
+    "xl/worksheets/sheet1.xml": strToU8(sheet(rows)),
+    "xl/worksheets/sheet2.xml": strToU8(sheet([row(1, [["A", stamp(egressDate)]])])),
+  });
+}
+
+test("the workbook reads like the photo, wherever the blocks below the table land", async () => {
+  const { readXlsx } = await import("../lib/xlsx.js");
+  const { parseDailyWorkbook, looksComplete } = await import("../lib/daily-sheet.js");
+  const wb = readXlsx(await fakeWorkbook("2026-03-11", [["1", "Smith", "", "Mda1", "ResA"], ["2"], ["3", "Jones", "", "Mda2", "X"]]));
+  const p = parseDailyWorkbook(wb);
+  assert.equal(p.date, "2026-03-11");
+  assert.deepEqual(p.rooms.map((r) => [r.or, r.surgeon, r.time, r.cases, r.mda, r.staff]), [["1", "Smith", "7:30", "2", "Mda1", "ResA"], ["3", "Jones", "7:30", "2", "Mda2", "X"]]); // the empty OR 2 is dropped
+  assert.deepEqual(p.opsc, { rooms: "3", mdas: ["OpscMda"], residents: ["ResE"] });
+  assert.deepEqual(p.procedures, [{ name: "Cath lab", count: "2", mda: "CathMda" }]);
+  assert.deepEqual(p.pat, ["ResC"]);
+  assert.deepEqual(p.ob, { mda: "ObMda", residents: ["ResG"] });
+  assert.deepEqual(p.night, ["ResF"]);
+  assert.deepEqual(p.notes, ["Some note for the day"]);
+  assert.equal(looksComplete(wb, p), true);
+  assert.equal(looksComplete(readXlsx(await fakeWorkbook("2026-03-11", [["1", "Smith", "", "M", "ResA"]], { egressDate: "2026-03-10" })), p), false); // egress not redone yet
+  assert.equal(looksComplete(wb, { ...p, rooms: [{ surgeon: "Smith", staff: "" }] }), false); // a room with nobody in it
+});
+
+test("the live sheet: updates quietly, alerts once when settled, then only the people it moved", async () => {
+  const st = openStore();
+  const sync = await import("../lib/daily-sync.js");
+  // 3p in Detroit on Mar 10, 2026; the sheet is for Mar 11.
+  const at = (mins) => new Date(Date.parse("2026-03-10T19:00:00Z") + mins * 60000);
+  const secretId = "1SecretSheetIdForTheTestOnly_abc123";
+  const person = (id) => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Test", cls: "CA-1", canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  const rows = { a: { rotation: "Basic Anesthesia", days: {} }, b: { rotation: "Basic Anesthesia", days: {} }, c: { rotation: "Basic Anesthesia", days: {} } };
+  await st.setJSON("dataset", { people: ["a", "b", "c"].map(person), months: { "2026-03": { rows, days: 31 } }, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("daily-sync");
+  await sync.saveSource(st, secretId);
+  const pa = await fakePhone(), pb = await fakePhone();
+  await st.setJSON("push/subs", { a: { ...pa.sub, pid: "a" }, b: { ...pb.sub, pid: "b" } });
+  const v1 = [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]];
+  const v2 = [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "ResC"], ["3", "Lee", "", "M", "ResB"]];
+  let bytes = await fakeWorkbook("2026-03-11", v1);
+  const run = (mins) => sync.syncDaily(st, { now: at(mins), fetchBytes: async () => bytes });
+  const daily = async () => (await st.getJSON("dataset")).daily["2026-03-11"];
+
+  await run(0);
+  assert.equal((await daily()).draft, true); // shows right away, marked as not final
+  assert.equal((await daily()).source, "sheet");
+  assert.equal(pa.received.length, 0);
+  await run(30);
+  assert.equal(pa.received.length, 0); // still inside the quiet window
+  // An edit restarts the wait.
+  bytes = await fakeWorkbook("2026-03-11", [...v1.slice(0, 2), ["3", "Lee", "", "Other", "X"]]);
+  await run(40);
+  await run(80);
+  assert.equal(pa.received.length, 0);
+  await run(86);
+  assert.equal(pa.received.length, 1); // 46 minutes unchanged: one alert
+  assert.equal(pb.received.length, 1);
+  assert.equal(pa.open(pa.received[0].body).title, "Tomorrow's OR schedule is posted");
+  assert.equal((await daily()).draft, false);
+  await run(120);
+  assert.equal(pa.received.length, 1); // never twice
+  // A correction after the alert: only the resident it moved hears, and once.
+  bytes = await fakeWorkbook("2026-03-11", v2);
+  await run(130);
+  assert.equal(pb.received.length, 1); // waits for it to settle
+  await run(165);
+  assert.equal(pa.received.length, 1);
+  assert.equal(pb.received.length, 2);
+  const moved = pb.open(pb.received[1].body);
+  assert.equal(moved.title, "Your assignment changed for tomorrow");
+  assert.match(moved.body, /OR 3 with Lee/);
+  bytes = await fakeWorkbook("2026-03-11", v1);
+  await run(170);
+  await run(205);
+  assert.equal(pb.received.length, 2); // only once each, however many corrections follow
+  assert.equal((await daily()).rooms[1].staff, "ResB"); // the app still has the latest
+
+  // The next morning: the sheet is cleared, or holds tomorrow's cases under today's date.
+  const morning = (mins) => new Date(Date.parse("2026-03-11T13:00:00Z") + mins * 60000);
+  const runAt = (mins) => sync.syncDaily(st, { now: morning(mins), fetchBytes: async () => bytes });
+  bytes = await fakeWorkbook("2026-03-11", [["1"], ["2"], ["3"]]);
+  assert.match((await runAt(0)).held, /mostly empty/);
+  bytes = await fakeWorkbook("2026-03-11", [["1", "New1", "", "M", ""], ["2", "New2", "", "M", ""], ["3", "New3", "", "M", ""]]);
+  assert.match((await runAt(3)).held, /rewritten/);
+  assert.equal((await daily()).rooms[0].surgeon, "Smith"); // today's rooms untouched
+  // A real fix to today's sheet still goes through.
+  bytes = await fakeWorkbook("2026-03-11", [["1", "Smith", "", "M", "ResC"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]]);
+  assert.equal((await runAt(6)).held, null);
+  assert.equal((await daily()).rooms[0].staff, "ResC");
+  // The date moved on but the rooms didn't: not shown as the next day's sheet.
+  bytes = await fakeWorkbook("2026-03-12", [["1", "Smith", "", "M", "ResC"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]]);
+  assert.match((await runAt(9)).held, /previous day's rooms/);
+  assert.equal((await st.getJSON("dataset")).daily["2026-03-12"], undefined);
+
+  // If Google stops answering, the last good version stays and an admin can see why.
+  const before = await daily();
+  const failed = await sync.syncDaily(st, { now: morning(12), fetchBytes: async () => { throw new Error("Google asked for a sign-in."); } });
+  assert.match(failed.error, /sign-in/);
+  assert.deepEqual((await daily()).rooms, before.rooms);
+
+  // The link never leaves the server's own record.
+  const status = await call("GET", "/api/daily-source", undefined, admin);
+  assert.equal(status.body.connected, true);
+  assert.ok(!JSON.stringify(status.body).includes(secretId));
+  assert.ok(!JSON.stringify((await call("GET", "/api/data", undefined, viewer)).body).includes(secretId));
+  assert.equal((await call("GET", "/api/daily-source", undefined, viewer)).status, 403);
+  assert.equal(sync.sheetIdFrom("https://docs.google.com/spreadsheets/d/1-AbcdefGhijklmnopqrstuvwxyz/edit?usp=sharing"), "1-AbcdefGhijklmnopqrstuvwxyz");
+  assert.equal(sync.sheetIdFrom("https://example.com/nope"), null);
+  pa.close(); pb.close();
+  await sync.disconnect(st);
+});
