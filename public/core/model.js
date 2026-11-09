@@ -21,7 +21,7 @@ export const ROLE_WORDS = {
 };
 export const roleWord = (name) => ROLE_WORDS[String(name ?? "").trim().toLowerCase()] || null;
 const KEEP_POST = new Set(Object.values(ROLE_WORDS));
-const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
+export const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
 
 export const BOARD_ORDER = [
   "Harper Main OR", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
@@ -94,10 +94,14 @@ export function createModel(ds) {
     return run >= 3;
   }
 
-  // True when the day before was a 24-hr call, including across the end of a month.
-  function after24(pid, date) {
+  // The call-sheet cell for the day before, including across the end of a month.
+  function cellBefore(pid, date) {
     const prev = addDays(date, -1);
-    const cell = ds.months?.[monthKey(prev)]?.rows?.[pid]?.days?.[parts(prev).d];
+    return ds.months?.[monthKey(prev)]?.rows?.[pid]?.days?.[parts(prev).d] || null;
+  }
+
+  function after24(pid, date) {
+    const cell = cellBefore(pid, date);
     if (!cell) return false;
     const key = normCode(cell.t);
     return key === "H1" || (fillTag(cell.f) === "call24" && !CALL_SET.has(key));
@@ -181,7 +185,7 @@ export function createModel(ds) {
       if (holidays(month).has(d)) Object.assign(info, { status: "holiday", label: "Holiday (CRNA coverage)" });
       else if (tag === "off") Object.assign(info, { status: hasVacNear(row, d) ? "vacation" : "off", label: hasVacNear(row, d) ? "Vacation" : "Off" });
       else if (weekend) Object.assign(info, { status: "off", label: "Off" });
-      else if (normCode(row.days[d - 1]?.t) === "NF") Object.assign(info, { status: "postcall", label: "Off after night float" });
+      else if (normCode(cellBefore(pid, date)?.t) === "NF") Object.assign(info, { status: "postcall", label: "Off after night float" });
       else if (after24(pid, date)) Object.assign(info, { status: "postcall", label: "Post-call day off" });
       else info.status = "work";
     } else {

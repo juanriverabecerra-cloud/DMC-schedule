@@ -6,7 +6,6 @@ import { fmtDate, fmtMonth, todayLocal } from "../../core/dates.js";
 import { burnoutWatch, planMonth, loggedSummary, rotationHours, WATCH } from "../../core/chief.js";
 import { hoursReport } from "../../core/hours.js";
 
-const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(1)}`;
 const pill = (text, c) => h("span", { class: "pill", style: { "--c": c } }, text);
 const owed = (b) => (Math.abs(b) < 0.5 ? "even" : b > 0 ? `${Math.round(b)} over` : `${Math.round(-b)} under`);
 
@@ -145,5 +144,3 @@ export function rotationHoursCard(ctx) {
       h("b", { class: "small" }, `${Math.round(r.median)} h/wk`)))),
     h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "From the hours residents added, by the rotation New Innovations lists: the middle resident's hours a week on it. Useful when planning who rotates where next, so the heaviest rotations are spread evenly.")));
 }
-
-export { icon, signed };

@@ -13,6 +13,12 @@ export function alertStatus() {
   return local.get("alerts")?.endpoint && Notification.permission === "granted" ? "on" : "off";
 }
 
+// `ready` never settles if the worker couldn't install, which would leave a spinner forever.
+const worker = () => Promise.race([
+  navigator.serviceWorker.ready,
+  new Promise((_, reject) => setTimeout(() => reject(new Error("The app is still setting up. Try again in a moment.")), 8000)),
+]);
+
 const toKey = (b64) => {
   const s = atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64.length + 3) % 4));
   return Uint8Array.from(s, (c) => c.charCodeAt(0));
@@ -22,7 +28,7 @@ const toKey = (b64) => {
 export async function turnOnAlerts(pid) {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") throw new Error(permission === "denied" ? "Notifications are blocked for this app. Allow them in Settings › Notifications." : "Notifications weren't allowed.");
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await worker();
   const { publicKey } = await api("/api/push/key");
   let sub = await reg.pushManager.getSubscription();
   if (sub && local.get("alerts")?.key !== publicKey) { await sub.unsubscribe(); sub = null; }
@@ -45,7 +51,7 @@ export async function turnOffAlerts() {
   const saved = local.get("alerts");
   local.del("alerts");
   try {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await worker();
     const sub = await reg.pushManager.getSubscription();
     await sub?.unsubscribe();
   } catch { /* already gone */ }
@@ -54,15 +60,20 @@ export async function turnOffAlerts() {
 
 export const testAlert = () => api("/api/push/test", { method: "POST", body: { endpoint: local.get("alerts")?.endpoint } });
 
-// When someone changes who they are, or signs in or out as an admin, the alerts follow.
+const REFRESH_DAYS = 3;
+
+// When someone changes who they are, or signs in or out as an admin, the alerts follow. Every
+// few days the phone also re-registers, so one the server lost starts hearing alerts again.
 export async function syncAlerts(pid) {
   const saved = local.get("alerts");
   const admin = !!local.get("adminKey");
-  if (!saved?.endpoint || (saved.pid === pid && !!saved.admin === admin) || alertStatus() !== "on") return;
+  if (!saved?.endpoint || alertStatus() !== "on") return;
+  const recent = Date.now() - new Date(saved.synced || saved.on).getTime() < REFRESH_DAYS * 86400000;
+  if (saved.pid === pid && !!saved.admin === admin && recent) return;
   try {
-    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    const sub = await (await worker()).pushManager.getSubscription();
     if (!sub) { local.del("alerts"); return; }
     await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode: saved.mode } });
-    local.set("alerts", { ...saved, pid, admin });
+    local.set("alerts", { ...saved, endpoint: sub.endpoint, pid, admin, synced: new Date().toISOString() });
   } catch { /* try again next time */ }
 }

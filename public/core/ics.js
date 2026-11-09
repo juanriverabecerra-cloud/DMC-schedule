@@ -1,7 +1,7 @@
 // iCalendar feed for one resident: timed shifts with the day's OR details and who to call,
 // all-day blocks for vacation, post-call and cardiac call weeks, and planned rotations for
 // months without a call sheet yet.
-import { addDays, range, fmtRange, fmtDate, monthDates, addMonths, monthKey } from "./dates.js";
+import { addDays, range, fmtRange, monthDates, addMonths, monthKey } from "./dates.js";
 import { SITES } from "./codes.js";
 import { headline } from "./model.js";
 import { prettyDigits, numberTag } from "./directory.js";
@@ -152,7 +152,6 @@ function didacticsDescription(e, appUrl) {
 }
 
 export function buildIcs(model, pid, { from, to, appUrl = "", calName, didactics = true } = {}) {
-  const p = model.person(pid);
   const stamp = utcStamp(model.ds.updatedAt);
   const out = [
     "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//DMC Schedule//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
@@ -235,5 +234,3 @@ export function feedRange(model, today) {
   const dates = monthDates(lastMonth);
   return { from, to: dates[dates.length - 1] };
 }
-
-export { fmtDate };

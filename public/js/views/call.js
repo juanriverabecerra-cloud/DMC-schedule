@@ -1,6 +1,6 @@
 // Call: search everyone and everything with a number, a "Right now" list built from your
 // assignment today, one-tap essentials, and OR room tiles.
-import { h, icon, avatar, classPill, numberButtons, emptyState, notice, card, copyText } from "../ui.js";
+import { h, icon, avatar, classPill, numberButtons, emptyState, card, copyText } from "../ui.js";
 import { fmtDate } from "../../core/dates.js";
 import { CLASS_ORDER } from "../../core/model.js";
 import { techChip } from "./common.js";
@@ -211,5 +211,3 @@ export function renderCall(ctx) {
   drawResults();
   return root;
 }
-
-export { notice };

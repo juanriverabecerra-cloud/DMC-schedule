@@ -1,11 +1,11 @@
-import { h, icon, card, avatar, classPill, segmented, telHref } from "../ui.js";
+import { h, icon, card, avatar, classPill, segmented } from "../ui.js";
 import { local } from "../api.js";
 import { monthKey, fmtMonth } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeCard } from "./common.js";
 import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
-import { alertStatus } from "../push.js";
+import { alertStatus, turnOffAlerts } from "../push.js";
 import { requestsCard } from "./requests.js";
 import { inboxCounts } from "./inbox.js";
 
@@ -94,13 +94,13 @@ export function renderMore(ctx) {
       return h("button", { class: "btn", onclick: () => ctx.go(waiting.open ? "admin/requests" : "admin") }, icon("shield"), state.admin ? "Admin" : "Admin sign-in",
         waiting.open ? h("span", { class: "pill", style: { "--c": waiting.urgent ? "var(--gap)" : "var(--accent)" } }, `${waiting.open} ${waiting.open === 1 ? "request" : "requests"}`) : null);
     })(),
-    h("button", { class: "btn danger", onclick: () => {
+    h("button", { class: "btn danger", onclick: async () => {
       if (!confirm("Sign out on this device?")) return;
+      // A signed-out phone shouldn't keep showing the schedule on its lock screen.
+      await turnOffAlerts().catch(() => {});
       for (const k of ["passcode", "adminKey", "ds", "etag", "me"]) local.del(k);
       location.hash = "#/setup";
       location.reload();
     } }, "Sign out")));
   return root;
 }
-
-export { telHref };

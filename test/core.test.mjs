@@ -175,7 +175,7 @@ test("PAT resident pulled for breaks stays in PAT", () => {
   assert.match(headline(d), /^PAT clinic · breaks OR 5$/);
 });
 
-import { parseDirectoryText, buildDirectory, createDirectory, dialDigits } from "../public/core/directory.js";
+import { parseDirectoryText, buildDirectory, dialDigits } from "../public/core/directory.js";
 import { headline } from "../public/core/model.js";
 
 const DIR_TEXT = `## Dialing
@@ -756,8 +756,11 @@ test("minimums are typed in, saved and checked against the day", async () => {
 });
 
 test("shift ratings: combined only, and small groups stay hidden", async () => {
-  const { cleanScores, summarizeSurvey, ANCHOR_KEY } = await import("../public/core/survey.js");
-  assert.deepEqual(cleanScores({ fri24: "7", nope: 3, late: 99, nf: "", [ANCHOR_KEY]: 4 }), { fri24: 7, late: 15 });
+  const { cleanScores, summarizeSurvey, SURVEY_ROWS } = await import("../public/core/survey.js");
+  assert.deepEqual(cleanScores({ fri24: "7", nope: 3, late: 99, nf: "", sat24: 12 }), { fri24: 7, late: 15, sat24: 12 });
+  assert.equal(SURVEY_ROWS[0][0], "sat24"); // residents rate the Saturday 24 too; some find it worse than others
+  assert.ok(!SURVEY_ROWS.some(([key]) => key === "stack"));
+  assert.deepEqual(summarizeSurvey([8, 12, 14].map((sat24) => ({ cls: "CA-1", scores: { sat24 } }))).shifts.sat24, { n: 3, median: 12, low: 8, high: 14, classes: { "CA-1": 12 } });
   const res = summarizeSurvey([
     { cls: "CA-1", scores: { fri24: 4 } }, { cls: "CA-1", scores: { fri24: 6 } }, { cls: "CA-1", scores: { fri24: 8 } },
     { cls: "CA-3", scores: { fri24: 10 } }, { cls: "CA-2", scores: {} },
@@ -903,4 +906,64 @@ test("requests: shifts to swap, and the emails for a swap, a sick call and no-ca
   assert.match(nc.body, /• Sat, December 5: Wedding\n• Sun, December 6\n\nOut of state/);
   assert.ok(!nc.body.includes("January")); // only that month's days
   assert.match(R.noCallEmail(m, "a", "2026-12", {}).body, /don't have any no-call requests/);
+});
+
+test("a blank day after night float is off, even across the end of a month", () => {
+  const person = { id: "a", last: "Ana", first: "T", preferred: "T", cls: "CA-1" };
+  const model = createModel({ people: [person], daily: {}, settings: {}, directory: { people: {}, places: [] }, months: {
+    "2026-04": { days: 30, rows: { a: { rotation: "Basic Anesthesia", days: { 30: { t: "NF" } } } } },
+    "2026-05": { days: 31, rows: { a: { rotation: "Basic Anesthesia", days: { 4: { t: "BA" } } } } },
+  } });
+  assert.equal(model.day("a", "2026-05-01").status, "postcall");
+});
+
+test("saving a daily sheet keeps marks that aren't people", () => {
+  const ds = { people, months: {}, daily: {}, settings: {}, directory: { people: {}, places: [] } };
+  setDaily(ds, "2026-11-03", { rooms: [
+    { or: "1", surgeon: "A", staff: "TBD", ja: "Same team" },
+    { or: "2", surgeon: "B", staff: "Lee/X" },
+    { or: "3", surgeon: "C", staff: "X" },
+  ], night: ["Doe", "TBD"] });
+  const saved = ds.daily["2026-11-03"];
+  assert.equal(saved.rooms[0].staff, "TBD");
+  assert.equal(saved.rooms[0].ja, "Same team");
+  assert.equal(saved.rooms[1].staff, "Lee/X");
+  assert.equal(saved.rooms[2].staff, "X");
+  assert.deepEqual(saved.night, ["Doe", "TBD"]);
+});
+
+test("settings: a blank time falls back to the default instead of breaking every shift", async () => {
+  const { setSettings } = await import("../lib/dataset.js");
+  const ds = { settings: {}, log: [] };
+  setSettings(ds, { dayHours: [null, 1080], lateEnd: null, codeHours: { PAT: [420, 960], BAD: [null, 5] }, staffing: [] });
+  assert.equal(ds.settings.dayHours, undefined);
+  assert.equal(ds.settings.lateEnd, undefined);
+  assert.deepEqual(ds.settings.codeHours, { PAT: [420, 960] });
+});
+
+test("logged hours: fewer than four weeks gives no 4-week average, and sick days count as away", async () => {
+  const { loggedSummary } = await import("../public/core/chief.js");
+  const { actualHours } = await import("../public/core/logged.js");
+  const day = (date, hours, type = "Clinical") => ({ date, start: 360, endDate: date, end: 1080, hours, type, rotation: "" });
+  const week = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map((d) => day(d, 14));
+  assert.equal(loggedSummary(week, "2026-11-06").avg4, null); // 70 hours in one week isn't 17.5 a week
+  const month = Array.from({ length: 28 }, (_, i) => day(`2026-10-${String(i + 1).padStart(2, "0")}`, 10));
+  assert.equal(Math.round(loggedSummary(month, "2026-10-28").avg4), 70);
+  const model = createModel({ people, months: {}, daily: {}, settings: {}, directory: { people: {}, places: [] } });
+  assert.ok(actualHours(model, "doe-jane", [...week, day("2026-11-09", 8, "Sick Leave")]).away.has("2026-11-09"));
+});
+
+test("alert wording reads properly inside a sentence", async () => {
+  const { dayInSentence, dayWord } = await import("../public/core/alerts.js");
+  assert.equal(dayInSentence("2026-11-09", "2026-11-08"), "tomorrow");
+  assert.equal(dayInSentence("2026-11-16", "2026-11-13"), "Monday");
+  assert.equal(dayWord("2026-11-09", "2026-11-08"), "Tomorrow's");
+  assert.match(dayWord("2026-11-30", "2026-11-08"), /^The Mon 11\/30$/);
+});
+
+test("the fairness roster leaves out anyone an admin hid", async () => {
+  const { rosterOf } = await import("../public/core/fairness.js");
+  const hidden = people.map((p) => (p.id === "lee-sam" ? { ...p, hidden: true } : p));
+  const model = createModel({ people: hidden, months: {}, daily: {}, settings: {}, directory: { people: {}, places: [] }, rosters: { 2026: { "doe-jane": "CA-1", "lee-sam": "CA-1" } } });
+  assert.deepEqual(Object.keys(rosterOf(model, 2026)), ["doe-jane"]);
 });

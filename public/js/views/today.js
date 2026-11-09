@@ -1,4 +1,4 @@
-import { h, icon, card, dayChips, personRow, notice, emptyState, avatar } from "../ui.js";
+import { h, card, dayChips, personRow, notice, emptyState } from "../ui.js";
 import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, fmtMonth } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
@@ -197,5 +197,3 @@ export function renderToday(ctx) {
   root.append(subscribeCard(ctx, pid));
   return root;
 }
-
-export { avatar };

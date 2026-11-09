@@ -5,7 +5,7 @@ export const local = {
     try { const v = localStorage.getItem(`dmc.${key}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
   },
   set(key, value) {
-    try { localStorage.setItem(`dmc.${key}`, JSON.stringify(value)); } catch { /* storage full or blocked */ }
+    try { localStorage.setItem(`dmc.${key}`, JSON.stringify(value)); return true; } catch { return false; /* storage full or blocked */ }
   },
   del(key) {
     try { localStorage.removeItem(`dmc.${key}`); } catch { /* ignore */ }
@@ -67,7 +67,9 @@ export async function fetchDataset() {
     throw new ApiError(err.error || `Could not load the schedule (${res.status})`, res.status);
   }
   const ds = await res.json();
-  local.set("ds", ds);
-  local.set("etag", res.headers.get("etag"));
+  // Only remember the version if the copy really saved. Otherwise the server would answer "not
+  // modified" from now on and this phone would be stuck on an older schedule.
+  if (local.set("ds", ds)) local.set("etag", res.headers.get("etag"));
+  else local.del("etag");
   return { ds, changed: true };
 }

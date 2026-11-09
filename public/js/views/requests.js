@@ -52,7 +52,6 @@ function emailBlock(draft, { onOpen, label = "Email the schedule" } = {}) {
 // ---------- the Requests card on More ----------
 
 export function requestsCard(ctx) {
-  const me = ctx.state.me && ctx.model.person(ctx.state.me);
   const tile = (ic, title, sub, color, onclick) => h("button", { class: "reqtile", style: { "--c": color }, onclick }, h("span", { class: "ic" }, icon(ic)), h("b", null, title), h("span", null, sub));
   return h("section", { class: "card card-pad" },
     h("h3", { class: "card-title" }, "Requests"),

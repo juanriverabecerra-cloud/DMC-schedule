@@ -3,7 +3,7 @@
 // so one you haven't done stays out.
 import { h, card, notice, toast, append } from "../ui.js";
 import { api, local } from "../api.js";
-import { SURVEY_ROWS, ANCHOR_VALUE, SCALE } from "../../core/survey.js";
+import { SURVEY_ROWS, SCALE } from "../../core/survey.js";
 
 const label = (n) => (n > 0 ? String(n) : n < 0 ? `−${Math.abs(n)}` : "0");
 
@@ -22,7 +22,7 @@ export function renderRate(ctx) {
 
   function drawOrder() {
     const rated = SURVEY_ROWS.filter(([key]) => scores[key] != null).map(([key, name]) => [name, Number(scores[key])]);
-    const all = [["24-hr call, Saturday", ANCHOR_VALUE], ...rated, ["Regular OR day", 0]].sort((a, b) => b[1] - a[1]);
+    const all = [...rated, ["Regular OR day", 0]].sort((a, b) => b[1] - a[1]);
     order.replaceChildren(...all.map(([name, n]) => h("li", null, h("span", null, name), h("b", null, label(n)))));
   }
 
@@ -68,7 +68,7 @@ export function renderRate(ctx) {
       h("p", { class: "small", style: { marginTop: 0 } }, "How heavy does each shift really feel? Think of the whole cost: the hours, the lost weekend, the recovery."),
       h("dl", { class: "kv", style: { margin: 0 } },
         h("dt", null, "Regular OR day"), h("dd", null, "0"),
-        h("dt", null, "Saturday 24-hr call"), h("dd", null, String(ANCHOR_VALUE))),
+        h("dt", null, "Worst shift you can imagine"), h("dd", null, String(SCALE.max))),
       h("p", { class: "tiny muted", style: { marginBottom: 0 } }, "Each bar starts at 0, a normal day. Slide it against those two, or tap it to keep 0. Below 0 means easier than a normal day. Leave blank anything you haven't done. Only combined numbers are shown: nobody sees your answers.")),
     h("section", { class: "card" }, h("ul", { class: "list rate-list" }, rows)),
     card("Your order, heaviest first", order),

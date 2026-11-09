@@ -1,4 +1,4 @@
-import { h, icon, card, avatar, classPill, dayChips, emptyState, telHref, smsHref, numberButtons } from "../ui.js";
+import { h, icon, card, avatar, classPill, dayChips, emptyState, numberButtons } from "../ui.js";
 import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
@@ -139,5 +139,3 @@ export function renderPerson(ctx, pid) {
   }
   return root;
 }
-
-export { telHref, smsHref };

@@ -95,6 +95,9 @@ export function renderBoard(ctx) {
       listHolder.append(h("button", { class: "btn block", style: { marginTop: "4px" }, onclick: () => { prefs.showOff = true; local.set("boardPrefs", prefs); draw(); } },
         `Show ${hidden.map(([g, n]) => `${g.toLowerCase()} (${n})`).join(", ")}`));
     }
+    if (prefs.showOff) {
+      listHolder.append(h("button", { class: "btn block sm", style: { marginTop: "8px" }, onclick: () => { prefs.showOff = false; local.set("boardPrefs", prefs); draw(); } }, "Hide off / vacation"));
+    }
   }
 
   search.addEventListener("input", draw);
@@ -115,9 +118,6 @@ export function renderBoard(ctx) {
     segHolder,
     listHolder,
   );
-  if (prefs.showOff) {
-    root.append(h("button", { class: "btn block sm", style: { marginTop: "8px" }, onclick: () => { prefs.showOff = false; local.set("boardPrefs", prefs); draw(); } }, "Hide off / vacation"));
-  }
   draw();
   return root;
 }

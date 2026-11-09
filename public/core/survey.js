@@ -1,12 +1,10 @@
 // Residents rate how heavy each shift feels. Two fixed points make everyone's answers line up:
-// a regular OR day is 0 and a Saturday 24-hr call is 10. Only combined numbers are ever shown,
+// a regular OR day is 0 and the worst shift they can imagine is 15. Only combined numbers are ever shown,
 // and an admin decides whether to use them as the points in Admin › Fairness.
 import { WEIGHT_ROWS } from "./fairness.js";
 
-export const ANCHOR_KEY = "sat24";
-export const ANCHOR_VALUE = 10;
 export const SCALE = { min: -3, max: 15, step: 0.5 };
-export const SURVEY_ROWS = WEIGHT_ROWS.filter(([key]) => key !== "stack" && key !== ANCHOR_KEY);
+export const SURVEY_ROWS = WEIGHT_ROWS.filter(([key]) => key !== "stack");
 const KEYS = new Set(SURVEY_ROWS.map(([key]) => key));
 export const MIN_RATINGS = 3; // fewer answers than this would show one person's own answer
 

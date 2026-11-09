@@ -1,4 +1,4 @@
-import { h, icon, personRow, emptyState, notice, append, numberButtons, callChip } from "../ui.js";
+import { h, personRow, emptyState, notice, append, numberButtons, callChip } from "../ui.js";
 import { fmtDate, addDays, dow } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 
@@ -70,9 +70,7 @@ export function renderTonight(ctx) {
     root.append(h("p", { class: "disclaimer" }, "Tomorrow's room assignments usually come out this evening; attendings show up here once they're posted."));
   }
 
-  if (wd === 5 || wd === 6) root.append(h("p", { class: "disclaimer" }, "Weekend: anyone not listed is off unless the call sheet says otherwise."));
+  if (wd === 0 || wd === 6) root.append(h("p", { class: "disclaimer" }, "Weekend: anyone not listed is off unless the call sheet says otherwise."));
   if (!root.children.length) root.append(emptyState("moon", "Nobody listed", "The call sheet has no call shifts on this day."));
   return root;
 }
-
-export { icon };

@@ -51,7 +51,7 @@ const noCallGroups = (model) => model.fairness?.noCallGroups || NO_CALL_GROUPS;
 // sheets when that year's file wasn't uploaded. Balances reset each year, so years never mix.
 export function rosterOf(model, ay) {
   const listed = model.ds.rosters?.[ay];
-  if (listed && Object.keys(listed).length) return listed;
+  if (listed && Object.keys(listed).length) return Object.fromEntries(Object.entries(listed).filter(([pid]) => !model.person(pid)?.hidden));
   const out = {};
   for (const m of model.months) {
     if (academicYearOf(`${m}-15`) !== ay) continue;
@@ -332,7 +332,6 @@ export function coverOptions(model, pid, date, { allClasses = false, report } = 
 // largest improvement first. One suggestion per shift.
 export function suggestMoves(model, today, { report, limit = 8 } = {}) {
   const rep = report || fairnessReport(model, yearRange(model, today));
-  const W = rep.W;
   const out = [];
   const last = rep.to;
   for (const c of rep.classes) {
@@ -476,7 +475,7 @@ export function limitsReport(model, { from, to }) {
 export function insights(model, report, today) {
   const out = [];
   for (const c of report.classes) {
-    const compared = c.rows.filter((r) => r.load != null && r.eligible >= MIN_DAYS);
+    const compared = c.rows.filter((r) => r.load != null && r.eligible >= MIN_DAYS).sort((a, b) => b.load - a.load);
     if (compared.length < 2) continue;
     const top = compared[0], low = compared[compared.length - 1];
     out.push({ level: "info", text: `${c.cls}: ${model.person(top.pid).last} carries the most (${Math.round(top.load)}% of fair share), ${model.person(low.pid).last} the least (${Math.round(low.load)}%).` });

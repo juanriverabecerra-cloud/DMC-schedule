@@ -213,10 +213,25 @@ export function toast(text) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
 }
 
+// For a button that saves something: if it fails, say why instead of doing nothing.
+export const safely = (work) => async (...args) => {
+  try { return await work(...args); } catch (err) { toast(err.message || "That didn't work."); return undefined; }
+};
+
+let closeOpenSheet = null;
+export const closeSheet = () => closeOpenSheet?.();
+
 export function openSheet(title, content) {
+  closeSheet();
   const root = document.getElementById("sheet-root");
-  root.replaceChildren();
-  const close = () => { root.replaceChildren(); document.body.style.overflow = ""; };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const close = () => {
+    root.replaceChildren();
+    document.body.style.overflow = "";
+    document.removeEventListener("keydown", onKey);
+    if (closeOpenSheet === close) closeOpenSheet = null;
+  };
+  closeOpenSheet = close;
   const sheet = h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": title },
     h("div", { class: "grab" }),
     h("div", { class: "sheet-head" }, h("h3", null, title), h("button", { class: "iconbtn", "aria-label": "Close", onclick: close }, icon("x"))),
@@ -224,7 +239,6 @@ export function openSheet(title, content) {
   );
   root.append(h("div", { class: "sheet-backdrop", onclick: close }), sheet);
   document.body.style.overflow = "hidden";
-  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
   document.addEventListener("keydown", onKey);
   return close;
 }

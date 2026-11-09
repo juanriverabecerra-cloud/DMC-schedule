@@ -164,7 +164,7 @@ export function actualHours(model, pid, entries) {
   if (!list.length) return null;
   const byDate = {};
   for (const e of list) (byDate[e.date] ||= []).push(e);
-  const away = new Set((entries || []).filter((e) => /vacation/i.test(e.type)).map((e) => e.date));
+  const away = new Set((entries || []).filter(isAwayEntry).map((e) => e.date));
   const dates = Object.keys(byDate).sort();
   const learned = {};
   const { rows } = compareLogged(model, pid, list);

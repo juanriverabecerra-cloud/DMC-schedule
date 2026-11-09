@@ -1,6 +1,6 @@
 // Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
 // phone directory, people, settings and backups. Every call sends the admin key.
-import { h, icon, card, toast, notice, openSheet, avatar, classPill, segmented, append } from "../ui.js";
+import { h, icon, card, toast, notice, openSheet, avatar, segmented, append, safely } from "../ui.js";
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
@@ -225,12 +225,12 @@ function dailySection(ctx, status) {
         h("div", { class: "name" }, `${label} · ${fmtDate(date)}`),
         h("div", { class: "sub" }, existing ? `${existing.rooms.length} rooms${existing.source === "photo" ? " · from photo" : ""}` : "Not posted yet")),
       h("button", { class: "btn sm", onclick: () => openEditor(ctx, date, existing || {}, { onSaved: draw }) }, existing ? "Edit" : "Add"),
-      existing ? h("button", { class: "iconbtn", "aria-label": `Delete the sheet for ${date}`, onclick: async () => {
+      existing ? h("button", { class: "iconbtn", "aria-label": `Delete the sheet for ${date}`, onclick: safely(async () => {
         if (!confirm(`Delete the daily sheet for ${fmtDate(date)}?`)) return;
         await api(`/api/daily/${date}`, { method: "DELETE" });
         await ctx.reload();
         draw();
-      } }, icon("x")) : null);
+      }) }, icon("x")) : null);
   }
 
   function draw() {
@@ -424,12 +424,12 @@ function didacticsSection(ctx, status) {
             h("div", { class: "name" }, fmtMonth(m)),
             h("div", { class: "sub" }, `${d.events.filter((e) => !e.cancelled).length} sessions${d.hasPdf ? " · PDF attached" : ""}`)),
           h("button", { class: "btn sm", onclick: () => openDidacticsEditor(ctx, m, d, { onSaved: draw }) }, "Edit"),
-          h("button", { class: "iconbtn", "aria-label": `Delete didactics for ${fmtMonth(m)}`, onclick: async () => {
+          h("button", { class: "iconbtn", "aria-label": `Delete didactics for ${fmtMonth(m)}`, onclick: safely(async () => {
             if (!confirm(`Delete the ${fmtMonth(m)} conference schedule?`)) return;
             await api(`/api/didactics/${m}`, { method: "DELETE" });
             await ctx.reload();
             draw();
-          } }, icon("x")));
+          }) }, icon("x")));
       })) : null,
       status && !status.configured?.ai ? h("p", { class: "disclaimer" }, "PDF reading is off: add ANTHROPIC_API_KEY in Netlify to turn it on. Without it, the PDF is still attached for residents and you can type the sessions in.") : null,
     );
@@ -510,8 +510,8 @@ function peopleSection(ctx) {
     const cls = h("select", { class: "input", style: { width: "92px", padding: "6px 8px", fontSize: "14px" }, "aria-label": `Class for ${p.last}` },
       ["CA-1", "CA-2", "CA-3", "PGY-1"].map((c) => h("option", { value: c, selected: p.cls === c ? true : null }, c)));
     cls.value = p.cls || "CA-1";
-    cls.addEventListener("change", async () => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { cls: cls.value } }); toast("Saved"); ctx.reload(); });
-    const hide = h("input", { type: "checkbox", checked: !p.hidden, "aria-label": `Show ${p.last}`, onchange: async (e) => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { hidden: !e.target.checked } }); toast(e.target.checked ? "Shown" : "Hidden"); ctx.reload(); } });
+    cls.addEventListener("change", safely(async () => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { cls: cls.value } }); toast("Saved"); ctx.reload(); }));
+    const hide = h("input", { type: "checkbox", checked: !p.hidden, "aria-label": `Show ${p.last}`, onchange: safely(async (e) => { await api(`/api/people/${p.id}`, { method: "PATCH", body: { hidden: !e.target.checked } }); toast(e.target.checked ? "Shown" : "Hidden"); ctx.reload(); }) });
     const remove = h("button", { class: "iconbtn", "aria-label": `Remove ${p.last} from the app`, title: "Left the program: remove", onclick: async () => {
       if (!confirm(`Remove ${p.preferred || p.first} ${p.last} from the app?\n\nTheir call-sheet rows, planned rotations and phone numbers are deleted. If a file you upload later lists them, they'll be added back.`)) return;
       try { await api(`/api/people/${p.id}`, { method: "DELETE" }); toast(`Removed ${p.last}`); await ctx.reload(); ctx.render(); } catch (err) { toast(err.message); }
@@ -565,12 +565,12 @@ function settingsSection(ctx) {
         const settings = { dayHours: [fromHHMM(start.value), fromHHMM(end.value)], lateEnd: fromHHMM(late.value), codeHours: ch, staffing: rules, fillTags: ft };
         try { await api("/api/settings", { method: "PUT", body: settings }); out.replaceChildren(notice("", "check", "Settings saved.")); await ctx.reload(); } catch (err) { out.replaceChildren(notice("gap", "alert", err.message)); }
       } }, "Save settings"),
-      h("button", { class: "btn", onclick: async () => {
+      h("button", { class: "btn", onclick: safely(async () => {
         if (!confirm("Reset all settings to defaults?")) return;
         await api("/api/settings", { method: "PUT", body: {} });
         await ctx.reload();
         toast("Settings reset");
-      } }, "Reset")),
+      }) }, "Reset")),
     out,
     h("p", { class: "disclaimer" }, `Defaults: regular day ${fmtTime(DEFAULT_SETTINGS.dayHours[0])}–${fmtTime(DEFAULT_SETTINGS.dayHours[1])}, late until ${fmtTime(DEFAULT_SETTINGS.lateEnd)}.`)));
 }
@@ -622,13 +622,13 @@ function backupSection(ctx) {
   return card("Backup", h("div", null,
     h("p", { class: "small muted", style: { marginTop: 0 } }, "Download everything (schedules, daily sheets, directory, settings) as one file, or restore from one. Keep backups private: they contain everyone's schedule."),
     h("div", { class: "btnrow" },
-      h("button", { class: "btn", onclick: async () => {
+      h("button", { class: "btn", onclick: safely(async () => {
         const res = await api("/api/export", { raw: true });
         const url = URL.createObjectURL(await res.blob());
         const a = h("a", { href: url, download: `dmc-schedule-backup-${todayLocal()}.json` });
         document.body.append(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
-      } }, icon("upload"), "Download backup"),
+      }) }, icon("upload"), "Download backup"),
       fileButton("Restore", "refresh", "application/json,.json", async (file) => {
         if (!confirm("Replace everything on the server with this backup?")) return;
         try { await api("/api/import", { method: "POST", body: JSON.parse(await file.text()) }); await ctx.reload(); toast("Restored"); } catch (err) { toast(err.message); }
@@ -671,5 +671,3 @@ export function renderAdmin(ctx, arg) {
   );
   return root;
 }
-
-export { classPill };

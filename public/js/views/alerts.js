@@ -1,5 +1,5 @@
 // More › Alerts: turn on a lock-screen alert for when the next day's OR schedule is posted.
-import { h, icon, notice, openSheet, toast, append } from "../ui.js";
+import { h, icon, notice, openSheet, toast, append, safely } from "../ui.js";
 import { local } from "../api.js";
 import { alertStatus, turnOnAlerts, turnOffAlerts, testAlert } from "../push.js";
 
@@ -44,7 +44,7 @@ export function openAlerts(ctx) {
           } }, icon("bell"), h("span", null, "Send me a test"));
           return btn;
         })(),
-        h("button", { class: "btn", onclick: async () => { await turnOffAlerts(); toast("Alerts are off"); draw(); ctx.render(); } }, icon("x"), h("span", null, "Turn off"))) : null,
+        h("button", { class: "btn", onclick: safely(async () => { await turnOffAlerts(); toast("Alerts are off"); draw(); ctx.render(); }) }, icon("x"), h("span", null, "Turn off"))) : null,
       status === "on" && !ctx.state.me ? h("p", { class: "tiny muted" }, "Pick yourself under More so the alert can say where you are.") : null,
       h("p", { class: "tiny muted", style: { marginBottom: 0 } }, local.get("adminKey")
         ? "On an admin's phone this also covers residents' requests: sick calls right away and one evening summary of swaps and no-call lists. Change it in Admin › Requests."

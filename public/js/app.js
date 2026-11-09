@@ -1,8 +1,8 @@
 // App shell: state, routing, header and tab bar.
-import { h, icon, avatar, toast, append } from "./ui.js";
+import { h, icon, avatar, toast, append, closeSheet } from "./ui.js";
 import { api, local, fetchDataset } from "./api.js";
 import { createModel } from "../core/model.js";
-import { todayLocal, addDays, fmtDate, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
+import { todayLocal, addDays, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
 import { dayGaps } from "../core/gaps.js";
 import { relevantTo } from "../core/didactics.js";
 import { renderToday } from "./views/today.js";
@@ -72,8 +72,10 @@ async function reload({ quiet = false, soft = false } = {}) {
     if (changed || !state.model) {
       state.ds = ds;
       rebuild();
-      // A background refresh repaints the schedule screens, never a form someone is filling in.
-      if (!soft || DATED.has(route().name)) render();
+      // A background refresh repaints the schedule screens, never a form someone is filling in
+      // or a search box someone is typing in.
+      const typing = document.activeElement?.matches?.("input, textarea, select");
+      if (!soft || (DATED.has(route().name) && !typing)) render();
     }
     state.error = null;
     // Admin devices check the requests inbox whenever the app comes back into view.
@@ -82,6 +84,8 @@ async function reload({ quiet = false, soft = false } = {}) {
   } catch (err) {
     if (err.status === 401) {
       local.del("passcode");
+      local.del("adminKey");
+      state.admin = false;
       state.error = "The passcode changed or expired. Enter it again.";
       go("setup");
     } else if (!quiet) toast(navigator.onLine ? err.message : "Offline — showing the last saved schedule");
@@ -203,17 +207,28 @@ export function render() {
   view.replaceChildren(content);
 }
 
-window.addEventListener("hashchange", () => { render(); window.scrollTo({ top: 0 }); });
+// A phone left open past midnight moves on to the new day.
+function rollToNewDay() {
+  const t = todayLocal();
+  if (t === state.today) return;
+  if (state.date === state.today) state.date = t;
+  state.today = t;
+  render();
+}
+
+window.addEventListener("hashchange", () => { closeSheet(); render(); window.scrollTo({ top: 0 }); });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    const t = todayLocal();
-    if (t !== state.today) { if (state.date === state.today) state.date = t; state.today = t; render(); }
-    reload({ quiet: true });
-  }
+  if (document.visibilityState !== "visible") return;
+  rollToNewDay();
+  reload({ quiet: true });
 });
 window.addEventListener("online", () => reload({ quiet: true }));
 // The daily sheet can change through the afternoon: keep an open app current.
-setInterval(() => { if (document.visibilityState === "visible") reload({ quiet: true, soft: true }); }, 2 * 60 * 1000);
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  rollToNewDay();
+  reload({ quiet: true, soft: true });
+}, 2 * 60 * 1000);
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -227,5 +242,3 @@ rebuild();
 render();
 reload({ quiet: !!state.ds });
 if (state.me) retryUpload(state.me);
-
-export { state, fmtDate };

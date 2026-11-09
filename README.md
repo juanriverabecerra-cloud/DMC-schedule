@@ -116,4 +116,5 @@ npm run icons   # regenerate the app icons
 
 - `public/`: the app (no build step). `public/core/` holds the schedule logic shared with the server: day resolution, hours, gaps, swaps and the iCalendar feed.
 - `lib/`: server-only code: the `.xlsx` reader, parsers, storage, auth and the photo reader.
-- `netlify/functions/`: `api.mjs` (all API routes and `/cal/*.ics` feeds), `parse-photo-background.mjs` and `parse-didactics-background.mjs` (photo and PDF reading, up to 15 minutes each).
+- `netlify/functions/`: `api.mjs` (all API routes and `/cal/*.ics` feeds), `parse-photo-background.mjs` and `parse-didactics-background.mjs` (photo and PDF reading, up to 15 minutes each), `daily-sync.mjs` (reads the live sheet every 3 minutes) and `requests-digest.mjs` (the chiefs' evening summary).
+- Shared records (the dataset, swaps, requests, ratings, alert subscriptions) change only through `st.update` or `withDataset`, so two saves at the same moment can't overwrite each other. `test/structure.test.mjs` enforces this, and checks that every import resolves and every module is in the offline list.

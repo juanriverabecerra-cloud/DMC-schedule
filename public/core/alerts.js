@@ -4,13 +4,21 @@ import { addDays, diffDays, dow, fmtDate } from "./dates.js";
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+// "Today", "Tomorrow", "Monday", or "Mon 11/23" further out.
+export function dayName(date, today) {
+  const ahead = diffDays(today, date);
+  if (ahead === 0) return "Today";
+  if (ahead === 1) return "Tomorrow";
+  return ahead > 1 && ahead < 7 ? DAY_NAMES[dow(date)] : fmtDate(date);
+}
+
 export function dayWord(date, today) {
   const ahead = diffDays(today, date);
-  if (ahead === 0) return "Today's";
-  if (ahead === 1) return "Tomorrow's";
-  if (ahead > 1 && ahead < 7) return `${DAY_NAMES[dow(date)]}'s`;
-  return `The ${fmtDate(date)}`;
+  return ahead >= 0 && ahead < 7 ? `${dayName(date, today)}'s` : `The ${dayName(date, today)}`;
 }
+
+// The same inside a sentence: "for tomorrow", "for Monday".
+export const dayInSentence = (date, today) => dayName(date, today).replace(/^(Today|Tomorrow)$/, (m) => m.toLowerCase());
 
 // Alerts go out for today or later, never for a sheet typed in after the fact.
 export const shouldAlert = (date, today) => date >= today && date <= addDays(today, 14);

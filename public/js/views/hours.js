@@ -79,8 +79,8 @@ const signed = (n) => (n > 0 ? `${n} h more` : `${-n} h less`);
 function loggedCard(ctx, pid) {
   const { model, state } = ctx;
   const saved = loggedFor(pid);
-  if (!saved) return askForHours(ctx, pid);
   const actual = actualFor(model, pid);
+  if (!saved || !actual) return askForHours(ctx, pid); // a file with only vacation days has no hours to show
   const today = state.today;
   const ws = startOfWeek(today);
   const from = addDays(ws, -21), to = addDays(ws, 27);
@@ -144,8 +144,14 @@ export function renderHours(ctx, arg) {
   }
   const root = h("div");
   const ws = startOfWeek(state.hoursWeek || state.date);
+  const weekNav = h("div", { class: "card card-pad", style: { display: "flex", alignItems: "center", padding: "6px" } },
+    h("button", { class: "iconbtn", "aria-label": "Previous week", onclick: () => { state.hoursWeek = addDays(ws, -7); ctx.render(); } }, icon("left")),
+    h("div", { style: { flex: 1, textAlign: "center", fontWeight: 700 } }, `Week of ${fmtDate(ws)} – ${fmtDate(addDays(ws, 6))}`),
+    h("button", { class: "iconbtn", "aria-label": "Next week", onclick: () => { state.hoursWeek = addDays(ws, 7); ctx.render(); } }, icon("right")));
   if (!model.hasCall(ws) && !model.hasCall(addDays(ws, 6))) {
-    return emptyState("clock", "No call sheet for this week", "Hours are estimated from the monthly call sheet.");
+    // The arrows stay, or paging past the last call sheet would be a dead end.
+    root.append(weekNav, emptyState("clock", "No call sheet for this week", "Hours are estimated from the monthly call sheet."));
+    return root;
   }
 
   root.append(notice("", "info",
@@ -159,10 +165,6 @@ export function renderHours(ctx, arg) {
     root.append(loggedCard(ctx, state.me));
   }
 
-  const weekNav = h("div", { class: "card card-pad", style: { display: "flex", alignItems: "center", padding: "6px" } },
-    h("button", { class: "iconbtn", "aria-label": "Previous week", onclick: () => { state.hoursWeek = addDays(ws, -7); ctx.render(); } }, icon("left")),
-    h("div", { style: { flex: 1, textAlign: "center", fontWeight: 700 } }, `Week of ${fmtDate(ws)} – ${fmtDate(addDays(ws, 6))}`),
-    h("button", { class: "iconbtn", "aria-label": "Next week", onclick: () => { state.hoursWeek = addDays(ws, 7); ctx.render(); } }, icon("right")));
   root.append(weekNav);
 
   const sortBy = state.hoursSort || "hours";
@@ -188,5 +190,3 @@ export function renderHours(ctx, arg) {
   root.append(h("p", { class: "disclaimer" }, `Weeks run Sunday–Saturday like the call sheet. ${monthKey(ws) !== monthKey(addDays(ws, 6)) ? "This week spans two months; both call sheets are needed for a full count." : ""}`));
   return root;
 }
-
-export { card };

@@ -118,7 +118,7 @@ function noCallCard(ctx, month, items) {
 }
 
 export function renderInbox(ctx) {
-  const { model, state } = ctx;
+  const { model } = ctx;
   loadInbox(ctx);
   const root = h("div");
   root.append(alertSetting(ctx));

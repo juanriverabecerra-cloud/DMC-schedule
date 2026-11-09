@@ -24,7 +24,8 @@ function dailyTotals(entries) {
 }
 
 // Average hours a week over 28 days ending `end`, leaving out days away (as ACGME does).
-function avgEnding(t, end) {
+function avgEnding(t, end, first) {
+  if (addDays(end, -27) < first) return null; // fewer than 4 weeks logged would read falsely low
   let hours = 0, away = 0;
   for (let i = 0; i < 28; i++) {
     const date = addDays(end, -i);
@@ -40,16 +41,17 @@ export function loggedSummary(entries, today) {
   const dates = (entries || []).map((e) => e.date).sort();
   if (!dates.length) return null;
   const t = dailyTotals(entries);
+  const first = dates[0];
   const through = dates[dates.length - 1];
   const end = through < today ? through : today;
   const yearStart = `${academicYearOf(today)}-07-01`;
   let peak = null, peakEnd = null;
   for (let d = addDays(yearStart, 27); d <= end; d = addDays(d, 1)) {
-    const a = avgEnding(t, d);
+    const a = avgEnding(t, d, first);
     if (a !== null && (peak === null || a > peak)) { peak = a; peakEnd = d; }
   }
   const logged = [...t.work.keys()].filter((d) => d >= yearStart).length;
-  return { avg4: avgEnding(t, end), end, through, stale: diffDays(through, today) > 14, peak, peakEnd, daysThisYear: logged };
+  return { avg4: avgEnding(t, end, first), end, through, stale: diffDays(through, today) > 14, peak, peakEnd, daysThisYear: logged };
 }
 
 // Average a week over a period, from logged hours only.

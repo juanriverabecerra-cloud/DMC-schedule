@@ -1,8 +1,8 @@
 // Pieces shared by several screens: OR assignment details, the day sheet, upcoming events,
 // and the calendar subscription card.
 import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons } from "../ui.js";
-import { fmtDate, fmtRange, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT } from "../../core/dates.js";
-import { headline, siteName } from "../../core/model.js";
+import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT } from "../../core/dates.js";
+import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
@@ -211,7 +211,7 @@ export function openDaySheet(ctx, pid, date) {
     holder.append(btn);
     // Your own shift: post it for your class, and the app writes the email once someone agrees.
     if (pid === ctx.state.me && date >= ctx.state.today && ["CA-1", "CA-2", "CA-3"].includes(model.person(pid)?.cls)) {
-      holder.append(h("button", { class: "btn primary block", style: { marginTop: "8px" }, onclick: () => { document.querySelector(".sheet .iconbtn")?.click(); ctx.go(`swaps/new/${date}`); } }, icon("swap"), "Ask for a swap"));
+      holder.append(h("button", { class: "btn primary block", style: { marginTop: "8px" }, onclick: () => ctx.go(`swaps/new/${date}`) }, icon("swap"), "Ask for a swap"));
     }
     body.append(holder);
   }
@@ -253,5 +253,3 @@ export function subscribeCard(ctx, pid) {
     toggle,
     holder));
 }
-
-export { fmtRange, siteName };

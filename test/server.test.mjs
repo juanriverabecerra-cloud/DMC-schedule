@@ -398,3 +398,213 @@ test("the live sheet: updates quietly, alerts once when settled, then only the p
   pa.close(); pb.close();
   await sync.disconnect(st);
 });
+
+test("the still-being-finalized label clears by itself, and phones find out", async () => {
+  const st = openStore();
+  const sync = await import("../lib/daily-sync.js");
+  const person = { id: "a", last: "ResA", first: "Test", preferred: "Test", cls: "CA-1", canonical: "ResA, Test", aliases: [] };
+  const months = { "2026-03": { rows: { a: { rotation: "Basic Anesthesia", days: {} } }, days: 31 } };
+  const reset = async () => {
+    await st.setJSON("dataset", { people: [person], months, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+    await st.delete("daily-sync");
+  };
+  await reset();
+  await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
+  const phone = await fakePhone();
+  await st.setJSON("push/subs", { a: { ...phone.sub, pid: "a" } });
+  const full = [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "X"], ["3", "Lee", "", "M", "Y"]];
+  let bytes = await fakeWorkbook("2026-03-11", full);
+  const run = async (now) => { await new Promise((r) => setTimeout(r, 2)); return sync.syncDaily(st, { now, fetchBytes: async () => bytes }); };
+  const ds = () => st.getJSON("dataset");
+  const draft = async () => (await ds()).daily["2026-03-11"].draft;
+
+  // First seen at 9:28p: 45 quiet minutes lands after the 10p cutoff.
+  const night = (mins) => new Date(Date.parse("2026-03-11T01:28:00Z") + mins * 60000);
+  await run(night(0));
+  const first = (await ds()).updatedAt;
+  await run(night(30));
+  assert.equal(await draft(), true);
+  await run(night(47));
+  assert.equal(await draft(), false);
+  assert.notEqual((await ds()).updatedAt, first); // otherwise phones keep getting "not modified"
+  // A late edit brings the label back until the sheet is quiet again.
+  bytes = await fakeWorkbook("2026-03-11", [...full.slice(0, 2), ["3", "Lee", "", "Other", "Y"]]);
+  await run(night(50));
+  assert.equal(await draft(), true);
+  await run(night(80));
+  assert.equal(await draft(), true);
+  await run(night(96));
+  assert.equal(await draft(), false);
+  assert.equal(phone.received.length, 0); // none of this buzzes anyone
+
+  // Too many empty rooms: not settled, however quiet it is.
+  await reset();
+  bytes = await fakeWorkbook("2026-03-11", [full[0], ["2", "Jones", "", "M", ""], ["3", "Lee", "", "M", ""]]);
+  await run(night(0));
+  await run(night(60));
+  assert.equal(await draft(), true);
+
+  // Quiet in the morning isn't final. The 2p alert is what ends the draft, and phones hear of it.
+  await reset();
+  bytes = await fakeWorkbook("2026-03-11", full);
+  const day = (h) => new Date(Date.parse("2026-03-10T00:00:00Z") + (h + 4) * 3600000);
+  await run(day(9));
+  await run(day(11));
+  assert.equal(await draft(), true);
+  const before = (await ds()).updatedAt;
+  await run(day(14));
+  assert.equal(phone.received.length, 1);
+  assert.equal(await draft(), false);
+  assert.notEqual((await ds()).updatedAt, before);
+  phone.close();
+  await sync.disconnect(st);
+});
+
+test("saves at the same moment don't overwrite each other", async () => {
+  const st = openStore();
+  await st.delete("race");
+  await Promise.all(Array.from({ length: 25 }, (_, i) => st.update("race", (v) => ({ ...(v || {}), [i]: true }))));
+  assert.equal(Object.keys(await st.getJSON("race")).length, 25);
+  await st.delete("race");
+
+  const { withDataset, NO_CHANGE } = await import("../lib/dataset.js");
+  const before = await st.getJSON("dataset");
+  await st.delete("dataset");
+  await Promise.all(Array.from({ length: 10 }, (_, i) => withDataset(st, (d) => { d.fairness[`k${i}`] = i; })));
+  assert.equal(Object.keys((await st.getJSON("dataset")).fairness).length, 10);
+  const stamp = (await st.getJSON("dataset")).updatedAt;
+  await withDataset(st, () => NO_CHANGE);
+  assert.equal((await st.getJSON("dataset")).updatedAt, stamp);
+  if (before) await st.setJSON("dataset", before);
+});
+
+test("the Netlify save retries when someone else got there first, and gives up cleanly", async () => {
+  const { updateRecord } = await import("../lib/store.js");
+  let stored = { n: 1 }, tries = 0;
+  const flaky = {
+    read: async () => ({ value: structuredClone(stored) }),
+    write: async (next) => { tries++; if (tries < 3) { stored = { n: stored.n + 10 }; return false; } stored = next; return true; },
+  };
+  const saved = await updateRecord(flaky, (v) => ({ n: v.n + 1 }));
+  assert.equal(saved.n, 22); // built on the newest value, not the first one read
+  await assert.rejects(updateRecord({ read: async () => null, write: async () => false }, () => ({})), /Too many saves/);
+  assert.deepEqual(await updateRecord({ read: async () => ({ value: { a: 1 } }), write: async () => { throw new Error("must not write"); } }, () => undefined), { a: 1 });
+});
+
+test("a Netlify save only lands on the exact version it read", async () => {
+  const { blobRecord, updateRecord } = await import("../lib/store.js");
+  let version = 1, value = { n: 1 };
+  const sent = [];
+  const blobs = {
+    getWithMetadata: async () => ({ data: structuredClone(value), etag: `v${version}` }),
+    setJSON: async (key, next, options) => {
+      sent.push(options);
+      if (options.onlyIfMatch !== `v${version}`) return { modified: false };
+      value = next; version++;
+      return { modified: true };
+    },
+  };
+  let first = true;
+  await updateRecord(blobRecord(blobs, "k"), (v) => {
+    if (first) { first = false; value = { n: 100 }; version++; } // someone else saves right after our read
+    return { n: v.n + 1 };
+  });
+  assert.deepEqual(sent, [{ onlyIfMatch: "v1" }, { onlyIfMatch: "v2" }]);
+  assert.equal(value.n, 101);
+  const empty = { getWithMetadata: async () => null, setJSON: async (key, next, options) => ({ modified: !!options.onlyIfNew }) };
+  assert.deepEqual(await updateRecord(blobRecord(empty, "k"), () => ({ made: true })), { made: true });
+});
+
+test("only one run works on the live sheet at a time", async () => {
+  const st = openStore();
+  const { withSyncLock } = await import("../lib/daily-sync.js");
+  await st.delete("daily-sync-lock");
+  let release;
+  const first = withSyncLock(st, () => new Promise((r) => { release = r; }));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(await withSyncLock(st, () => "second"), null);
+  release("first");
+  assert.equal(await first, "first");
+  assert.equal(await withSyncLock(st, () => "third"), "third"); // released, even for the next one
+  await assert.rejects(withSyncLock(st, () => { throw new Error("boom"); }), /boom/);
+  assert.equal(await withSyncLock(st, () => "after a crash"), "after a crash");
+});
+
+test("a sheet's time reads properly however the cell is formatted", async () => {
+  const { parseDailyWorkbook } = await import("../lib/daily-sheet.js");
+  const cells = { "1,1": { text: "3/11/26", value: "3/11/26" }, "2,1": { text: "OR" }, "2,2": { text: "Surgeon" }, "2,3": { text: "Time" }, "2,6": { text: "Resident/CRNA" },
+    "3,1": { text: "1" }, "3,2": { text: "Smith" }, "3,3": { text: ":01", value: new Date(Date.UTC(1899, 11, 30, 7, 30)) }, "3,6": { text: "Doe" } };
+  const sheet = { name: "OR Schedule", maxRow: 3, maxCol: 6, get: (r, c) => cells[`${r},${c}`] || null, text: (r, c) => cells[`${r},${c}`]?.text ?? "" };
+  assert.equal(parseDailyWorkbook({ sheets: [sheet] }).rooms[0].time, "7:30");
+});
+
+test("swaps: an agreed swap can't be accepted again, and nobody can replace someone's offer", async () => {
+  const st = openStore();
+  const person = (id, last) => ({ id, last, first: "T", preferred: "T", cls: "CA-1", canonical: `${last}, T`, aliases: [] });
+  const date = addDays(todayLocal(), 3);
+  const [y, m, d] = date.split("-");
+  const row = (t) => ({ rotation: "Basic Anesthesia", days: { [Number(d)]: { t } } });
+  await st.setJSON("dataset", { people: [person("a", "Ana"), person("b", "Bea"), person("c", "Cal")], months: { [`${y}-${m}`]: { rows: { a: row("H2"), b: row(""), c: row("") }, days: 31 } }, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("swaps");
+  const keyA = "a".repeat(20), keyB = "b".repeat(20), keyOther = "z".repeat(20);
+  const asked = await call("POST", "/api/swaps", { pid: "a", key: keyA, date }, viewer);
+  assert.equal(asked.status, 200);
+  const url = `/api/swaps/${asked.body.swap.id}`;
+  assert.equal((await call("POST", url, { action: "offer", pid: "b", key: keyB }, viewer)).status, 200);
+  assert.equal((await call("POST", url, { action: "offer", pid: "b", key: keyOther }, viewer)).status, 403);
+  assert.equal((await call("POST", url, { action: "offer", pid: "c", key: keyOther }, viewer)).status, 200);
+  assert.equal((await call("POST", url, { action: "accept", offerPid: "b", key: keyA }, viewer)).status, 200);
+  assert.equal((await call("POST", url, { action: "accept", offerPid: "c", key: keyA }, viewer)).status, 409);
+});
+
+test("bad input gets a clear answer, and deleting a sheet removes its photo", async () => {
+  const st = openStore();
+  const res = await api(new Request("http://localhost/api/survey", { method: "PUT", headers: { "content-type": "application/json", ...viewer }, body: "{not json" }));
+  assert.equal(res.status, 400);
+  assert.equal((await call("POST", "/api/import", { people: [{ id: "x" }], months: {} }, admin)).status, 400);
+  await st.setJSON("dataset", { people: [], months: {}, daily: { "2026-03-20": { date: "2026-03-20", rooms: [] } }, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.setBytes("photo/2026-03-20", new Uint8Array([1, 2, 3]), "image/jpeg");
+  assert.equal((await call("DELETE", "/api/daily/2026-03-20", undefined, admin)).status, 200);
+  assert.equal(await st.getBytes("photo/2026-03-20"), null);
+});
+
+test("saves stay safe on the real Netlify storage client, not just the local folder", async () => {
+  const { BlobsServer } = await import("@netlify/blobs/server");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dmc-blobs-"));
+  const token = "test-token", siteID = "test-site";
+  const server = new BlobsServer({ directory: dir, token, port: 0 });
+  const { port } = await server.start();
+  const url = `http://localhost:${port}`;
+  const local = process.env.DMC_LOCAL_STORE;
+  delete process.env.DMC_LOCAL_STORE;
+  process.env.NETLIFY_BLOBS_CONTEXT = Buffer.from(JSON.stringify({ edgeURL: url, uncachedEdgeURL: url, siteID, token })).toString("base64");
+  try {
+    const st = openStore();
+    // Someone else creates the record between our read and our write. Our save must be turned
+    // away and redone on top of theirs, never lost. (Netlify's local stand-in gives no version
+    // tag on reads, so overwriting an existing record is checked just below, with a fake one.)
+    const rivalSaves = (key, rival) => {
+      let first = true;
+      return async (value) => {
+        if (first) {
+          first = false;
+          await new Promise((r) => setTimeout(r, 15));
+          await st.setJSON(key, rival);
+          await new Promise((r) => setTimeout(r, 15));
+        }
+        return { list: [...(value?.list || []), "mine"] };
+      };
+    };
+    assert.equal(await st.getJSON("swaps"), null);
+    await st.update("swaps", rivalSaves("swaps", { list: ["theirs"] }));
+    assert.deepEqual((await st.getJSON("swaps")).list, ["theirs", "mine"]);
+    assert.deepEqual(await st.update("swaps", () => undefined), await st.getJSON("swaps"));
+    const { withSyncLock } = await import("../lib/daily-sync.js");
+    assert.equal(await withSyncLock(st, () => "ran"), "ran");
+    assert.equal(await st.getJSON("daily-sync-lock"), null);
+  } finally {
+    process.env.DMC_LOCAL_STORE = local;
+    delete process.env.NETLIFY_BLOBS_CONTEXT;
+    await server.stop();
+  }
+});

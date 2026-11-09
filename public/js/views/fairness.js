@@ -8,7 +8,7 @@ import {
   WEIGHT_ROWS, DEFAULT_WEIGHTS, NO_CALL_GROUPS, academicMonths, academicYears, yearLabel, yearRange, yearsSummary, samePointLastYear, fairnessReport, weightsOf, columnCount,
   coverOptions, suggestMoves, serviceCoverage, serviceList, shortOn, limitsReport, rotationBalance, insights,
 } from "../../core/fairness.js";
-import { SURVEY_ROWS, ANCHOR_VALUE, MIN_RATINGS } from "../../core/survey.js";
+import { SURVEY_ROWS, SCALE, MIN_RATINGS } from "../../core/survey.js";
 import { loggedPerWeek } from "../../core/chief.js";
 import { burnoutCard, planCard, sharedHoursCard, rotationHoursCard, loadShared, sharedHours, watchFor } from "./chief.js";
 
@@ -192,14 +192,14 @@ function surveyCard(ctx) {
     const classes = Object.entries(res.byClass).sort().map(([c, n]) => `${c}: ${n}`).join(", ");
     const adopt = () => {
       if (!confirm(`Replace the points with what ${res.count} residents said? You can change them or reset afterward.`)) return;
-      const weights = { ...W, sat24: ANCHOR_VALUE };
+      const weights = { ...W };
       for (const [key] of rows) weights[key] = res.shifts[key].median;
       saveFairness(ctx, { weights }, "Points updated from the residents' ratings");
     };
     body.replaceChildren();
     append(body, [
       h("p", { class: "small muted", style: { marginTop: 0 } }, res.count
-        ? `${res.count} resident${res.count === 1 ? "" : "s"} rated the shifts (${classes}), with a regular day at 0 and a Saturday 24 at ${ANCHOR_VALUE}. Middle answer shown; individual answers are never shown.`
+        ? `${res.count} resident${res.count === 1 ? "" : "s"} rated the shifts (${classes}), with a regular day at 0 and the worst shift imaginable at ${SCALE.max}. Middle answer shown; individual answers are never shown.`
         : "No ratings yet. Residents rate the shifts in More › Rate the shifts, and their combined answers show up here."),
       res.count && !rows.length ? h("p", { class: "tiny muted" }, `A shift's numbers appear once ${MIN_RATINGS} residents have rated it, so nobody's own answer is ever shown.`) : null,
       rows.length ? h("div", { class: "scrollx" }, h("table", { class: "fair plain" },
