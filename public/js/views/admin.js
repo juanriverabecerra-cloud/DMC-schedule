@@ -607,6 +607,7 @@ function liveSheetCard(ctx) {
       s.held ? notice("warn", "info", h("b", null, "Latest version not shown. "), s.held) : null,
       h("dl", { class: "kv" },
         h("dt", null, "Sheet date"), h("dd", null, s.date ? fmtDate(s.date) : "—"),
+        h("dt", null, "Rooms read"), h("dd", null, s.rooms == null ? "—" : `${s.rooms} with cases`),
         h("dt", null, "Last checked"), h("dd", null, stamp(s.checkedAt)),
         h("dt", null, "Last change"), h("dd", null, stamp(s.changedAt)),
         h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles")),

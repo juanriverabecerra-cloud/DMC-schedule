@@ -634,3 +634,55 @@ test("no-call lists stay for the scorecard, and a list sent after the call sheet
   assert.equal((await call("DELETE", "/api/people/a", undefined, admin)).status, 200);
   assert.equal((await call("GET", "/api/requests/no-call-history", undefined, admin)).body.history[month].a, undefined);
 });
+
+test("a role word in a room, like PAT giving breaks, doesn't end the room table", async () => {
+  const { parseDailyWorkbook } = await import("../lib/daily-sheet.js");
+  const cells = {};
+  const put = (r, c, text) => { cells[`${r},${c}`] = { text, value: text }; };
+  put(1, 1, "3/11/26");
+  ["OR", "Surgeon", "Time", "# of cases", "MDA", "Resident/CRNA", "JA", "Breaks"].forEach((t, i) => put(2, i + 1, t));
+  [["1", "Smith", "ResA", "PAT"], ["2", "Jones", "ResB", ""], ["3", "Lee", "OB", ""], ["4", "Park", "X", "ResC"]].forEach(([or, surgeon, staff, breaks], i) => {
+    put(4 + i, 1, or); put(4 + i, 2, surgeon); put(4 + i, 6, staff);
+    if (breaks) put(4 + i, 8, breaks);
+  });
+  put(10, 5, "MDA"); put(10, 7, "PAT");
+  put(11, 1, "OPSC (6)"); put(11, 7, "ResD");
+  const sheet = { name: "OR Schedule Assignments", maxRow: 11, maxCol: 8, get: (r, c) => cells[`${r},${c}`] || null, text: (r, c) => cells[`${r},${c}`]?.text ?? "" };
+  const p = parseDailyWorkbook({ sheets: [sheet] });
+  assert.deepEqual(p.rooms.map((r) => r.or), ["1", "2", "3", "4"]);
+  assert.equal(p.rooms[0].breaks, "PAT");
+  assert.equal(p.rooms[2].staff, "OB");
+  assert.deepEqual(p.pat, ["ResD"]);
+  assert.equal(p.opsc.rooms, "6");
+});
+
+test("a day first saved from the photo switches to the live sheet without alerting anyone", async () => {
+  const st = openStore();
+  const sync = await import("../lib/daily-sync.js");
+  const person = (id) => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Test", cls: "CA-1", canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  const rows = { a: { rotation: "Basic Anesthesia", days: {} }, b: { rotation: "Basic Anesthesia", days: {} } };
+  await st.setJSON("dataset", { people: ["a", "b"].map(person), months: { "2026-03": { rows, days: 31 } }, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("daily-sync");
+  const pa = await fakePhone(), pb = await fakePhone();
+  await st.setJSON("push/subs", { a: { ...pa.sub, pid: "a" }, b: { ...pb.sub, pid: "b" } });
+  // 5p on Mar 10: the photo is saved for Mar 11, and everyone hears once.
+  const photo = { rooms: [{ or: "1", surgeon: "Smyth", staff: "ResA" }, { or: "2", surgeon: "Jones", staff: "ResB" }, { or: "3", surgeon: "Lee", staff: "X" }] };
+  const { markAnnounced, readState, saveState } = sync;
+  const { withDataset, setDaily } = await import("../lib/dataset.js");
+  const state = await readState(st);
+  await withDataset(st, (d) => { setDaily(d, "2026-03-11", { ...photo, source: "photo" }); markAnnounced(state, d, "2026-03-11", new Date("2026-03-10T21:00:00Z")); });
+  await saveState(st, state);
+  // The workbook now reads properly: same rooms, the surgeon spelled right.
+  await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
+  const bytes = await fakeWorkbook("2026-03-11", [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]]);
+  const at = (mins) => new Date(Date.parse("2026-03-10T21:30:00Z") + mins * 60000);
+  for (const m of [0, 40, 80]) await sync.syncDaily(st, { now: at(m), fetchBytes: async () => bytes });
+  const saved = (await st.getJSON("dataset")).daily["2026-03-11"];
+  assert.equal(saved.source, "sheet");
+  assert.equal(saved.rooms[0].surgeon, "Smith");
+  assert.equal(saved.draft, false);
+  assert.equal(pa.received.length + pb.received.length, 0); // no "your assignment changed" for a spelling fix
+  assert.equal((await readState(st)).rooms, 3);
+  pa.close(); pb.close();
+  await sync.disconnect(st);
+});
