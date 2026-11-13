@@ -346,6 +346,7 @@ test("the live sheet: updates quietly, alerts once when settled, then only the p
   assert.equal(pb.received.length, 1);
   assert.equal(pa.open(pa.received[0].body).title, "Tomorrow's OR schedule is posted");
   assert.equal((await daily()).draft, false);
+  assert.deepEqual((await call("GET", "/api/daily-source", undefined, admin)).body.reach, { phones: 2, sent: 2 }); // how far it got
   await run(120);
   assert.equal(pa.received.length, 1); // never twice
   // A correction after the alert: only the resident it moved hears, and once.

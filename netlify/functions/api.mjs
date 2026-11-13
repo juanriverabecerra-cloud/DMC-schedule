@@ -8,7 +8,7 @@ import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal, addDays } from "../../public/core/dates.js";
 import { shiftBlock } from "../../public/core/requests.js";
-import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock } from "../../lib/daily-sync.js";
+import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock, phoneCount, noteReach } from "../../lib/daily-sync.js";
 import { readXlsx } from "../../lib/xlsx.js";
 import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
 import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick, keepNoCallList, noCallHistory, forgetNoCallLists } from "../../lib/reqlog.js";
@@ -385,7 +385,12 @@ export default async function handler(req) {
         if (willSend) await saveState(st, sync);
         return { ds: stored, send: willSend, saved: result.daily, changes: result.changes };
       }, { wait: true });
-      const alerted = send ? await alertDaily(st, ds, date, origin(req)) : 0;
+      let alerted = 0;
+      if (send) {
+        const phones = await phoneCount(st);
+        alerted = await alertDaily(st, ds, date, origin(req));
+        await noteReach(st, date, { phones, sent: alerted });
+      }
       return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt, alerted });
     }
     if (daily && method === "DELETE") {

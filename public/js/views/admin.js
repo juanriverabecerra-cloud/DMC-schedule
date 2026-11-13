@@ -575,6 +575,10 @@ function settingsSection(ctx) {
     h("p", { class: "disclaimer" }, `Defaults: regular day ${fmtTime(DEFAULT_SETTINGS.dayHours[0])}–${fmtTime(DEFAULT_SETTINGS.dayHours[1])}, late until ${fmtTime(DEFAULT_SETTINGS.lateEnd)}.`)));
 }
 
+// How far the day's alert got. Fewer delivered than phones means some turned alerts off or were reset.
+const reachText = ({ phones, sent }) => (!phones ? "No phone has alerts turned on"
+  : `${sent} of ${phones} ${phones === 1 ? "phone" : "phones"}${sent < phones ? ". The rest were turned off or reset; they can turn alerts on again in More › Alerts" : ""}`);
+
 // The board runner's live workbook. The link goes to the server and never comes back: this
 // screen only ever shows whether it's connected and how it's doing.
 function liveSheetCard(ctx) {
@@ -610,7 +614,8 @@ function liveSheetCard(ctx) {
         h("dt", null, "Rooms read"), h("dd", null, s.rooms == null ? "—" : `${s.rooms} with cases`),
         h("dt", null, "Last checked"), h("dd", null, stamp(s.checkedAt)),
         h("dt", null, "Last change"), h("dd", null, stamp(s.changedAt)),
-        h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles")),
+        h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles"),
+        s.alertedAt && s.reach ? [h("dt", null, "Reached"), h("dd", null, reachText(s.reach))] : null),
       h("p", { class: "tiny muted" }, "Every change shows in the app within a few minutes, marked as still being finalized. Phones get one alert, after 2p, once the sheet has sat unchanged for 45 minutes with every room staffed. After that, only residents whose own assignment changed hear about it, once."),
       h("div", { class: "btnrow" }, check, s.alertedAt ? null : alertBtn, off),
     ]);
