@@ -3,7 +3,9 @@
 //   { month, events: [...], zoom: [...], location, notes: [], hasPdf }
 // and each event names its people with a role, so the app can tell residents what is theirs.
 // Shared by the app, the admin editor and the calendar feed.
-import { addDays, monthKey, dow } from "./dates.js";
+import { addDays, monthKey, dow, fmtTime } from "./dates.js";
+import { CALL_CODES, FRIDAY_24 } from "./codes.js";
+
 
 export const KINDS = {
   pbld: { label: "PBLD", long: "Problem-based learning discussion" },
@@ -194,21 +196,41 @@ export function createDidactics(ds, model) {
     return between(date, addDays(date, days)).filter((e) => !e.cancelled && (e.date > date || (e.end ?? 1440) > nowMin));
   }
 
-  // Why someone might not make a session, from their schedule that day.
-  function conflict(pid, date, start = 360) {
+  // Where someone is when a session starts, from their own shifts (hours in codes.js), or null
+  // when they're simply there. `excused`: not expected at all. `away`: at another site, so Zoom is
+  // how they'd join.
+  //   - Coming off an overnight shift (night float or 24-hr call, both end at 6a): still in the
+  //     building for a session before 7a, so they come; gone home to sleep for anything later.
+  //   - On night float tonight: resting for it, so nothing that day.
+  //   - From 3p on, anyone still on call, on the late shift or on the CA-3 10a–7p is working
+  //     through it.
+  function where(pid, date, start = 360) {
     const d = model.day(pid, date);
-    if (d.status === "vacation") return "You're on vacation that day";
-    if (d.status === "postcall") return "You're post-call that day";
-    if (d.status === "off" && !d.weekend) return "You're off that day";
-    if (start < 720 && model.day(pid, addDays(date, -1)).call === "NF") return "You're coming off night float that morning";
-    if (start >= 1080 && d.call === "NF") return "You're on night float that evening";
-    if (d.status === "work" && AWAY[d.site]) return `You're at ${AWAY[d.site]} that day; join by Zoom if you can`;
+    const before = model.day(pid, addDays(date, -1));
+    const overnight = before.call === "NF" ? "night float" : before.call === "H1" || before.call === "24" ? "24-hr call" : "";
+    if (d.status === "vacation") return { text: "You're on vacation that day", excused: true };
+    if (overnight && start < 420) return null;
+    if (d.call === "NF") return { text: "You're on night float that night", excused: true };
+    if (d.status === "postcall") return { text: "You're post-call that day", excused: true };
+    if (overnight) return { text: `You're off ${overnight} that morning`, excused: true };
+    if ((d.status === "off" || d.status === "holiday") && !d.weekend) return { text: "You're off that day", excused: true };
+    const shift = d.call === "24" ? FRIDAY_24 : CALL_CODES[d.call];
+    const lateEnd = model.S?.lateEnd ?? 1080;
+    const until = Math.max(shift?.end ?? 0, d.late ? lateEnd : 0);
+    if (start >= 900 && until > start) {
+      const text = shift?.kind === "call24" ? "You're on 24-hr call then"
+        : shift ? `You're on ${shift.label.replace(/^CA-3 /, "the ")} then` : `You're the late resident until ${fmtTime(lateEnd)}`;
+      return { text, excused: true };
+    }
+    if (d.status === "work" && AWAY[d.site]) return { text: `You're at ${AWAY[d.site]} that day; join by Zoom if you can`, excused: false, away: AWAY[d.site] };
     return null;
   }
+  const conflict = (pid, date, start) => where(pid, date, start)?.text || null;
+  const excused = (pid, date, start) => !!where(pid, date, start)?.excused;
 
   return {
     months, has: months.length > 0, raw: store,
-    month: monthEvents, all, between, on, forPerson, upcoming, conflict,
+    month: monthEvents, all, between, on, forPerson, upcoming, conflict, excused, where,
     zoom: (month) => store[month]?.zoom || [],
     info: (month) => store[month] || null,
   };

@@ -575,9 +575,13 @@ function settingsSection(ctx) {
     h("p", { class: "disclaimer" }, `Defaults: regular day ${fmtTime(DEFAULT_SETTINGS.dayHours[0])}–${fmtTime(DEFAULT_SETTINGS.dayHours[1])}, late until ${fmtTime(DEFAULT_SETTINGS.lateEnd)}.`)));
 }
 
-// How far the day's alert got. Fewer delivered than phones means some turned alerts off or were reset.
-const reachText = ({ phones, sent }) => (!phones ? "No phone has alerts turned on"
-  : `${sent} of ${phones} ${phones === 1 ? "phone" : "phones"}${sent < phones ? ". The rest were turned off or reset; they can turn alerts on again in More › Alerts" : ""}`);
+// How far the day's alert got. Fewer delivered than phones means some turned alerts off or were
+// reset. Skipped phones belong to people the sheet doesn't concern that day.
+const reachText = ({ phones, sent, skipped = 0 }) => {
+  const skip = skipped ? `${skipped} skipped: off, on vacation, post-call, on nights or at another hospital` : "";
+  if (!phones) return skip ? `No one else needed it (${skip})` : "No phone has alerts turned on";
+  return `${sent} of ${phones} ${phones === 1 ? "phone" : "phones"}${sent < phones ? ". The rest were turned off or reset; they can turn alerts on again in More › Alerts" : ""}${skip ? `. ${skip}` : ""}`;
+};
 
 // The board runner's live workbook. The link goes to the server and never comes back: this
 // screen only ever shows whether it's connected and how it's doing.
@@ -649,7 +653,7 @@ export function renderAdmin(ctx, arg) {
   const tab = local.get("adminTab", "uploads");
   loadInbox(ctx);
   const waiting = inboxCounts(ctx.state.today).open;
-  root.append(h("div", { style: { marginBottom: "12px" } }, segmented([["uploads", "Uploads"], ["fairness", "Fairness"], ["requests", waiting ? `Requests · ${waiting}` : "Requests"]], tab, (v) => { local.set("adminTab", v); ctx.render(); })));
+  root.append(h("div", { class: "span-all", style: { marginBottom: "12px" } }, segmented([["uploads", "Uploads"], ["fairness", "Fairness"], ["requests", waiting ? `Requests · ${waiting}` : "Requests"]], tab, (v) => { local.set("adminTab", v); ctx.render(); })));
   if (tab === "fairness") { root.append(renderFairness(ctx)); return root; }
   if (tab === "requests") { root.append(renderInbox(ctx)); return root; }
   const statusHolder = h("div");

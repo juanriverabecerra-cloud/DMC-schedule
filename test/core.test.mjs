@@ -187,9 +187,9 @@ New, Intern | Pager 80001 | PGY-1
 Nobody, Here | 313-555-0199
 ## Anesthesiologists — Harper
 Smith, Alex | Cisco 313-555-0201 | Cell 248-555-0202
-Patel, Raj | Cisco 313-555-0203
+Vance, Raj | Cisco 313-555-0203
 ## Anesthesiologists — Sinai-Grace
-Patel, Mira | Cisco 313-555-0204
+Vance, Mira | Cisco 313-555-0204
 ## Harper OR rooms
 OR 5 | Ext 51234
 OR 18 | Ext 31234
@@ -214,8 +214,8 @@ test("directory: parsing, extensions, rooms, residents and attendings", () => {
   assert.equal(dir.dial(dir.room(5).numbers[0]), "3135551234");
   assert.equal(dir.dial(dir.room(18).numbers[0]), null); // no rule for 3xxxx
   assert.equal(dir.dial(dir.opscRoom(2).numbers[0]), "3135550300"); // 7 digits get 313
-  assert.equal(dir.staff("Patel").name, "Patel, Raj"); // the Harper list wins on a Harper sheet
-  assert.equal(dir.staff("Patel", { site: "sinai" }).name, "Patel, Mira");
+  assert.equal(dir.staff("Vance").name, "Vance, Raj"); // the Harper list wins on a Harper sheet
+  assert.equal(dir.staff("Vance", { site: "sinai" }).name, "Vance, Mira");
   assert.equal(dir.staff("Smyth").name, "Smith, Alex");
   assert.equal(dialDigits({ kind: "pager", value: "9999" }, built.dialing), null);
   assert.deepEqual(dir.search("board").map((c) => c.name), ["Resident board runner"]);
@@ -419,7 +419,7 @@ Sam | Cisco 313-555-0302
 ## Pharmacy
 Pharmacy OR | Ext 30002 | Open 6a to 2:15p
 ## Harper units
-2 Webber North | 313-555-0303 | Rooms 2201-2220`;
+2 Maple North | 313-555-0303 | Rooms 2201-2220`;
   const built = buildDirectory(parseDirectoryText(text), people);
   const m = createModel({ ...dataset(), directory: built });
   assert.deepEqual(m.dir.techs().map((t) => t.name), ["Alex", "Sam"]);
@@ -427,7 +427,7 @@ Pharmacy OR | Ext 30002 | Open 6a to 2:15p
   assert.equal(m.dir.dial(m.dir.room("17").numbers[0]), "3139930001");
   const pharmacy = m.dir.place(/^pharmacy or/i);
   assert.deepEqual(pharmacy.notes, ["Open 6a to 2:15p"]);
-  assert.deepEqual(m.dir.place(/^2 webber/i).notes, ["Rooms 2201-2220"]); // a room range is a note, not a number
+  assert.deepEqual(m.dir.place(/^2 maple/i).notes, ["Rooms 2201-2220"]); // a room range is a note, not a number
 });
 
 const DIDACTICS = {
@@ -809,7 +809,7 @@ test("the alert says which day and where you are", async () => {
   const m = createModel(ds);
   const a = dailyAlert(m, "2026-11-02", "a", "2026-11-01");
   assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Surgeon.", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
-  assert.equal(dailyAlert(m, "2026-11-02", "b", "2026-11-01").body, "You're on Night float.".replace("Night float", m.day("b", "2026-11-02").label));
+  assert.equal(dailyAlert(m, "2026-11-02", "b", "2026-11-01"), null); // on night float: the day's rooms aren't theirs
   assert.equal(dailyAlert(m, "2026-11-02", null, "2026-11-01").body, "Tap to see the rooms and who's where.");
 });
 
@@ -1050,4 +1050,106 @@ test("no-call scorecard: honored, missed, not counted and waiting", async () => 
   assert.equal(c.cls, "CA-1");
   assert.deepEqual(c.rows.map((r) => [r.pid, r.honored, r.missed, r.excluded, r.waiting, r.rate]), [["a", 1, 1, 1, 0, 50], ["b", 2, 0, 0, 1, 100]]);
   assert.equal(c.rate, 75);
+});
+
+// ---- screens that keep part of themselves for the phone ----
+import { screenLayout } from "../public/core/screen.js";
+
+test("a strip down one side takes the tabs, clear of the phone's own things", () => {
+  const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
+  // A folded iPhone Duo held upright: 85 down the right, with the camera and clock at the top.
+  assert.deepEqual(screenLayout({ width: 466, height: 678, insets: { right: 85 }, regions: [taken(381, 0, 85, 153)] }),
+    { strip: "right", stripTop: 153, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0 });
+  // In a browser the phone says nothing about what's in the strip; the tabs still go there.
+  assert.equal(screenLayout({ width: 466, height: 678, insets: { right: 85 } }).strip, "right");
+  // Turned one way the strip is on the left; turned the other, the camera is at the bottom end.
+  assert.equal(screenLayout({ width: 678, height: 466, insets: { left: 85 } }).strip, "left");
+  const turned = screenLayout({ width: 678, height: 466, insets: { right: 85 }, regions: [taken(593, 313, 85, 153)] });
+  assert.deepEqual([turned.strip, turned.stripTop, turned.stripBottom], ["right", 0, 153]);
+  // Unfolded and turned sideways, the clock moves into a strip of its own.
+  const wide = screenLayout({ width: 951, height: 669, insets: { right: 84 }, regions: [taken(867, 0, 84, 124)] });
+  assert.deepEqual([wide.strip, wide.stripTop], ["right", 124]);
+  // Something elsewhere on the screen has nothing to do with the strip.
+  assert.equal(screenLayout({ width: 466, height: 678, insets: { right: 85 }, regions: [taken(0, 0, 60, 60)] }).stripTop, 0);
+  // An ordinary phone turned sideways has the same margin on both sides: no strip.
+  assert.equal(screenLayout({ width: 852, height: 393, insets: { left: 59, right: 59 } }).strip, "");
+  assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 } }).strip, "");
+});
+
+test("a clock in one corner of the top margin leaves the rest of the row to the header", () => {
+  const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
+  // An unfolded iPhone Duo held upright.
+  assert.deepEqual(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 0, 144, 82)] }),
+    { strip: "", stripTop: 0, stripBottom: 0, corner: "right", cornerWidth: 144, cornerHeight: 82 });
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(0, 0, 144, 82)] }).corner, "left");
+  // Not a corner: nothing reported, a status bar right across, something shorter than the
+  // margin, something not at the top, or the fold rather than something in the way.
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 } }).corner, "");
+  assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 }, regions: [taken(0, 0, 393, 59)] }).corner, "");
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 0, 144, 40)] }).corner, "");
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 300, 144, 82)] }).corner, "");
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [{ kind: "division", x: 525, y: 0, width: 144, height: 82 }] }).corner, "");
+});
+
+test("didactics alerts follow each resident's own day", async () => {
+  const { setDidactics } = await import("../lib/dataset.js");
+  const { alertsFor } = await import("../lib/didactic-alerts.js");
+  const ds = { ...dataset() };
+  // The Tuesday 5p review is Zoom only; give it a link so there's something to join.
+  setDidactics(ds, "2026-11", { ...DIDACTICS, events: DIDACTICS.events.map((e) => (e.kind === "board-review" ? { ...e, zoom: "wednesday" } : e)) });
+  const m = createModel(ds);
+  const D = m.didactics;
+
+  // Who can make it, from their own shifts.
+  assert.equal(D.where("lee-sam", "2026-11-04", 360), null); // off night float at 6a: still in the building
+  assert.equal(D.conflict("lee-sam", "2026-11-04", 1020), "You're post-call that day"); // gone home by 5p
+  assert.equal(D.conflict("lee-sam", "2026-11-03", 1020), "You're on night float that night");
+  assert.equal(D.conflict("doe-jane", "2026-11-03", 1020), "You're the late resident until 6p");
+  assert.equal(D.conflict("doe-jane", "2026-11-03", 360), null); // the late shift doesn't touch 6a
+  assert.equal(D.conflict("ortiz-paul", "2026-11-02", 1020), "You're on the 10a–7p then");
+  assert.equal(D.conflict("doe-jane", "2026-11-08", 1020), "You're on 12-hr call then");
+  assert.equal(D.conflict("lee-sam", "2026-11-07", 1020), "You're on 24-hr call then");
+  assert.equal(D.where("lee-sam", "2026-11-08", 360), null); // post-call at 6a: still in the building
+
+  const at = (list) => list.map((a) => [a.kind, a.on, a.at]);
+  // Night float tonight: no 5p Zoom. Off night float this morning: the 6a conference, one alert for the sitting.
+  assert.deepEqual(at(alertsFor(m, "lee-sam", "2026-11-03")), []);
+  const [wed] = alertsFor(m, "lee-sam", "2026-11-04");
+  assert.deepEqual([wed.kind, wed.at], ["starting", 350]);
+  assert.deepEqual(wed.payload(350), {
+    title: "Wednesday conference starts in 10 minutes", body: "6a PBLD · Dr. Lee, then 6:30a Grand Rounds: Airway Fires. Main Auditorium.", url: "/#/didactics", tag: "did-2026-11-04-360",
+  });
+  // The late resident is in a case at 5p; someone on an elective day joins the Zoom 5 minutes ahead.
+  assert.deepEqual(alertsFor(m, "doe-jane", "2026-11-03"), []);
+  const [tue] = alertsFor(m, "ortiz-paul", "2026-11-03");
+  assert.equal(tue.at, 1015);
+  assert.deepEqual([tue.payload(1015).title, tue.payload(1016).title, tue.payload(1015).body],
+    ["Board review starts in 5 minutes", "Board review starts in 4 minutes", "5p Board review · Dr. Smith. On Zoom: tap to join."]);
+  assert.deepEqual(alertsFor(m, "leed-ana", "2026-11-03"), []); // listed to present, but on vacation
+
+  // Presenting: the evening before, then in time to load slides before the sitting starts. No 5-minute alert.
+  const [eve, setup] = alertsFor(m, "doe-jane", "2026-11-04");
+  assert.deepEqual(at([eve, setup]), [["present-eve", "2026-11-03", 1140], ["present", "2026-11-04", 330]]);
+  assert.equal(eve.payload().title, "Tomorrow you present at 6:30a");
+  assert.equal(eve.payload().body, "Airway Fires. Main Auditorium, Zoom too. Bring your slides on a USB drive or have them in your email.");
+  assert.deepEqual([setup.payload().title, setup.payload().body], ["You present at 6:30a", "Be in Main Auditorium by 5:50a to load your slides before the PBLD at 6a."]);
+
+  // A mock oral: the evening before with the examiner, then 15 minutes before their own slot.
+  const [mockEve, mock] = alertsFor(m, "ortiz-paul", "2026-11-06");
+  assert.deepEqual(at([mockEve, mock]), [["mock-eve", "2026-11-05", 1140], ["mock", "2026-11-06", 345]]);
+  assert.equal(mockEve.payload().body, "With Dr. Smith, in Main Auditorium.");
+  assert.deepEqual([mock.payload(345).title, mock.payload(345).body], ["Your mock oral is in 15 minutes", "6a with Dr. Smith, in Main Auditorium."]);
+  assert.deepEqual(alertsFor(m, "doe-jane", "2026-11-06"), []); // someone else's mock oral
+});
+
+test("the posted-sheet alert skips people the sheet doesn't concern that day", async () => {
+  const { dailyAlert } = await import("../public/core/alerts.js");
+  const m = createModel(dataset());
+  const alert = (pid, date) => dailyAlert(m, date, pid, "2026-11-01");
+  assert.equal(alert("doe-jane", "2026-11-02").title, "Tomorrow's OR schedule is posted"); // a normal OR day
+  assert.equal(alert("lee-sam", "2026-11-02"), null); // night float: asleep in the afternoon, not on the day's rooms
+  assert.equal(alert("leed-ana", "2026-11-03"), null); // vacation
+  assert.equal(alert("lee-sam", "2026-11-05"), null); // at the VA, which isn't on the Harper sheet
+  assert.equal(alert("lee-sam", "2026-11-09"), null); // post-call
+  assert.equal(alert(null, "2026-11-02").body, "Tap to see the rooms and who's where."); // nobody picked: always
 });

@@ -15,11 +15,15 @@ function chunk(type, data) {
   const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td));
   return Buffer.concat([len, td, crc]);
 }
-function png(size, rgba) {
+// `opaque` writes plain RGB: the App Store refuses an app icon with any transparency.
+function png(size, rgba, opaque = false) {
+  const n = opaque ? 3 : 4;
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 6;
-  const raw = Buffer.alloc((size * 4 + 1) * size);
-  for (let y = 0; y < size; y++) rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
+  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = opaque ? 2 : 6;
+  const raw = Buffer.alloc((size * n + 1) * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) rgba.copy(raw, y * (size * n + 1) + 1 + x * n, (y * size + x) * 4, (y * size + x) * 4 + n);
+  }
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
 }
 
@@ -49,7 +53,7 @@ function scene(inset) {
   ];
 }
 
-function render(size, { bleed, inset = 1 }) {
+function render(size, { bleed, inset = 1, opaque = false }) {
   const buf = Buffer.alloc(size * size * 4);
   const shapes = scene(inset);
   const top = hex("#3d7bff"), bot = hex("#1c3fa8");
@@ -69,7 +73,7 @@ function render(size, { bleed, inset = 1 }) {
       buf[o] = Math.round(col[0]); buf[o + 1] = Math.round(col[1]); buf[o + 2] = Math.round(col[2]); buf[o + 3] = Math.round(bgA * 255);
     }
   }
-  return png(size, buf);
+  return png(size, buf, opaque);
 }
 
 fs.writeFileSync(path.join(out, "icon-192.png"), render(192, { bleed: false }));
@@ -85,4 +89,7 @@ fs.writeFileSync(path.join(out, "favicon.svg"), `<svg xmlns="http://www.w3.org/2
 <circle cx="28" cy="40.3" r="2.6" fill="#c3d3f5"/><circle cx="35.2" cy="40.3" r="2.6" fill="#22c55e"/><circle cx="42.4" cy="34" r="2.6" fill="#2f6fed"/><circle cx="21" cy="34" r="2.6" fill="#c3d3f5"/>
 </svg>
 `);
+// The native app's icon, when that project is here.
+const appIcon = path.resolve(out, "../../native/ios/App/App/Assets.xcassets/AppIcon.appiconset");
+if (fs.existsSync(appIcon)) fs.writeFileSync(path.join(appIcon, "AppIcon-512@2x.png"), render(1024, { bleed: true, inset: 0.86, opaque: true }));
 console.log("icons written to", out);

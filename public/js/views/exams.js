@@ -2,6 +2,7 @@
 // phone: a CA-2 sitting BASIC again shouldn't be visible to the rest of the program.
 import { h, card, emptyState, segmented, append } from "../ui.js";
 import { local } from "../api.js";
+import { syncWidget } from "../native.js";
 import { diffDays, fmtDate, range } from "../../core/dates.js";
 import { EXAMS, TRACKS, examsFor, expectedSession, openSessions } from "../../core/exams.js";
 import { goldenSummary } from "../../core/daysoff.js";
@@ -25,7 +26,11 @@ function examCard(e) {
 
 function planCard(ctx, track, current) {
   const { state } = ctx;
-  const save = (patch) => { local.set(KEY, { ...(local.get(KEY)?.pid === state.me ? local.get(KEY) : {}), pid: state.me, track, ...patch }); ctx.render(); };
+  const save = (patch) => {
+    local.set(KEY, { ...(local.get(KEY)?.pid === state.me ? local.get(KEY) : {}), pid: state.me, track, ...patch });
+    syncWidget(state.me); // the widget's countdown follows
+    ctx.render();
+  };
   const sessions = track === "none" ? [] : openSessions(track, state.today);
   const session = current?.session || (track === "none" ? null : expectedSession(track, state.today));
   const days = session ? range(session.from, session.to) : [];

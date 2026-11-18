@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>DMC Schedule</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px -apple-system, system-ui, sans-serif; background: #f6f7f9; color: #0f172a; }
+  @media (prefers-color-scheme: dark) { body { background: #0b0f14; color: #e6eaf0; } }
+  main { text-align: center; padding: 24px; max-width: 320px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 0 0 20px; opacity: .7; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 12px 22px; background: #2f6fed; color: #fff; }
+</style>
+<main>
+  <h1>Can't reach the schedule</h1>
+  <p>Check your connection. Your widgets keep showing the last schedule they loaded.</p>
+  <button onclick="location.replace('https://dmcschedule.netlify.app/')">Try again</button>
+</main>
+</html>

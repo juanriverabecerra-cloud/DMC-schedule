@@ -1,6 +1,8 @@
 // All API routes plus the calendar feeds.
 import { openStore } from "../../lib/store.js";
-import { isAdmin, isViewer, calToken, pidFromToken, surveyKey, configured, env } from "../../lib/auth.js";
+import { isAdmin, isViewer, isDemo, feedToken, pidFromToken, surveyKey, configured, env } from "../../lib/auth.js";
+import { demoDataset, demoStore } from "../../lib/demo.js";
+import { widgetFeed, planFromQuery } from "../../lib/widget-feed.js";
 import {
   normalizeDataset, withDataset, mergeCallWorkbook, mergeRotationsWorkbook, setDaily, deleteDaily, setDirectory, setSettings, setDidactics, deleteDidactics, removePerson, updatePerson, setFairness,
 } from "../../lib/dataset.js";
@@ -8,14 +10,15 @@ import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal, addDays } from "../../public/core/dates.js";
 import { shiftBlock } from "../../public/core/requests.js";
-import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock, phoneCount, noteReach } from "../../lib/daily-sync.js";
+import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock, sheetAudience, noteReach } from "../../lib/daily-sync.js";
 import { readXlsx } from "../../lib/xlsx.js";
 import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
 import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick, keepNoCallList, noCallHistory, forgetNoCallLists } from "../../lib/reqlog.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
 import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
-import { cleanSubscription, subscriptionId, vapidKeys, sendPush, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
+import { cleanSubscription, phoneId, vapidKeys, sendToPhone, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
+import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,27 +89,46 @@ export default async function handler(req) {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
   const method = req.method;
-  const st = openStore();
+  const demo = isDemo(req);
+  const st = demo ? demoStore(openStore()) : openStore();
+  // A calendar or widget address carries no passcode, so a demo one says so itself.
+  const feedOwner = async (token, kind) => {
+    const made = token.startsWith("demo-");
+    const ds = made ? demoDataset() : await loadDataset(st);
+    const pid = pidFromToken(made ? token.slice(5) : token, ds.people, made ? `${kind}-demo` : kind);
+    return pid ? { ds, pid } : null;
+  };
+  const feedAddress = (kind, pid) => `${demo ? "demo-" : ""}${feedToken(demo ? `${kind}-demo` : kind, pid)}`;
 
   try {
     // ---- calendar feed (token in the URL, no passcode) ----
     const cal = path.match(/^\/cal\/([\w-]+)\.ics$/);
     if (cal && method === "GET") {
-      const ds = await loadDataset(st);
-      const pid = pidFromToken(cal[1], ds.people);
-      if (!pid) return new Response("Not found", { status: 404 });
+      const owner = await feedOwner(cal[1], "cal");
+      if (!owner) return new Response("Not found", { status: 404 });
+      const { ds, pid } = owner;
       const model = createModel(ds);
       const ics = buildIcs(model, pid, { ...feedRange(model, todayLocal()), appUrl: `${origin(req)}/`, didactics: url.searchParams.get("d") !== "0" });
       return new Response(ics, { headers: { "content-type": "text/calendar; charset=utf-8", "cache-control": "public, max-age=900", "content-disposition": "inline; filename=dmc-schedule.ics" } });
     }
 
+    // ---- widget feed (token in the address, like the calendar: a widget can't send a passcode) ----
+    const widget = path.match(/^\/api\/widget\/([\w-]+)$/);
+    if (widget && method === "GET") {
+      const owner = await feedOwner(widget[1], "widget");
+      if (!owner) return fail(404, "Not found");
+      const { ds, pid } = owner;
+      const feed = widgetFeed(createModel(ds), pid, { plan: planFromQuery(pid, url.searchParams.get("x")) });
+      return feed ? json(feed, 200, { "cache-control": "private, max-age=60" }) : fail(404, "Not found");
+    }
+
     if (path === "/api/status") {
       const ds = await loadDataset(st);
-      return json({ configured: configured(), updatedAt: ds.updatedAt, months: Object.keys(ds.months).sort(), people: ds.people.length });
+      return json({ configured: { ...configured(), appAlerts: apnsConfigured() }, updatedAt: ds.updatedAt, months: Object.keys(ds.months).sort(), people: ds.people.length });
     }
 
     if (path === "/api/login" && method === "POST") {
-      return json({ viewer: isViewer(req), admin: isAdmin(req) });
+      return json({ viewer: isViewer(req), admin: isAdmin(req), demo });
     }
 
     if (!isViewer(req)) return fail(401, "Passcode required");
@@ -121,8 +143,16 @@ export default async function handler(req) {
     const tok = path.match(/^\/api\/caltoken\/([\w-]+)$/);
     if (tok && method === "GET") {
       if (!env("CAL_SECRET") && !env("ADMIN_KEY")) return fail(503, "Calendar feeds need ADMIN_KEY or CAL_SECRET on the server.");
-      const url2 = `${origin(req)}/cal/${calToken(tok[1])}.ics`;
+      const url2 = `${origin(req)}/cal/${feedAddress("cal", tok[1])}.ics`;
       return json({ url: url2, webcal: url2.replace(/^https?:/, "webcal:") });
+    }
+
+    const wtok = path.match(/^\/api\/widgettoken\/([\w-]+)$/);
+    if (wtok && method === "GET") {
+      if (!env("CAL_SECRET") && !env("ADMIN_KEY")) return fail(503, "Widgets need ADMIN_KEY or CAL_SECRET on the server.");
+      const ds = await loadDataset(st);
+      if (!ds.people.some((p) => p.id === wtok[1])) return fail(404, "No such resident");
+      return json({ url: `${origin(req)}/api/widget/${feedAddress("widget", wtok[1])}` });
     }
 
     const photo = path.match(/^\/api\/photo\/(\d{4}-\d{2}-\d{2})$/);
@@ -155,24 +185,41 @@ export default async function handler(req) {
     }
     if (path === "/api/push/subscribe" && method === "POST") {
       const body = await req.json();
-      const sub = cleanSubscription(body.subscription);
+      // The iPhone app sends its device token; a browser sends a push subscription.
+      const token = body.native ? cleanDeviceToken(body.native.token) : null;
+      if (body.native && (body.native.platform !== "ios" || !token)) return fail(400, "That isn't a phone this app can alert.");
+      if (token && !apnsConfigured()) return fail(503, "Alerts for the app aren't set up on the server yet.");
+      const sub = token ? { apns: token } : cleanSubscription(body.subscription);
       if (!sub) return fail(400, "That isn't a push subscription this app can use.");
       const ds = await loadDataset(st);
       const pid = ds.people.some((p) => p.id === body.pid) ? body.pid : null;
-      const id = subscriptionId(sub.endpoint);
+      const id = phoneId(token ? { token } : sub);
       const admin = isAdmin(req);
       await st.update("push/subs", (saved) => {
         const subs = saved || {};
         // Admin devices also hear about residents' requests, as often as the admin chose.
         const mode = REQUEST_MODES.includes(body.mode) ? body.mode : subs[id]?.mode || "smart";
-        subs[id] = { ...sub, pid, admin, mode, createdAt: subs[id]?.createdAt || new Date().toISOString() };
+        // Zoom lecture reminders are on unless this phone turned them off.
+        const lectures = typeof body.lectures === "boolean" ? body.lectures : subs[id]?.lectures !== false;
+        subs[id] = { ...sub, pid, admin, mode, lectures, createdAt: subs[id]?.createdAt || new Date().toISOString() };
+        return subs;
+      });
+      return json({ ok: true });
+    }
+    if (path === "/api/push/lectures" && method === "POST") {
+      const body = await req.json();
+      if (typeof body.on !== "boolean") return fail(400, "Say on or off");
+      const id = phoneId(body);
+      await st.update("push/subs", (subs) => {
+        if (!subs?.[id]) throw new HttpError(404, "Alerts aren't on for this device.");
+        subs[id].lectures = body.on;
         return subs;
       });
       return json({ ok: true });
     }
     if (path === "/api/push/unsubscribe" && method === "POST") {
       const body = await req.json();
-      const id = subscriptionId(String(body.endpoint || ""));
+      const id = phoneId(body);
       await st.update("push/subs", (subs) => {
         if (!subs?.[id]) return undefined;
         delete subs[id];
@@ -182,10 +229,10 @@ export default async function handler(req) {
     }
     if (path === "/api/push/test" && method === "POST") {
       const body = await req.json();
-      const sub = ((await st.getJSON("push/subs")) || {})[subscriptionId(String(body.endpoint || ""))];
+      const sub = ((await st.getJSON("push/subs")) || {})[phoneId(body)];
       if (!sub) return fail(404, "Alerts aren't on for this device. Turn them on again.");
-      const r = await sendPush(sub, { title: "Alerts are on", body: "You'll hear here when the next day's OR schedule is posted.", url: "/#/today", tag: "test" },
-        { keys: await vapidKeys(st), subject: pushSubject(origin(req)), ttl: 600, urgency: "high" });
+      const r = await sendToPhone(sub, { title: "Alerts are on", body: "You'll hear here when the next day's OR schedule is posted.", url: "/#/today", tag: "test" },
+        { keys: await vapidKeys(st), subject: pushSubject(origin(req)), origin: origin(req), ttl: 600, urgency: "high" });
       return r.ok ? json({ ok: true }) : fail(502, `The phone's push service said no (${r.status || "no answer"}). Turn alerts off and on again.`);
     }
 
@@ -387,9 +434,9 @@ export default async function handler(req) {
       }, { wait: true });
       let alerted = 0;
       if (send) {
-        const phones = await phoneCount(st);
+        const reach = await sheetAudience(st, createModel(ds), date, todayLocal());
         alerted = await alertDaily(st, ds, date, origin(req));
-        await noteReach(st, date, { phones, sent: alerted });
+        await noteReach(st, date, { ...reach, sent: alerted });
       }
       return json({ ok: true, daily: saved, changes, updatedAt: ds.updatedAt, alerted });
     }
@@ -499,7 +546,7 @@ export default async function handler(req) {
     if (path === "/api/push/mode" && method === "POST") {
       const body = await req.json();
       if (!REQUEST_MODES.includes(body.mode)) return fail(400, "Unknown setting");
-      const id = subscriptionId(String(body.endpoint || ""));
+      const id = phoneId(body);
       await st.update("push/subs", (subs) => {
         if (!subs?.[id]) throw new HttpError(404, "Alerts aren't on for this device.");
         Object.assign(subs[id], { admin: true, mode: body.mode });

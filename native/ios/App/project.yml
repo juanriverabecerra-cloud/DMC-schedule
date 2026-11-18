@@ -1,0 +1,71 @@
+# The Xcode project, written out so it can be read and regenerated:  xcodegen generate
+# (run from this folder; `npm run project` in native/ does it). The .xcodeproj beside this file
+# is the generated result. Two targets: the app, which is the website in a native frame, and the
+# widget extension it carries.
+name: App
+options:
+  deploymentTarget:
+    iOS: "17.0"
+configFiles:
+  Debug: ../debug.xcconfig
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_STYLE: Automatic
+packages:
+  CapApp-SPM:
+    path: CapApp-SPM
+targets:
+  App:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes: [public, capacitor.config.json, config.xml]
+      # Written by `npx cap sync`: the offline page and the app's settings.
+      - path: App/public
+        type: folder
+        optional: true
+      - path: App/capacitor.config.json
+        optional: true
+      - path: App/config.xml
+        optional: true
+      # Shared with the widgets: how the feed is stored and read.
+      - path: ../ScheduleWidgets/Sources/Core
+    dependencies:
+      - package: CapApp-SPM
+      - target: ScheduleWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.netlify.dmcschedule
+        PRODUCT_NAME: DMC Schedule
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  ScheduleWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ScheduleWidget
+      - path: ../ScheduleWidgets/Sources/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.netlify.dmcschedule.widget
+        INFOPLIST_FILE: ScheduleWidget/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: DMC Schedule
+        CODE_SIGN_ENTITLEMENTS: ScheduleWidget/ScheduleWidget.entitlements
+        SKIP_INSTALL: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+schemes:
+  App:
+    build:
+      targets:
+        App: all
+    run:
+      config: Debug
+    archive:
+      config: Release

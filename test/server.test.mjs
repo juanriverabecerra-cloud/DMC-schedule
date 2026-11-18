@@ -14,7 +14,7 @@ process.env.ADMIN_KEY = "admin-test";
 const { default: api } = await import("../netlify/functions/api.mjs");
 const { openStore } = await import("../lib/store.js");
 const push = await import("../lib/push.js");
-const { todayLocal, addDays } = await import("../public/core/dates.js");
+const { todayLocal, addDays, zonedTime } = await import("../public/core/dates.js");
 
 const call = async (method, url, body, headers = {}) => {
   const res = await api(new Request(`http://localhost${url}`, {
@@ -40,8 +40,17 @@ function fakePhone() {
     sub: { endpoint: `http://127.0.0.1:${server.address().port}/push/abc`, keys: { p256dh: ecdh.getPublicKey().toString("base64url"), auth: auth.toString("base64url") } },
     received,
     close: () => server.close(),
-    // RFC 8291, the phone's side.
+    // What the phone shows, read the way an iPhone reads Apple's declarative format.
     open(body) {
+      const msg = this.raw(body);
+      assert.equal(msg.web_push, 8030);
+      const n = msg.notification;
+      assert.ok(n.title && /^https?:\/\//.test(n.navigate), "a declarative alert needs a title and a full address");
+      const u = new URL(n.navigate);
+      return { title: n.title, body: n.body, url: u.pathname + u.search + u.hash, tag: n.tag, origin: u.origin };
+    },
+    // RFC 8291, the phone's side.
+    raw(body) {
       const salt = body.subarray(0, 16), idlen = body[20], asPublic = body.subarray(21, 21 + idlen), sealed = body.subarray(21 + idlen);
       const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
       const ikm = hmac(hmac(auth, ecdh.computeSecret(asPublic)), Buffer.concat([Buffer.from("WebPush: info\0"), ecdh.getPublicKey(), asPublic, Buffer.from([1])]));
@@ -72,7 +81,14 @@ test("an alert reaches the phone encrypted, signed by the server, and readable",
   const [got] = phone.received;
   assert.equal(got.headers["content-encoding"], "aes128gcm");
   assert.equal(got.headers.urgency, "high");
-  assert.deepEqual(phone.open(got.body), { title: "Tomorrow's OR schedule is posted", body: "You're in OR 7." });
+  // Apple's declarative format: the phone can show it without waking the app's script.
+  assert.deepEqual(phone.raw(got.body), {
+    web_push: 8030,
+    notification: { title: "Tomorrow's OR schedule is posted", body: "You're in OR 7.", navigate: "https://example.org/", lang: "en-US", dir: "ltr" },
+  });
+  // A tap opens the app on the site that sent it, never a stray address.
+  assert.equal(push.webPushMessage({ title: "x", url: "/#/day/2026-11-20", tag: "daily" }, "https://dmc.example").notification.navigate, "https://dmc.example/#/day/2026-11-20");
+  assert.equal(push.webPushMessage({ title: "x" }, "mailto:someone").notification.navigate, "https://dmcschedule.netlify.app/");
   // The VAPID token is signed with the server's key and names the push service.
   const [, token, k] = got.headers.authorization.match(/^vapid t=([^,]+), k=(.+)$/);
   assert.equal(k, keys.publicKey);
@@ -346,7 +362,7 @@ test("the live sheet: updates quietly, alerts once when settled, then only the p
   assert.equal(pb.received.length, 1);
   assert.equal(pa.open(pa.received[0].body).title, "Tomorrow's OR schedule is posted");
   assert.equal((await daily()).draft, false);
-  assert.deepEqual((await call("GET", "/api/daily-source", undefined, admin)).body.reach, { phones: 2, sent: 2 }); // how far it got
+  assert.deepEqual((await call("GET", "/api/daily-source", undefined, admin)).body.reach, { phones: 2, skipped: 0, sent: 2 }); // how far it got
   await run(120);
   assert.equal(pa.received.length, 1); // never twice
   // A correction after the alert: only the resident it moved hears, and once.
@@ -686,4 +702,245 @@ test("a day first saved from the photo switches to the live sheet without alerti
   assert.equal((await readState(st)).rooms, 3);
   pa.close(); pb.close();
   await sync.disconnect(st);
+});
+
+test("widget feed: one resident's week, who's on, what's ahead, and when to show tomorrow", async () => {
+  const st = openStore();
+  const { widgetFeed, switchMinute, planFromQuery } = await import("../lib/widget-feed.js");
+  const { createModel } = await import("../public/core/model.js");
+  const { zonedTime } = await import("../public/core/dates.js");
+  const person = (id, cls = "CA-1") => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Tess", cls, canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  // March 2026: the 10th is a Tuesday.
+  const rows = {
+    a: { rotation: "Basic Anesthesia", days: { 10: { t: "BA" }, 11: { t: "BA" }, 12: { t: "BA", f: "00FF00" }, 13: { t: "BA", f: "C9DAF8" }, 14: {} } },
+    b: { rotation: "Basic Anesthesia", days: { 10: { t: "NF" }, 11: { t: "NF" } } },
+  };
+  const ds = { people: [person("a"), person("b")], months: { "2026-03": { rows, days: 31 } }, settings: {}, rotations: {}, directory: { people: { a: { numbers: [{ kind: "phone", label: "Mobile", value: "3135550100" }] } }, places: [] },
+    daily: { "2026-03-11": { date: "2026-03-11", rooms: [{ or: "7", surgeon: "Smith", time: "7:30", cases: "2", mda: "Jones", staff: "ResA", ja: "", breaks: "ResB" }], opsc: {}, pat: [], ob: {}, night: [] } } };
+  const model = createModel(ds);
+  const at = (h, m = 0) => zonedTime("2026-03-10", h * 60 + m);
+  assert.equal(at(15).toISOString(), "2026-03-10T19:00:00.000Z"); // Detroit is UTC-4 in March
+  assert.equal(zonedTime("2026-01-10", 15 * 60).toISOString(), "2026-01-10T20:00:00.000Z"); // and UTC-5 in January
+
+  const feed = widgetFeed(model, "a", { now: at(10) });
+  assert.equal(feed.name, "Tess");
+  assert.equal(feed.days.length, 9);
+  const [tue, wed, thu, fri] = feed.days;
+  assert.equal(tue.title, "Basic Anesthesia");
+  assert.equal(wed.title, "OR 7 · Smith");
+  assert.equal(wed.code, "OR 7");
+  assert.deepEqual(wed.lines, ["Starts 7:30 · 2 cases", "MDA Jones", "Breaks ResB"]);
+  assert.deepEqual(thu.chips, ["Late till 6p"]);
+  assert.equal(fri.title, "24-hr call"); // the call is the news, not the rotation
+  assert.deepEqual(fri.chips, []);
+  assert.equal(fri.sub, "Basic Anesthesia · Harper");
+  assert.deepEqual(tue.on, [{ k: "Night float", v: "ResB" }]);
+  assert.deepEqual(feed.ahead[0], { k: "Next late day", v: "Thu 3/12" });
+  assert.equal(tue.sub, "Harper"); // the rotation isn't repeated under itself
+  assert.equal(wed.sub, "Basic Anesthesia · Harper");
+  assert.ok(!JSON.stringify(feed).includes("3135550100")); // names only, never numbers
+
+  // Tomorrow's sheet is final, so a one-day widget moves on at 2p; a draft waits for the shift to end.
+  assert.equal(switchMinute(model, "a", "2026-03-10"), 14 * 60);
+  assert.deepEqual(feed.screens.slice(0, 2).map((s) => s.date), ["2026-03-10", "2026-03-11"]);
+  assert.equal(feed.screens[1].at, at(14).toISOString());
+  assert.equal(widgetFeed(model, "a", { now: at(16) }).screens[0].date, "2026-03-11");
+  ds.daily["2026-03-11"].draft = true;
+  assert.equal(switchMinute(createModel(ds), "a", "2026-03-10"), 18 * 60);
+  assert.equal(switchMinute(model, "b", "2026-03-10"), 1440); // on nights, today stays till midnight
+  assert.equal(switchMinute(model, "a", "2026-03-13"), 1440); // and through a 24
+
+  assert.deepEqual(planFromQuery("a", "basic.2027-summer.2027-06-05"), { pid: "a", track: "basic", kind: "basic", session: "2027-summer", day: "2027-06-05" });
+  assert.equal(planFromQuery("a", "nonsense"), null);
+
+  // Over the wire: a private address per resident, no passcode, and nothing for a wrong one.
+  await st.setJSON("dataset", ds);
+  const token = await call("GET", "/api/widgettoken/a", undefined, viewer);
+  assert.equal(token.status, 200);
+  assert.equal((await call("GET", "/api/widgettoken/a")).status, 401);
+  const path = new URL(token.body.url).pathname;
+  const res = await call("GET", path);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.name, "Tess");
+  assert.equal((await call("GET", "/api/widget/not-a-real-token")).status, 404);
+  const cal = await call("GET", "/api/caltoken/a", undefined, viewer);
+  assert.equal((await call("GET", `/api/widget/${new URL(cal.body.url).pathname.match(/cal\/(.+)\.ics/)[1]}`)).status, 404); // a calendar link isn't a widget link
+});
+
+test("alerts reach the iPhone app through Apple's service, signed and shaped as Apple expects", async () => {
+  const st = openStore();
+  const http2 = await import("node:http2");
+  const apns = await import("../lib/apns.js");
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  // A stand-in for Apple: records what it was sent, and says one phone no longer exists.
+  const seen = [];
+  const gone = "b".repeat(64), alive = "a".repeat(64);
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    let body = "";
+    stream.on("data", (c) => { body += c; });
+    stream.on("end", () => {
+      seen.push({ headers, body: JSON.parse(body) });
+      const dead = headers[":path"].endsWith(gone);
+      stream.respond({ ":status": dead ? 410 : 200 });
+      stream.end(dead ? JSON.stringify({ reason: "Unregistered" }) : "");
+    });
+  });
+  await new Promise((r) => server.listen(0, r));
+  const person = { id: "a", last: "Ana", first: "T", preferred: "T", cls: "CA-1", canonical: "Ana, T", aliases: [] };
+  await st.setJSON("dataset", { people: [person], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("push/subs");
+  const native = (token) => call("POST", "/api/push/subscribe", { native: { platform: "ios", token }, pid: "a" }, viewer);
+
+  // Without Apple's keys on the server the app is told so, instead of signing up for nothing.
+  assert.equal((await native(alive)).status, 503);
+  assert.equal((await call("GET", "/api/status")).body.configured.appAlerts, false);
+  Object.assign(process.env, { APNS_KEY: privateKey.export({ type: "pkcs8", format: "pem" }), APNS_KEY_ID: "KEYID12345", APNS_TEAM_ID: "TEAMID1234", APNS_HOST: `http://localhost:${server.address().port}` });
+  try {
+    assert.equal((await call("GET", "/api/status")).body.configured.appAlerts, true);
+    assert.equal((await native("not-a-token")).status, 400);
+    assert.equal((await native(alive)).status, 200);
+    assert.equal((await native(gone)).status, 200);
+    assert.equal(Object.keys(await st.getJSON("push/subs")).length, 2);
+
+    assert.equal((await call("POST", "/api/push/test", { token: alive }, viewer)).status, 200);
+    const sent = seen[0];
+    assert.equal(sent.headers[":path"], `/3/device/${alive}`);
+    assert.equal(sent.headers["apns-topic"], "app.netlify.dmcschedule");
+    assert.equal(sent.headers["apns-push-type"], "alert");
+    assert.equal(sent.headers["apns-priority"], "10");
+    assert.deepEqual(sent.body, { aps: { alert: { title: "Alerts are on", body: "You'll hear here when the next day's OR schedule is posted." }, sound: "default", "thread-id": "test" }, url: "/#/today" });
+    // The signature is Apple's kind: ES256 over "header.claims", by the key the server holds.
+    const [head, claims, sig] = sent.headers.authorization.replace(/^bearer /, "").split(".");
+    assert.deepEqual(JSON.parse(Buffer.from(head, "base64url")), { alg: "ES256", kid: "KEYID12345" });
+    assert.equal(JSON.parse(Buffer.from(claims, "base64url")).iss, "TEAMID1234");
+    assert.ok(crypto.verify("sha256", Buffer.from(`${head}.${claims}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url")));
+    assert.equal(apns.providerToken(), apns.providerToken()); // reused, as Apple asks
+
+    // A real alert goes to both; the phone Apple says is gone is dropped from the list.
+    const delivered = await push.sendToSubs(st, () => true, () => ({ title: "Tomorrow's OR schedule is posted", body: "You're in OR 7.", url: "/#/day/2026-03-11", tag: "daily-2026-03-11" }), { urgency: "high" });
+    assert.equal(delivered, 1);
+    assert.deepEqual(Object.values(await st.getJSON("push/subs")).map((x) => x.apns), [alive]);
+    assert.equal((await call("POST", "/api/push/unsubscribe", { token: alive }, viewer)).status, 200);
+    assert.deepEqual(await st.getJSON("push/subs"), {});
+  } finally {
+    for (const k of ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "APNS_HOST"]) delete process.env[k];
+    server.close();
+  }
+});
+
+test("the demo passcode shows an invented program and can't touch the real one", async () => {
+  const st = openStore();
+  const real = { id: "real", last: "Realperson", first: "T", preferred: "T", cls: "CA-1", canonical: "Realperson, T", aliases: [] };
+  const date = addDays(todayLocal(), 2);
+  await st.setJSON("dataset", { people: [real], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("swaps");
+  process.env.DEMO_PASSCODE = "demo-test";
+  const demo = { "x-passcode": "demo-test" };
+  try {
+    assert.deepEqual((await call("POST", "/api/login", undefined, demo)).body, { viewer: true, admin: false, demo: true });
+    assert.equal((await call("POST", "/api/login", undefined, viewer)).body.demo, false);
+    const data = (await call("GET", "/api/data", undefined, demo)).body;
+    assert.ok(data.people.length >= 12);
+    assert.ok(!JSON.stringify(data).includes("Realperson"));
+    assert.ok(data.months[todayLocal().slice(0, 7)]);
+    assert.ok(!JSON.stringify((await call("GET", "/api/data", undefined, viewer)).body).includes("demo-stone"));
+    assert.equal((await call("GET", "/api/hours", undefined, demo)).status, 403); // not an admin
+    assert.equal((await call("PUT", "/api/settings", {}, demo)).status, 403);
+
+    // Something a demo visitor saves stays in the demo.
+    const { createModel } = await import("../public/core/model.js");
+    const { upcomingShifts } = await import("../public/core/requests.js");
+    const model = createModel(data);
+    const who = model.people.find((p) => p.cls !== "PGY-1" && upcomingShifts(model, p.id, todayLocal(), 40).length);
+    const shift = upcomingShifts(model, who.id, todayLocal(), 40)[0];
+    assert.equal((await call("POST", "/api/swaps", { pid: who.id, key: "k".repeat(20), date: shift.date }, demo)).status, 200);
+    assert.equal((await call("GET", "/api/swaps", undefined, demo)).body.swaps.length, 1);
+    assert.equal((await call("GET", "/api/swaps", undefined, viewer)).body.swaps.length, 0);
+    assert.equal((await st.getJSON("dataset")).people[0].id, "real");
+
+    // Its calendar and widget addresses work, marked as demo, and real ones are unaffected.
+    const w = await call("GET", `/api/widgettoken/${who.id}`, undefined, demo);
+    assert.match(w.body.url, /\/api\/widget\/demo-/);
+    const feed = await call("GET", new URL(w.body.url).pathname);
+    assert.equal(feed.status, 200);
+    assert.equal(feed.body.days.length, 9);
+    const c = await call("GET", `/api/caltoken/${who.id}`, undefined, demo);
+    const ics = await api(new Request(c.body.url));
+    assert.equal(ics.status, 200);
+    assert.match(await ics.text(), /BEGIN:VCALENDAR/);
+    assert.equal((await call("GET", `/api/widgettoken/${who.id}`, undefined, viewer)).status, 404); // no such real resident
+    void date;
+  } finally {
+    delete process.env.DEMO_PASSCODE;
+  }
+  assert.equal((await call("POST", "/api/login", undefined, { "x-passcode": "demo-test" })).body.viewer, false); // off unless set
+});
+
+test("didactics alerts: each one goes out once, to the right phones, and the switch only quiets the general ones", async () => {
+  const { sendDidacticAlerts } = await import("../lib/didactic-alerts.js");
+  const { setDidactics } = await import("../lib/dataset.js");
+  const st = openStore();
+  const date = "2026-11-02"; // a Monday
+  const person = (id, last, first, cls) => ({ id, last, first, preferred: first, cls, canonical: `${last}, ${first}`, aliases: [] });
+  const ds = {
+    people: [person("doe-jane", "Doe", "Jane", "CA-1"), person("roe-max", "Roe", "Max", "CA-2"), person("poe-kim", "Poe", "Kim", "CA-3")],
+    months: { "2026-11": { rows: {
+      "doe-jane": { rotation: "Basic Anesthesia", days: { 2: { t: "BA" } } },
+      "roe-max": { rotation: "Cardiac", days: { 2: { t: "Vac" } } },
+      "poe-kim": { rotation: "Basic Anesthesia", days: { 2: { t: "BA" } } },
+    }, days: 30 } },
+    daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] },
+  };
+  setDidactics(ds, "2026-11", {
+    zoom: [{ key: "monday", label: "Monday Zoom", url: "https://example.zoom.us/j/1" }],
+    events: [{ date, start: "17:00", end: "18:00", series: "monday", kind: "board-review", title: "Board review", virtual: true, zoom: "monday",
+      people: [{ name: "Poe", role: "presenter", topic: "Acid-base" }, { name: "Dr. Smith", role: "moderator" }] }],
+  });
+  await st.setJSON("dataset", ds);
+  const [jane, max, poe, quietPoe] = await Promise.all([fakePhone(), fakePhone(), fakePhone(), fakePhone()]);
+  const id = (sub) => push.phoneId(sub);
+  await st.setJSON("push/subs", {
+    [id(jane.sub)]: { ...jane.sub, pid: "doe-jane" },
+    [id(max.sub)]: { ...max.sub, pid: "roe-max" }, // on vacation
+    [id(poe.sub)]: { ...poe.sub, pid: "poe-kim" },
+    [id(quietPoe.sub)]: { ...quietPoe.sub, pid: "poe-kim", lectures: false }, // still hears about presenting
+  });
+  const site = "https://dmc.example";
+  const run = (day, min) => sendDidacticAlerts(st, { now: zonedTime(day, min), site });
+  const last = (phone) => phone.open(phone.received.at(-1).body);
+
+  assert.deepEqual(await run("2026-11-01", 1140), { due: 1, sent: 2 }); // Sunday 7p: the presenter's two phones
+  assert.equal(last(poe).title, "Tomorrow you present at 5p");
+  assert.equal(last(poe).body, "Acid-base. On Zoom. Moderator: Dr. Smith. Have your slides ready to share.");
+  assert.deepEqual(await run("2026-11-01", 1145), { due: 1, sent: 0 }); // already sent
+  assert.deepEqual(await run(date, 1000), { due: 1, sent: 2 }); // 4:40p: set up, not "starts in 5 minutes"
+  assert.equal(last(quietPoe).title, "You present at 5p");
+  assert.equal(last(quietPoe).body, "Join by 4:55p to test sharing your screen. Tap to join.");
+  assert.deepEqual(await run(date, 1010), { due: 0, sent: 0 });
+  assert.deepEqual(await run(date, 1015), { due: 1, sent: 1 }); // 4:55p: everyone else it's for
+  assert.deepEqual(await run(date, 1016), { due: 1, sent: 0 });
+  jane.close(); max.close(); poe.close(); quietPoe.close();
+  assert.deepEqual([jane.received.length, max.received.length, poe.received.length, quietPoe.received.length], [1, 0, 2, 2]);
+  const got = jane.received[0];
+  assert.equal(got.headers.urgency, "high");
+  assert.equal(got.headers.ttl, "600"); // no use once the session is well under way
+  const msg = jane.open(got.body);
+  assert.equal(msg.title, "Monday board review starts in 5 minutes");
+  assert.equal(msg.body, "5p Board review · Dr. Smith. On Zoom: tap to join.");
+  assert.equal(msg.url, "/#/didactics");
+  assert.equal(msg.origin, site);
+
+  // The switch in More > Alerts, and it survives the phone signing up again.
+  const endpoint = "https://web.push.apple.com/lectures-test";
+  const subscribe = (extra = {}) => call("POST", "/api/push/subscribe", { subscription: { endpoint, keys: jane.sub.keys }, pid: "doe-jane", ...extra }, viewer);
+  const saved = async () => (await st.getJSON("push/subs"))[push.phoneId({ endpoint })];
+  assert.equal((await subscribe()).status, 200);
+  assert.equal((await saved()).lectures, true);
+  assert.equal((await call("POST", "/api/push/lectures", { endpoint, on: false }, viewer)).status, 200);
+  assert.equal((await subscribe()).status, 200);
+  assert.equal((await saved()).lectures, false);
+  assert.equal((await call("POST", "/api/push/lectures", { endpoint, on: "yes" }, viewer)).status, 400);
+  assert.equal((await call("POST", "/api/push/lectures", { endpoint: "https://web.push.apple.com/nobody", on: true }, viewer)).status, 404);
+  assert.equal((await call("POST", "/api/push/lectures", { endpoint, on: true })).status, 401); // passcode needed
 });

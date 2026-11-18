@@ -45,8 +45,25 @@ export function whereLine(d) {
   return "";
 }
 
+// Hospitals the Harper OR sheet doesn't cover.
+const OFF_SHEET = new Set(["va", "chm", "hvsh", "sinai", "pain", "offservice"]);
+
+// Whether the posted sheet says anything about this person's day. It doesn't for someone off, on
+// vacation or post-call, working nights, or at another hospital, unless the sheet names them for
+// something in the day. They aren't buzzed for it (a night float resident is asleep at 2p).
+export function sheetConcerns(d) {
+  if (!d) return true;
+  if (d.roles.some((r) => r.kind !== "night")) return true;
+  if (["vacation", "off", "holiday", "postcall"].includes(d.status)) return false;
+  if (d.call === "NF" || d.roles.some((r) => r.kind === "night")) return false;
+  return !(d.status === "work" && OFF_SHEET.has(d.site));
+}
+
+// null: this person isn't alerted (see sheetConcerns). Phones with nobody picked always are.
 export function dailyAlert(model, date, pid, today) {
+  const d = pid && model.person(pid) ? model.day(pid, date) : null;
+  if (d && !sheetConcerns(d)) return null;
   const title = `${dayWord(date, today)} OR schedule is posted`;
-  const mine = pid && model.person(pid) ? whereLine(model.day(pid, date)) : "";
+  const mine = d ? whereLine(d) : "";
   return { title, body: mine || "Tap to see the rooms and who's where.", url: `/#/day/${date}`, tag: `daily-${date}` };
 }

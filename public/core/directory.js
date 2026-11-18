@@ -224,7 +224,7 @@ export function createDirectory(ds, model) {
     };
   }
 
-  // An attending named on the daily sheet ("Patel", "Kahai/David"); prefers the site's own list.
+  // An attending named on the daily sheet ("Quill", "Rook/Sable"); prefers the site's own list.
   function staff(name, { site = "harper" } = {}) {
     if (!name) return null;
     const prefer = new Set(dir.staff.filter((s) => s.site === site).map((s) => s.id));

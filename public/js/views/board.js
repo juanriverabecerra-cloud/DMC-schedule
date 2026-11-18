@@ -107,7 +107,7 @@ export function renderBoard(ctx) {
     segHolder.replaceChildren(seg());
     draw();
   });
-  const segHolder = h("div", { style: { marginBottom: "12px" } }, seg());
+  const segHolder = h("div", { class: "span-all", style: { marginBottom: "12px" } }, seg());
 
   if (!model.hasCall(state.date)) root.append(notice("warn", "info", "No call sheet for this month yet; showing planned rotations only."));
   const dl = model.daily(state.date);

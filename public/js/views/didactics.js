@@ -221,7 +221,7 @@ export function renderDidactics(ctx) {
   const prefs = local.get("didPrefs", { filter: "all" });
 
   if (D.months.length > 1) {
-    root.append(h("div", { style: { marginBottom: "12px" } }, segmented(D.months.map((m) => [m, fmtMonth(m).replace(/ \d+$/, "")]), month, (v) => { state.didMonth = v; ctx.render(); })));
+    root.append(h("div", { class: "span-all", style: { marginBottom: "12px" } }, segmented(D.months.map((m) => [m, fmtMonth(m).replace(/ \d+$/, "")]), month, (v) => { state.didMonth = v; ctx.render(); })));
   }
 
   // Next up: the next session from now that's on your calendar.
@@ -263,7 +263,7 @@ export function renderDidactics(ctx) {
     }
     for (const date of byDate.keys()) if (state.didShowPast || date >= state.today) drawDate(date);
   }
-  const filterHolder = h("div", { style: { margin: "4px 0 6px" } });
+  const filterHolder = h("div", { class: "span-all", style: { margin: "4px 0 6px" } });
   const drawFilters = () => filterHolder.replaceChildren(segmented(FILTERS.filter(([k]) => k !== "mine" || me), prefs.filter, (v) => {
     prefs.filter = v; local.set("didPrefs", prefs); drawFilters(); draw();
   }));

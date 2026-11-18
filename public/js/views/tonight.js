@@ -19,7 +19,7 @@ export function renderTonight(ctx) {
   const root = h("div");
   const lines = [[/^resident board runner/i, "Resident BR"], [/^mda board runner/i, "MDA BR"], [/^harper or main desk/i, "OR desk"], [/^pacu harper/i, "PACU"], [/^mda ob$/i, "MDA OB"]]
     .map(([re, label]) => { const p = model.dir.place(re); return p ? callChip(model.dir, label, p.numbers) : null; }).filter(Boolean);
-  if (lines.length) root.append(h("div", { class: "callchips", style: { margin: "0 2px 12px" } }, lines));
+  if (lines.length) root.append(h("div", { class: "callchips span-all", style: { margin: "0 2px 12px" } }, lines));
   const where = (d) => [d.rotation || d.label, d.roles.length ? headline(d) : ""].filter(Boolean).join(" · ");
   const holiday = model.roster(date).some((d) => d.status === "holiday");
   if (holiday) root.append(notice("", "info", "Holiday: coverage is provided by the CRNAs."));

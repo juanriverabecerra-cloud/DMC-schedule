@@ -8,7 +8,7 @@ import { dayGaps } from "../../core/gaps.js";
 import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
-import { reminderCard } from "./reminders.js";
+import { installCard, reminderCard } from "./reminders.js";
 import { swapsTodayCard } from "./requests.js";
 import { inboxTodayCard } from "./inbox.js";
 import { aheadCard } from "./exams.js";
@@ -98,6 +98,7 @@ export function renderToday(ctx) {
   const root = h("div");
   if (!state.me || !model.person(state.me)) {
     root.append(
+      installCard(ctx) || "",
       notice("", "user", "Choose who you are to see your own day. ", h("a", { href: "#/pick" }, "Pick yourself")),
       didacticsDayCard(ctx) || "",
       tonightMini(ctx) || emptyState("calendar", "No schedule for this day", "Upload a call sheet in Admin."),
@@ -110,7 +111,8 @@ export function renderToday(ctx) {
   // Admins: a sick call or this week's swaps, before anything else.
   const requests = state.date === state.today ? inboxTodayCard(ctx) : null;
   if (requests) root.append(requests);
-  const reminder = reminderCard(ctx);
+  // One card at a time: getting onto the Home Screen comes first, since alerts depend on it.
+  const reminder = installCard(ctx) || reminderCard(ctx);
   if (reminder) root.append(reminder);
   // Swaps waiting on you come before your own day: someone's waiting on an answer.
   const swapNews = state.date === state.today ? swapsTodayCard(ctx) : null;

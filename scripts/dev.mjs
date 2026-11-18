@@ -1,5 +1,5 @@
 // Local server that mimics Netlify: serves public/ and routes /api, /cal and /bg to the functions.
-// Data goes to .localdata/. Passcode "dev", admin key "devadmin" unless set in the environment.
+// Data goes to .localdata/. Passcode "dev", admin key "devadmin", demo passcode "demo" unless set in the environment.
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.DMC_LOCAL_STORE ||= path.join(root, ".localdata");
 process.env.APP_PASSCODE ||= "dev";
 process.env.ADMIN_KEY ||= "devadmin";
+process.env.DEMO_PASSCODE ||= "demo";
 
 const { default: api } = await import("../netlify/functions/api.mjs");
 const backgrounds = {

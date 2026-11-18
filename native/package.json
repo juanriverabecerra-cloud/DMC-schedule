@@ -1,0 +1,21 @@
+{
+  "name": "dmc-schedule-native",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The iPhone and Android shells for DMC Schedule. The app itself is the website; these add widgets and alerts.",
+  "scripts": {
+    "sync": "cap sync",
+    "project": "cd ios/App && xcodegen generate",
+    "local": "cap sync && node scripts/use-local.mjs",
+    "snapshots": "node scripts/make-fixture.mjs && swift run --package-path ios/ScheduleWidgets WidgetSnapshots ios/ScheduleWidgets/Fixtures/feed.json ios/ScheduleWidgets/.snapshots"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/ios": "8.6.0",
+    "@capacitor/push-notifications": "8.1.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0"
+  }
+}

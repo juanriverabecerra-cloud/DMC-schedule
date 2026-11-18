@@ -207,7 +207,7 @@ export function renderCall(ctx) {
     ext.length ? `Extensions are dialed as ${ext.map((r) => `${r.prefix}xxxx → (${r.base.slice(0, 3)}) ${r.base.slice(3)}-xxxx`).join(", ")}. ` : "",
     "Pagers and other extensions copy to the clipboard. Numbers come from the anesthesia badge cards and the Harper phone list; tell an admin if one is wrong."));
 
-  root.append(h("div", { class: "search", style: { marginBottom: "12px" } }, icon("search"), search), results, browse);
+  root.append(h("div", { class: "search span-all", style: { marginBottom: "12px" } }, icon("search"), search), results, browse);
   drawResults();
   return root;
 }

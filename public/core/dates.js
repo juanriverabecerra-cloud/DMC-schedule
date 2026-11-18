@@ -82,6 +82,20 @@ export function nowMinutesLocal(now = new Date()) {
   return h * 60 + m;
 }
 
+// The moment a wall-clock time happens in the hospital's time zone, whatever zone the server is in.
+// `minutes` may run past midnight.
+export function zonedTime(date, minutes = 0) {
+  const { y, m, d } = parts(date);
+  const wall = Date.UTC(y, m - 1, d, 0, minutes);
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const offsetAt = (ms) => {
+    const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, Number(x.value)]));
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - ms;
+  };
+  const first = wall - offsetAt(wall);
+  return new Date(wall - offsetAt(first)); // a second pass settles the hours around a clock change
+}
+
 export function academicYearOf(date) {
   const { y, m } = parts(date);
   return m >= 7 ? y : y - 1;

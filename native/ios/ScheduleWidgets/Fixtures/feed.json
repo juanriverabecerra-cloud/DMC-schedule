@@ -1,0 +1,244 @@
+{
+ "v": 1,
+ "generatedAt": "2026-03-10T14:00:00.000Z",
+ "today": "2026-03-10",
+ "name": "Sam",
+ "days": [
+  {
+   "date": "2026-03-10",
+   "letter": "T",
+   "title": "Basic Anesthesia – Vascular",
+   "sub": "Harper",
+   "time": "6a–6p",
+   "chips": [],
+   "tone": "work",
+   "color": "#7fb7ff",
+   "code": "BA-V",
+   "lines": [],
+   "on": [
+    {
+     "k": "Late",
+     "v": "Tanaka"
+    },
+    {
+     "k": "10a–7p",
+     "v": "Marchetti"
+    },
+    {
+     "k": "Night float",
+     "v": "Lindqvist-Aldana, Okafor"
+    },
+    {
+     "k": "Cardiac",
+     "v": "Lindqvist-Aldana"
+    }
+   ],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-11",
+   "letter": "W",
+   "title": "OR 12 · Whitfield",
+   "sub": "Basic Anesthesia - Vascular · Harper",
+   "time": "6a–6p",
+   "chips": [],
+   "tone": "work",
+   "color": "#7fb7ff",
+   "code": "OR 12",
+   "lines": [
+    "Starts 7:30 · 3 cases",
+    "MDA Abara",
+    "JA Marchetti",
+    "Breaks Tanaka"
+   ],
+   "on": [
+    {
+     "k": "10a–7p",
+     "v": "Marchetti"
+    },
+    {
+     "k": "Night float",
+     "v": "Lindqvist-Aldana, Okafor"
+    }
+   ],
+   "posted": true,
+   "draft": false
+  },
+  {
+   "date": "2026-03-12",
+   "letter": "T",
+   "title": "Basic Anesthesia – Vascular",
+   "sub": "Harper",
+   "time": "6a–6p",
+   "chips": [
+    "Late till 6p"
+   ],
+   "tone": "late",
+   "color": "#7fb7ff",
+   "code": "BA-V",
+   "lines": [],
+   "on": [
+    {
+     "k": "Late",
+     "v": "Calloway"
+    },
+    {
+     "k": "10a–7p",
+     "v": "Marchetti"
+    },
+    {
+     "k": "Night float",
+     "v": "Lindqvist-Aldana, Okafor"
+    }
+   ],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-13",
+   "letter": "F",
+   "title": "24-hr call",
+   "sub": "Basic Anesthesia - Vascular · Harper",
+   "time": "6a–6a",
+   "chips": [],
+   "tone": "call",
+   "color": "#7fb7ff",
+   "code": "24h",
+   "lines": [],
+   "on": [
+    {
+     "k": "10a–7p",
+     "v": "Marchetti"
+    },
+    {
+     "k": "24-hr call",
+     "v": "Lindqvist-Aldana, Calloway"
+    }
+   ],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-14",
+   "letter": "S",
+   "title": "Off",
+   "sub": "Basic Anesthesia - Vascular · Harper",
+   "time": "",
+   "chips": [],
+   "tone": "off",
+   "color": null,
+   "code": "Off",
+   "lines": [],
+   "on": [
+    {
+     "k": "24-hr call",
+     "v": "Marchetti, Okafor"
+    },
+    {
+     "k": "12-hr call",
+     "v": "Lindqvist-Aldana"
+    }
+   ],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-15",
+   "letter": "S",
+   "title": "Off",
+   "sub": "Basic Anesthesia - Vascular · Harper",
+   "time": "",
+   "chips": [],
+   "tone": "off",
+   "color": null,
+   "code": "Off",
+   "lines": [],
+   "on": [
+    {
+     "k": "12-hr call",
+     "v": "Lindqvist-Aldana, Tanaka"
+    }
+   ],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-16",
+   "letter": "M",
+   "title": "Basic Anesthesia – Vascular",
+   "sub": "Harper",
+   "time": "6a–6p",
+   "chips": [],
+   "tone": "work",
+   "color": "#7fb7ff",
+   "code": "BA-V",
+   "lines": [],
+   "on": [],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-17",
+   "letter": "T",
+   "title": "Basic Anesthesia – Vascular",
+   "sub": "Harper",
+   "time": "6a–6p",
+   "chips": [],
+   "tone": "work",
+   "color": "#7fb7ff",
+   "code": "BA-V",
+   "lines": [],
+   "on": [],
+   "posted": false,
+   "draft": false
+  },
+  {
+   "date": "2026-03-18",
+   "letter": "W",
+   "title": "Basic Anesthesia – Vascular",
+   "sub": "Harper",
+   "time": "6a–6p",
+   "chips": [],
+   "tone": "work",
+   "color": "#7fb7ff",
+   "code": "BA-V",
+   "lines": [],
+   "on": [],
+   "posted": false,
+   "draft": false
+  }
+ ],
+ "screens": [
+  {
+   "at": "2026-03-10T14:00:00.000Z",
+   "date": "2026-03-10"
+  },
+  {
+   "at": "2026-03-10T18:00:00.000Z",
+   "date": "2026-03-11"
+  },
+  {
+   "at": "2026-03-11T22:00:00.000Z",
+   "date": "2026-03-12"
+  },
+  {
+   "at": "2026-03-12T22:00:00.000Z",
+   "date": "2026-03-13"
+  }
+ ],
+ "ahead": [
+  {
+   "k": "Next late day",
+   "v": "Thu 3/12"
+  },
+  {
+   "k": "Golden weekend",
+   "v": "3/28–3/29"
+  },
+  {
+   "k": "ITE",
+   "v": "331 days"
+  }
+ ]
+}

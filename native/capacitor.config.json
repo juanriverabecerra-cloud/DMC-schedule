@@ -1,0 +1,23 @@
+{
+  "appId": "app.netlify.dmcschedule",
+  "appName": "DMC Schedule",
+  "webDir": "www",
+  "server": {
+    "url": "https://dmcschedule.netlify.app",
+    "errorPath": "offline.html"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0b0f14",
+    "limitsNavigationsToAppBoundDomains": true,
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "backgroundColor": "#0b0f14"
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}

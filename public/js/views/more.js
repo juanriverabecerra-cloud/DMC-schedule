@@ -6,6 +6,7 @@ import { subscribeCard } from "./common.js";
 import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus, turnOffAlerts } from "../push.js";
+import { syncWidget } from "../native.js";
 import { requestsCard } from "./requests.js";
 import { inboxCounts } from "./inbox.js";
 import { examsNow, countdownWord } from "./exams.js";
@@ -110,6 +111,7 @@ export function renderMore(ctx) {
       if (!confirm("Sign out on this device?")) return;
       // A signed-out phone shouldn't keep showing the schedule on its lock screen.
       await turnOffAlerts().catch(() => {});
+      await syncWidget(null); // and its widgets go blank
       for (const k of ["passcode", "adminKey", "ds", "etag", "me"]) local.del(k);
       location.hash = "#/setup";
       location.reload();

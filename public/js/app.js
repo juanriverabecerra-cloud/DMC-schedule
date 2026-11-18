@@ -5,6 +5,7 @@ import { createModel } from "../core/model.js";
 import { todayLocal, addDays, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
 import { dayGaps } from "../core/gaps.js";
 import { relevantTo } from "../core/didactics.js";
+import { screenLayout } from "../core/screen.js";
 import { renderToday } from "./views/today.js";
 import { renderTonight } from "./views/tonight.js";
 import { renderBoard } from "./views/board.js";
@@ -22,6 +23,8 @@ import { renderDidactics } from "./views/didactics.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
 import { remindersFor } from "./views/reminders.js";
 import { syncAlerts } from "./push.js";
+import { syncWidget, reloadWidgets, onWidgetOpen, onAlertTap, onScreenRegions } from "./native.js";
+import { watchInstall } from "./install.js";
 import { retryUpload } from "./logged.js";
 import { loadInbox, inboxCounts } from "./views/inbox.js";
 
@@ -45,7 +48,35 @@ const TABS = [
 ];
 
 const DATED = new Set(["today", "tonight", "board"]);
+// Screens made of cards flow into two columns when the window has room. Forms and long single
+// lists stay in one; wide tables just get the extra width.
+const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall"]);
+function layoutFor(r) {
+  if (r.name === "admin") return !local.get("adminKey") ? "" : local.get("adminTab", "uploads") === "uploads" ? "cols" : "wide";
+  return TWO_COLUMNS.has(r.name) ? "cols" : "";
+}
 const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams"];
+
+// Some screens keep part of themselves for the phone: a strip down one side, or a clock in one
+// corner (see core/screen.js). The stylesheet can read how wide a margin is, but not what it is
+// for, so this works that out and names it on <html>; the stylesheet does the rest. In the app
+// the phone also says exactly which rectangles are taken.
+let reserved = null;
+function screenShape() {
+  const probe = h("div", { style: { position: "fixed", visibility: "hidden", pointerEvents: "none", paddingTop: "var(--safe-top)", paddingLeft: "var(--safe-left)", paddingRight: "var(--safe-right)" } });
+  document.body.append(probe);
+  const style = getComputedStyle(probe);
+  const insets = { top: parseFloat(style.paddingTop) || 0, left: parseFloat(style.paddingLeft) || 0, right: parseFloat(style.paddingRight) || 0 };
+  probe.remove();
+  // What the phone reported is for one size of screen: after a turn it is stale until it reports again.
+  const current = reserved && Math.abs(reserved.width - innerWidth) <= 1 && Math.abs(reserved.height - innerHeight) <= 1;
+  const shape = screenLayout({ width: innerWidth, height: innerHeight, insets, regions: current ? reserved.regions : [] });
+  const root = document.documentElement;
+  for (const name of ["strip", "corner"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
+  for (const [name, value] of [["--strip-top", shape.stripTop], ["--strip-bottom", shape.stripBottom], ["--corner-width", shape.cornerWidth], ["--corner-height", shape.cornerHeight]]) {
+    if (value) root.style.setProperty(name, `${value}px`); else root.style.removeProperty(name);
+  }
+}
 
 function route() {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -75,6 +106,7 @@ async function reload({ quiet = false, soft = false } = {}) {
     if (changed || !state.model) {
       state.ds = ds;
       rebuild();
+      if (changed) reloadWidgets(); // the widgets shouldn't wait for their own timer
       // A background refresh repaints the schedule screens, never a form someone is filling in
       // or a search box someone is typing in.
       const typing = document.activeElement?.matches?.("input, textarea, select");
@@ -105,6 +137,7 @@ function setMe(pid) {
   state.me = pid;
   if (pid) local.set("me", pid); else local.del("me");
   syncAlerts(pid || null);
+  syncWidget(pid || null);
 }
 
 function topbar(r) {
@@ -210,6 +243,8 @@ export function render() {
     content = h("div", { class: "empty-state" }, h("h3", null, "Something went wrong"), h("p", null, String(err.message || err)));
   }
   view.replaceChildren(content);
+  const layout = state.model ? layoutFor(r) : "";
+  if (layout) document.body.dataset.layout = layout; else delete document.body.dataset.layout;
 }
 
 // A phone left open past midnight moves on to the new day.
@@ -228,6 +263,10 @@ document.addEventListener("visibilitychange", () => {
   reload({ quiet: true });
 });
 window.addEventListener("online", () => reload({ quiet: true }));
+// Turning or unfolding the phone changes which part of the screen it keeps.
+screenShape();
+window.addEventListener("resize", screenShape);
+onScreenRegions((screen) => { reserved = screen; screenShape(); });
 // The daily sheet can change through the afternoon: keep an open app current.
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
@@ -242,6 +281,14 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
     if (e.data?.type === "open" && typeof e.data.url === "string" && new URL(e.data.url).origin === location.origin) location.href = e.data.url;
   });
 }
+
+// Chrome on Android says when it can install the app; Today's card then offers the button.
+watchInstall(() => { if (route().name === "today") render(); });
+
+// In the app: a tapped widget or alert opens its day, and the widgets get this resident's feed.
+onWidgetOpen((day) => go(`day/${day}`));
+onAlertTap((url) => { location.href = url; });
+if (local.get("passcode") || local.get("adminKey")) syncWidget(state.me || null);
 
 rebuild();
 render();
