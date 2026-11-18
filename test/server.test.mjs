@@ -944,3 +944,128 @@ test("didactics alerts: each one goes out once, to the right phones, and the swi
   assert.equal((await call("POST", "/api/push/lectures", { endpoint: "https://web.push.apple.com/nobody", on: true }, viewer)).status, 404);
   assert.equal((await call("POST", "/api/push/lectures", { endpoint, on: true })).status, 401); // passcode needed
 });
+
+test("case log: only its own devices read it, ACGME's page gets ready cases, and entering sticks", async () => {
+  const { setDaily } = await import("../lib/dataset.js");
+  const st = openStore();
+  const person = (id, last, first, cls) => ({ id, last, first, preferred: first, cls, canonical: `${last}, ${first}`, aliases: [] });
+  const ds = {
+    people: [person("doe-jane", "Doe", "Jane", "CA-1"), person("roe-max", "Roe", "Max", "CA-2")],
+    months: { "2026-11": { rows: { "doe-jane": { rotation: "Basic Anesthesia", days: { 16: { t: "BA" } } } }, days: 30 } },
+    daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] },
+  };
+  setDaily(ds, "2026-11-16", { rooms: [{ or: "7", surgeon: "Rook", cases: "2", mda: "Smith", staff: "Doe" }] });
+  await st.setJSON("dataset", ds);
+  const phone = { ...viewer, "x-device-key": "phone-key-0123456789" };
+  const other = { ...viewer, "x-device-key": "other-key-0123456789" };
+  const kase = (id, extra = {}) => ({ id, day: "2026-11-16", date: "2026-11-16", kind: "or", slot: `2026-11-16|7|${id.slice(-1)}`, seq: Number(id.slice(-1)), or: "7", surgeon: "Rook", word: "Rook", caseId: `11/16/26-Rook-${id.slice(-1)}`, site: "harper", supervisor: { last: "Smith", first: "Alex" }, age: "d", asa: "2", group: "proc", codes: ["general", "sga"], updatedAt: "2026-11-16T22:00:00.000Z", ...extra });
+
+  // Nothing yet: the first device to save owns it, and gets its ACGME button.
+  let r = await call("GET", "/api/cases/doe-jane", undefined, phone);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.cases, []);
+  assert.match(r.body.helper, /\/acgme\.js\?k=[\w-]+$/);
+  r = await call("PUT", "/api/cases/doe-jane", { cases: [kase("case00001"), kase("case00002", { asa: "" }), { id: "bad", date: "x" }], days: { "2026-11-15": { none: true } } }, phone);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.cases.map((c) => c.caseId), ["11/16/26-Rook-1", "11/16/26-Rook-2"]);
+  assert.equal(r.body.waiting, 1, "the one without an ASA isn't ready");
+  assert.deepEqual(r.body.days, { "2026-11-15": { none: true, hidden: [] } });
+
+  // Another device sees only that it exists, until it joins.
+  r = await call("GET", "/api/cases/doe-jane", undefined, other);
+  assert.deepEqual(r.body, { owned: false, count: 2, devices: 1 });
+  r = await call("PUT", "/api/cases/doe-jane", { cases: [kase("case00003")] }, other);
+  assert.equal(r.status, 409);
+  r = await call("PUT", "/api/cases/doe-jane", { cases: [], join: true }, other);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.devices, 2);
+
+  // ACGME's page: the private link, with CORS for ACGME only, the ready case in ACGME's terms.
+  const helper = new URL(r.body.helper).searchParams.get("k");
+  const res = await api(new Request(`http://localhost/api/acgme/${helper}`, { headers: { origin: "https://apps.acgme.org" } }));
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://apps.acgme.org");
+  const got = await res.json();
+  assert.equal(got.first, "Jane");
+  assert.equal(got.notReady, 1);
+  assert.deepEqual(got.cases.map((c) => [c.caseId, c.date, c.siteId, c.supervisor.last, c.ageId, c.group]), [["11/16/26-Rook-1", "11/16/2026", 12634, "Smith", 33, 681]]);
+  assert.deepEqual(got.cases[0].items.map((i) => i.id), [156632, 1256330, 1256333]);
+  const pre = await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "OPTIONS" }));
+  assert.equal(pre.status, 204);
+  assert.equal((await call("GET", "/api/acgme/not-a-real-token")).status, 404);
+
+  // The page saw it in ACGME's list: marked entered (plain-text body, as the page sends it).
+  const posted = await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ entered: ["case00001"] }) }));
+  assert.deepEqual(await posted.json(), { ok: true, changed: 1 });
+  r = await call("GET", "/api/cases/doe-jane", undefined, phone);
+  assert.ok(r.body.cases.find((c) => c.id === "case00001").enteredAt);
+  assert.ok(r.body.helperSeenAt, "the app can tell the button works");
+  // A device with an older copy can't undo it by accident; saying so on purpose can.
+  r = await call("PUT", "/api/cases/doe-jane", { cases: [kase("case00001", { updatedAt: new Date().toISOString(), enteredAt: "" })] }, phone);
+  assert.ok(r.body.cases.find((c) => c.id === "case00001").enteredAt);
+  r = await call("POST", "/api/cases/doe-jane/entered", { ids: ["case00001"], on: false }, phone);
+  assert.equal(r.body.cases.find((c) => c.id === "case00001").enteredAt, "");
+  // Someone else's device can't mark anything, and other residents' logs stay apart.
+  assert.equal((await call("POST", "/api/cases/doe-jane/entered", { ids: ["case00001"] }, { ...viewer, "x-device-key": "stranger-key-0123456" })).status, 403);
+  assert.deepEqual((await call("GET", "/api/cases/roe-max", undefined, phone)).body.cases, []);
+  assert.equal((await call("GET", "/api/cases/doe-jane", undefined, viewer)).status, 400, "a device key is needed");
+});
+
+test("case log nudges: after a case day with nothing logged, never twice, and weekly when cases wait", async () => {
+  const { sendCaseNudges, nudgesFor } = await import("../lib/caselog-nudges.js");
+  const { setDaily } = await import("../lib/dataset.js");
+  const { createModel } = await import("../public/core/model.js");
+  const st = openStore();
+  const person = (id, last, first, cls) => ({ id, last, first, preferred: first, cls, canonical: `${last}, ${first}`, aliases: [] });
+  const ds = {
+    people: [person("doe-jane", "Doe", "Jane", "CA-1"), person("roe-max", "Roe", "Max", "CA-2"), person("poe-kim", "Poe", "Kim", "CA-3")],
+    months: { "2026-11": { rows: {
+      "doe-jane": { rotation: "Basic Anesthesia", days: { 16: { t: "BA" }, 17: { t: "BA" } } },
+      "roe-max": { rotation: "Basic Anesthesia", days: { 16: { t: "NF" } } },
+      "poe-kim": { rotation: "PAT", days: { 16: { t: "PAT" } } },
+    }, days: 30 } },
+    daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] },
+  };
+  setDaily(ds, "2026-11-16", { rooms: [{ or: "7", surgeon: "Rook", cases: "3", mda: "Smith", staff: "Doe" }] });
+  await st.setJSON("dataset", ds);
+  const m = createModel(ds);
+  const started = { keys: ["x"], cases: {}, days: {}, createdAt: "2026-11-01T00:00:00Z" };
+  // A regular day ends 6p here: the nudge is at 6:15p and holds for an hour.
+  assert.deepEqual(nudgesFor(m, "doe-jane", started, "2026-11-16", 1094), []);
+  const [log] = nudgesFor(m, "doe-jane", started, "2026-11-16", 1095);
+  assert.deepEqual(log.payload, { title: "Log today's cases", body: "OR 7 · Rook · 3 cases, already laid out. Tap to log.", url: "/#/cases/2026-11-16", tag: "cases-2026-11-16" });
+  assert.deepEqual(nudgesFor(m, "doe-jane", started, "2026-11-16", 1155), []);
+  assert.deepEqual(nudgesFor(m, "doe-jane", null, "2026-11-16", 1095), [], "not until they've started a case log");
+  assert.deepEqual(nudgesFor(m, "doe-jane", { ...started, days: { "2026-11-16": { none: true, hidden: [] } } }, "2026-11-16", 1095), []);
+  assert.deepEqual(nudgesFor(m, "poe-kim", started, "2026-11-16", 1095), [], "no cases in PAT clinic");
+  // Interns log a line now and then: no daily nudge even in an OR, only the weekly one for what waits.
+  const intern = createModel({ ...ds, people: ds.people.map((p) => (p.id === "doe-jane" ? { ...p, cls: "PGY-1" } : p)) });
+  assert.deepEqual(nudgesFor(intern, "doe-jane", started, "2026-11-16", 1095), []);
+  const internLine = { ...started, cases: { a: { id: "line000001", day: "2026-11-16", date: "2026-11-16", kind: "procedure", site: "harper", supervisor: { last: "Smith" }, age: "d", asa: "", group: "proc", codes: ["art"] } } };
+  assert.equal(nudgesFor(intern, "doe-jane", internLine, "2026-11-22", 1140)[0].payload.title, "1 case waiting for ACGME");
+  // Night float: the next morning at 7:30, about last night.
+  assert.equal(nudgesFor(m, "roe-max", started, "2026-11-17", 450)[0].payload.title, "Log last night's cases");
+  // Partly logged: finish; all logged: nothing.
+  const one = { id: "case00001", day: "2026-11-16", date: "2026-11-16", site: "harper", supervisor: { last: "Smith" }, age: "d", asa: "2", group: "proc", codes: ["general"] };
+  assert.equal(nudgesFor(m, "doe-jane", { ...started, cases: { a: one } }, "2026-11-16", 1100)[0].payload.title, "1 of 3 cases logged");
+  const all = Object.fromEntries([1, 2, 3].map((n) => [`c${n}`, { ...one, id: `case0000${n}` }]));
+  assert.deepEqual(nudgesFor(m, "doe-jane", { ...started, cases: all }, "2026-11-16", 1100), []);
+  // Sunday 7p: ready cases waiting five days or more.
+  const waiting = { ...started, cases: { a: { ...one, date: "2026-11-16", day: "2026-11-16" } } };
+  assert.equal(nudgesFor(m, "doe-jane", waiting, "2026-11-22", 1140).find((n) => n.key.includes("acgme")).payload.title, "1 case waiting for ACGME");
+  assert.equal(nudgesFor(m, "doe-jane", waiting, "2026-11-22", 1140 - 15).length, 0);
+
+  // Sent once, only to phones that left the switch on.
+  const [jane, quiet] = await Promise.all([fakePhone(), fakePhone()]);
+  await st.setJSON("push/subs", {
+    [push.phoneId(jane.sub)]: { ...jane.sub, pid: "doe-jane" },
+    [push.phoneId(quiet.sub)]: { ...quiet.sub, pid: "doe-jane", cases: false },
+  });
+  await st.setJSON("cases/doe-jane", started);
+  const site = "https://dmc.example";
+  assert.deepEqual(await sendCaseNudges(st, { now: zonedTime("2026-11-16", 1100), site }), { due: 1, sent: 1 });
+  assert.deepEqual(await sendCaseNudges(st, { now: zonedTime("2026-11-16", 1110), site }), { due: 1, sent: 0 });
+  assert.equal(jane.received.length, 1);
+  assert.equal(quiet.received.length, 0);
+  assert.equal(jane.open(jane.received[0].body).url, "/#/cases/2026-11-16");
+  jane.close(); quiet.close();
+});

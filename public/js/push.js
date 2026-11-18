@@ -41,16 +41,18 @@ export async function turnOnAlerts(pid) {
   sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(publicKey) });
   const mode = local.get("alerts")?.mode || "smart";
   const lectures = lecturesHere();
-  await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode, lectures } });
-  local.set("alerts", { endpoint: sub.endpoint, key: publicKey, pid, mode, lectures, admin: !!local.get("adminKey"), on: new Date().toISOString() });
+  const cases = caseNudgesHere();
+  await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode, lectures, cases } });
+  local.set("alerts", { endpoint: sub.endpoint, key: publicKey, pid, mode, lectures, cases, admin: !!local.get("adminKey"), on: new Date().toISOString() });
 }
 
 async function turnOnNative(pid) {
   const token = await nativePushToken();
   const mode = local.get("alerts")?.mode || "smart";
   const lectures = lecturesHere();
-  await api("/api/push/subscribe", { method: "POST", body: { native: { platform: nativePlatform(), token }, pid, mode, lectures } });
-  local.set("alerts", { token, pid, mode, lectures, admin: !!local.get("adminKey"), on: new Date().toISOString(), synced: new Date().toISOString() });
+  const cases = caseNudgesHere();
+  await api("/api/push/subscribe", { method: "POST", body: { native: { platform: nativePlatform(), token }, pid, mode, lectures, cases } });
+  local.set("alerts", { token, pid, mode, lectures, cases, admin: !!local.get("adminKey"), on: new Date().toISOString(), synced: new Date().toISOString() });
 }
 
 // What the server knows this phone by: a web address in a browser, a device token in the app.
@@ -72,6 +74,16 @@ export async function setLectureReminders(on) {
   if (!saved?.endpoint && !saved?.token) throw new Error("Turn on alerts on this phone first.");
   await api("/api/push/lectures", { method: "POST", body: { ...address(saved), on } });
   local.set("alerts", { ...saved, lectures: on });
+}
+
+// Case log nudges (after a case day with nothing logged, and once a week when cases wait for
+// ACGME): on unless this phone turned them off. Only sent to someone who has started a case log.
+export const caseNudgesHere = () => local.get("alerts")?.cases !== false;
+export async function setCaseNudges(on) {
+  const saved = local.get("alerts");
+  if (!saved?.endpoint && !saved?.token) throw new Error("Turn on alerts on this phone first.");
+  await api("/api/push/cases", { method: "POST", body: { ...address(saved), on } });
+  local.set("alerts", { ...saved, cases: on });
 }
 
 export async function turnOffAlerts() {
@@ -110,7 +122,7 @@ export async function syncAlerts(pid) {
   try {
     const sub = await (await worker()).pushManager.getSubscription();
     if (!sub) { local.del("alerts"); return; }
-    await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode: saved.mode, lectures: lecturesHere() } });
+    await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON(), pid, mode: saved.mode, lectures: lecturesHere(), cases: caseNudgesHere() } });
     local.set("alerts", { ...saved, endpoint: sub.endpoint, pid, admin, synced: new Date().toISOString() });
   } catch { /* try again next time */ }
 }

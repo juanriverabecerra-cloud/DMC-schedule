@@ -12,6 +12,7 @@ import { installCard, reminderCard } from "./reminders.js";
 import { swapsTodayCard } from "./requests.js";
 import { inboxTodayCard } from "./inbox.js";
 import { aheadCard } from "./exams.js";
+import { casesTodayCard, procedureShortcut } from "./cases.js";
 
 function shortCode(d) {
   if (d.call === "NF") return "NF";
@@ -143,6 +144,12 @@ export function renderToday(ctx) {
   else if (state.date === tomorrow && !model.daily(tomorrow) && d.status === "work" && ["harper", "opsc", "hutzel"].includes(d.site)) {
     root.append(h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "Tomorrow's room assignments usually come out this evening."));
   }
+
+  // After an OR day: the day's cases, already laid out from the sheet, one tap away.
+  const cases = casesTodayCard(ctx);
+  if (cases) root.append(cases);
+  const procQuick = procedureShortcut(ctx);
+  if (procQuick) root.append(procQuick);
 
   // The sheet is posted the evening before: surface tomorrow's assignment while looking at today.
   if (state.date === state.today && model.daily(tomorrow)) {

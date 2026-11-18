@@ -1153,3 +1153,104 @@ test("the posted-sheet alert skips people the sheet doesn't concern that day", a
   assert.equal(alert("lee-sam", "2026-11-09"), null); // post-call
   assert.equal(alert(null, "2026-11-02").body, "Tap to see the rooms and who's where."); // nobody picked: always
 });
+
+test("case log: ACGME's form, presets and what a case still needs", async () => {
+  const A = await import("../public/core/acgme.js");
+  // Every box is one of ACGME's, once; presets and each kind of day only use real boxes.
+  const ids = [...A.ITEMS.values()].map((i) => i.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const p of Object.values(A.PRESETS)) for (const k of p.codes) assert.ok(A.ITEMS.has(k), `preset uses ${k}`);
+  for (const kind of ["or", "ob", "cardiac", "thoracic", "vascular", "neuro", "peds", "regional", "pain", "nora", "call"]) {
+    const info = A.kindInfo(kind);
+    for (const p of info.presets) assert.ok(A.PRESETS[p], `${kind} preset ${p}`);
+    for (const x of info.extras) assert.ok(A.ITEMS.has(x) || ["high-risk", "trauma"].includes(x), `${kind} extra ${x}`);
+  }
+  // Case IDs follow the resident's own habit (date, surgeon, number) and fit ACGME's 25 characters.
+  assert.equal(A.surgeonWord("Rook/Sable"), "Rook");
+  assert.equal(A.surgeonWord("Dr. O'Neil (ortho)"), "ONeil");
+  assert.equal(A.caseIdFor("2026-11-18", "Rook", 2), "11/18/26-Rook-2");
+  assert.ok(A.caseIdFor("2026-11-18", "Averyveryverylongsurgeonname", 12).length <= 25);
+
+  let c = A.blankCase({ date: "2026-11-18", surgeon: "Rook", seq: 1 });
+  assert.deepEqual(A.missing(c), ["supervisor", "ASA", "what you did"]);
+  c = A.applyPreset({ ...c, supervisor: { last: "Smith", first: "Alex" }, asa: "3" }, "ga-vl");
+  assert.equal(A.isReady(c), true);
+  assert.equal(A.summary(c), "GA · Video · Oral tube · ASA 3");
+  // Extras stay when the main choice changes; ACGME's pairs untick each other.
+  c = A.toggleCode(c, "art");
+  c = A.applyPreset(c, "ga-dl");
+  assert.deepEqual(c.codes, ["general", "dl", "ett", "art"]);
+  assert.deepEqual(A.toggleCode(A.toggleCode(c, "cpb"), "no-cpb").codes.filter((k) => /cpb/.test(k)), ["no-cpb"]);
+  assert.ok(A.toggleCode(c, "adductor").codes.includes("pnb"), "a block site means a block");
+  // High-risk swaps the delivery boxes, and survives a change of preset.
+  let ob = A.toggleCode(A.applyPreset(c, "labor-epi"), "high-risk");
+  assert.ok(ob.codes.includes("vag-hr") && !ob.codes.includes("vag"));
+  ob = A.applyPreset(ob, "cs-spinal");
+  assert.ok(ob.codes.includes("cs-hr"));
+  assert.ok(A.presetOn(ob, "cs-spinal"));
+
+  // What ACGME's page gets: ASA first (emergency uses its own box, 6 has none), and the right group.
+  const out = A.toAcgme({ ...c, asa: "2", emergency: true, ltp: "trauma", airway: "unanticipated", id: "abcdefgh12" });
+  assert.equal(out.date, "11/18/2026");
+  assert.deepEqual(out.items[0], { id: 156633, area: "ASA Physical Status", label: "2E", type: "ASA 2E" });
+  assert.deepEqual(out.radios, [134, 149]);
+  assert.equal(out.group, 681);
+  assert.equal(A.toAcgme({ ...c, asa: "6", emergency: true }).items[0].id, 156631);
+  const pain = A.applyPreset(c, "chronic-consult");
+  assert.equal(pain.asa, "");
+  assert.equal(A.isReady(pain), true);
+  assert.deepEqual(A.toAcgme(pain).items.map((i) => i.id), [156751]);
+  assert.equal(A.toAcgme(pain).group, 680);
+
+  // Habits: the resident's usual combinations and the last thing done with each surgeon.
+  const done = (n, surgeon, preset, date) => ({ ...A.applyPreset({ ...A.blankCase({ date, surgeon, seq: n }), supervisor: { last: "Smith" }, asa: "2", id: `id${n}xxxxxx` }, preset), kind: "or" });
+  const learned = A.mergeSummaries(A.summarize([done(1, "Rook", "ga-vl", "2026-11-02")]), A.summarize([done(2, "Rook", "ga-lma", "2026-11-03"), done(3, "Quill", "ga-vl", "2026-11-03")]));
+  assert.deepEqual(A.surgeonHabit(learned, "Rook").codes, ["general", "sga"]);
+  assert.equal(A.usual(learned, "or")[0].label, "GA · Video · Oral tube");
+  assert.equal(A.recentSupervisors(learned)[0].last, "Smith");
+});
+
+test("case log: the day's cases come from the OR sheet, with the supervisor from the directory", async () => {
+  const A = await import("../public/core/acgme.js");
+  const { parseDirectoryText, buildDirectory } = await import("../public/core/directory.js");
+  const built = buildDirectory(parseDirectoryText(DIR_TEXT), people, { upsert: () => null });
+  const ds = { ...dataset(), directory: built };
+  setDaily(ds, "2026-11-02", { rooms: [{ or: "7", surgeon: "Rook/Sable", time: "7:30", cases: "3", mda: "Smith", staff: "Doe" }] });
+  const m = createModel(ds);
+  const day = A.dayCases(m, "doe-jane", "2026-11-02");
+  assert.equal(day.kind, "or");
+  assert.equal(day.expected, 3);
+  assert.equal(day.where, "OR 7 · Rook/Sable");
+  assert.deepEqual(day.supervisor, { last: "Smith", first: "Alex", name: "Smith, Alex" });
+  const learned = A.summarize([{ ...A.applyPreset({ ...A.blankCase({ date: "2026-10-30", surgeon: "Rook", seq: 1 }), supervisor: { last: "Smith" }, asa: "2" }, "ga-lma"), kind: "or" }]);
+  const cards = A.startingCards(day, learned, "2026-11-02");
+  assert.deepEqual(cards.map((x) => x.caseId), ["11/02/26-Rook-1", "11/02/26-Rook-2", "11/02/26-Rook-3"]);
+  assert.deepEqual(cards[0].codes, ["general", "sga"], "first case starts from the last time with this surgeon");
+  assert.deepEqual([cards[1].inherit, cards[2].inherit], [true, true]);
+  // Which days have cases, and when a nudge would come.
+  assert.equal(A.caseKind(m.day("leed-ana", "2026-11-02")), "cardiac");
+  assert.equal(A.caseKind(m.day("van-tran-kim", "2026-11-03")), null, "PAT clinic has no cases");
+  assert.equal(A.caseKind(m.day("leed-ana", "2026-11-03")), null, "vacation");
+  assert.equal(A.caseKind(m.day("lee-sam", "2026-11-02")), "call");
+  assert.equal(A.nudgeAt(m.day("lee-sam", "2026-11-02")), 1440 + 450, "night float: 7:30 the next morning");
+  assert.equal(A.nudgeAt(m.day("doe-jane", "2026-11-03")), 1095, "late resident: 6:15p");
+});
+
+test("case log: a procedure on its own (an intern's art line) needs no ASA and replaces, not adds", async () => {
+  const A = await import("../public/core/acgme.js");
+  for (const key of A.PROCEDURES) {
+    const p = A.PRESETS[key];
+    assert.ok(p.word && A.caseIdFor("2026-11-18", p.word, 9).length <= 25, `${key} makes a Case ID that fits`);
+    for (const k of p.codes) assert.ok(A.ITEMS.has(k));
+  }
+  let c = { ...A.blankCase({ date: "2026-11-18", kind: "procedure", word: "Aline", seq: 1 }), supervisor: { last: "Smith" } };
+  assert.deepEqual(A.missing(c), ["what you did"]);
+  c = A.applyPreset(c, "proc-art");
+  assert.equal(c.caseId, "11/18/26-Aline-1");
+  assert.deepEqual(A.missing(c), [], "ready without an ASA");
+  assert.deepEqual(A.toAcgme(c).items.map((i) => i.id), [1256338], "only the art line goes to ACGME");
+  assert.deepEqual(A.applyPreset(c, "proc-cvc").codes, ["cvc", "us"], "a different procedure replaces it");
+  // An ASA given anyway still goes in; an anesthetic case still needs one.
+  assert.equal(A.toAcgme({ ...c, asa: "3" }).items[0].label, "3");
+  assert.ok(A.missing({ ...c, kind: "or", codes: ["general"] }).includes("ASA"));
+});

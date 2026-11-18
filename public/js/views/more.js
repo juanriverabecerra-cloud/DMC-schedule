@@ -10,6 +10,7 @@ import { syncWidget } from "../native.js";
 import { requestsCard } from "./requests.js";
 import { inboxCounts } from "./inbox.js";
 import { examsNow, countdownWord } from "./exams.js";
+import { caseLogLine } from "./cases.js";
 
 const LEGEND = [
   ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
@@ -65,6 +66,10 @@ export function renderMore(ctx) {
       h("div", { class: "avatar", style: { "--c": gaps.length ? "var(--gap)" : "var(--late)" } }, icon(gaps.length ? "alert" : "check")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Coverage gaps"), h("div", { class: "sub" }, gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month")),
       icon("right")),
+    me ? h("li", { class: "row tap", onclick: () => ctx.go("cases") },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("check")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Case log"), h("div", { class: "sub" }, caseLogLine(ctx))),
+      icon("right")) : null,
     h("li", { class: "row tap", onclick: () => ctx.go("hours") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours", todo("hours")), h("div", { class: "sub" }, "Your real hours, and estimates for everyone")),

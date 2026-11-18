@@ -19,6 +19,7 @@ import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
 import { cleanSubscription, phoneId, vapidKeys, sendToPhone, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
 import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
+import { caseKey, ownsLog, logView, mergeLog, markEntered, helperPayload } from "../../lib/caselog.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -122,6 +123,43 @@ export default async function handler(req) {
       return feed ? json(feed, 200, { "cache-control": "private, max-age=60" }) : fail(404, "Not found");
     }
 
+    // ---- ACGME's Add Case page reads the ready cases through the resident's private link ----
+    // (the Log cases bookmark runs public/acgme.js there; no passcode, so the link is the key).
+    const helper = path.match(/^\/api\/acgme\/([\w-]+)$/);
+    if (helper) {
+      const cors = { "access-control-allow-origin": "https://apps.acgme.org", "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type", "access-control-max-age": "600", vary: "Origin" };
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+      const owner = await feedOwner(helper[1], "acgme");
+      if (!owner) return json({ error: "This Log cases button is out of date. Set it up again from the app's Case log." }, 404, cors);
+      const key = caseKey(owner.pid);
+      // A demo button reads the demo program's case logs, which are kept apart.
+      const store = helper[1].startsWith("demo-") ? demoStore(openStore()) : st;
+      if (method === "GET") {
+        let rec = await store.getJSON(key);
+        if (rec && (!rec.helperSeenAt || Date.now() - Date.parse(rec.helperSeenAt) > 6 * 3600e3)) {
+          rec = await store.update(key, (r) => (r ? { ...r, helperSeenAt: new Date().toISOString() } : undefined));
+        }
+        const p = owner.ds.people.find((x) => x.id === owner.pid);
+        return json(helperPayload(rec, p?.preferred || p?.first || ""), 200, cors);
+      }
+      if (method === "POST") {
+        // Sent as plain text so the browser needn't ask first.
+        const body = await req.text().then((t) => { try { return JSON.parse(t); } catch { return {}; } });
+        const ids = Array.isArray(body.entered) ? body.entered.filter((x) => typeof x === "string").slice(0, 50) : [];
+        let changed = 0;
+        if (ids.length) {
+          await store.update(key, (r) => {
+            if (!r) return undefined;
+            const next = { ...r, cases: Object.fromEntries(Object.entries(r.cases || {}).map(([id, c]) => [id, { ...c }])) };
+            changed = markEntered(next, ids, true);
+            return changed ? next : undefined;
+          });
+        }
+        return json({ ok: true, changed }, 200, cors);
+      }
+      return json({ error: "Not found" }, 404, cors);
+    }
+
     if (path === "/api/status") {
       const ds = await loadDataset(st);
       return json({ configured: { ...configured(), appAlerts: apnsConfigured() }, updatedAt: ds.updatedAt, months: Object.keys(ds.months).sort(), people: ds.people.length });
@@ -201,18 +239,21 @@ export default async function handler(req) {
         const mode = REQUEST_MODES.includes(body.mode) ? body.mode : subs[id]?.mode || "smart";
         // Zoom lecture reminders are on unless this phone turned them off.
         const lectures = typeof body.lectures === "boolean" ? body.lectures : subs[id]?.lectures !== false;
-        subs[id] = { ...sub, pid, admin, mode, lectures, createdAt: subs[id]?.createdAt || new Date().toISOString() };
+        // So are case log nudges (only ever sent to someone who has started a case log).
+        const cases = typeof body.cases === "boolean" ? body.cases : subs[id]?.cases !== false;
+        subs[id] = { ...sub, pid, admin, mode, lectures, cases, createdAt: subs[id]?.createdAt || new Date().toISOString() };
         return subs;
       });
       return json({ ok: true });
     }
-    if (path === "/api/push/lectures" && method === "POST") {
+    const pref = path.match(/^\/api\/push\/(lectures|cases)$/);
+    if (pref && method === "POST") {
       const body = await req.json();
       if (typeof body.on !== "boolean") return fail(400, "Say on or off");
       const id = phoneId(body);
       await st.update("push/subs", (subs) => {
         if (!subs?.[id]) throw new HttpError(404, "Alerts aren't on for this device.");
-        subs[id].lectures = body.on;
+        subs[id][pref[1]] = body.on;
         return subs;
       });
       return json({ ok: true });
@@ -379,6 +420,43 @@ export default async function handler(req) {
       const moves = [...(saved?.moves || []), ...(takeover ? [now] : [])].slice(-5);
       await st.setJSON(`hours/${pid}`, { keyHash: keyHash(body.key), entries, sharedAt: saved?.sharedAt || now, updatedAt: now, moves });
       return json({ ok: true, entries: entries.length, updatedAt: now });
+    }
+
+    // ---- each resident's ACGME case log (only the devices it lists can read or change it) ----
+    const caselog = path.match(/^\/api\/cases\/([\w-]+)(\/entered)?$/);
+    if (caselog) {
+      const pid = caselog[1];
+      const ds = await loadDataset(st);
+      if (!ds.people.some((p) => p.id === pid)) return fail(404, "No such resident");
+      const key = req.headers.get("x-device-key") || "";
+      if (!goodKey(key)) return fail(400, "Missing device key");
+      const helperScript = env("CAL_SECRET") || env("ADMIN_KEY") ? `${origin(req)}/acgme.js?k=${feedAddress("acgme", pid)}` : "";
+      const today = todayLocal();
+      if (method === "GET" && !caselog[2]) {
+        const rec = await st.getJSON(caseKey(pid));
+        if (rec && !ownsLog(rec, key)) return json({ owned: false, count: Object.keys(rec.cases || {}).length, devices: (rec.keys || []).length });
+        return json({ ...logView(rec, today), helper: helperScript });
+      }
+      if (method === "PUT" && !caselog[2]) {
+        const body = await req.json().catch(() => ({}));
+        let out = {};
+        await st.update(caseKey(pid), (saved) => { out = mergeLog(saved, { ...body, key }, today); return out.rec; });
+        if (out.conflict) return json({ owned: false, error: "Your case log is kept on another device." }, 409);
+        if (out.full) return fail(413, "The case log is full: enter some cases in ACGME first.");
+        return json({ ...logView(out.rec, today), helper: helperScript });
+      }
+      if (method === "POST" && caselog[2]) {
+        const body = await req.json().catch(() => ({}));
+        let allowed = true;
+        const rec = await st.update(caseKey(pid), (saved) => {
+          allowed = ownsLog(saved, key);
+          if (!allowed) return undefined;
+          const next = { ...saved, cases: Object.fromEntries(Object.entries(saved.cases || {}).map(([id, c]) => [id, { ...c }])) };
+          return markEntered(next, Array.isArray(body.ids) ? body.ids.slice(0, 200) : [], body.on !== false) ? next : undefined;
+        });
+        if (!allowed) return fail(403, "Your case log is kept on another device.");
+        return json({ ...logView(rec, today), helper: helperScript });
+      }
     }
 
     // ---- admin only below ----

@@ -20,6 +20,7 @@ import { renderDaysOff } from "./views/daysoff.js";
 import { renderExams } from "./views/exams.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderDidactics } from "./views/didactics.js";
+import { renderCases } from "./views/cases.js";
 import { renderSetup, renderPickMe } from "./views/setup.js";
 import { remindersFor } from "./views/reminders.js";
 import { syncAlerts } from "./push.js";
@@ -27,6 +28,7 @@ import { syncWidget, reloadWidgets, onWidgetOpen, onAlertTap, onScreenRegions } 
 import { watchInstall } from "./install.js";
 import { retryUpload } from "./logged.js";
 import { loadInbox, inboxCounts } from "./views/inbox.js";
+import { onCaseLogChange, hasUnsent, syncCaseLog } from "./cases.js";
 
 const state = {
   ds: local.get("ds"),
@@ -47,15 +49,15 @@ const TABS = [
   ["more", "More", "more"],
 ];
 
-const DATED = new Set(["today", "tonight", "board"]);
+const DATED = new Set(["today", "tonight", "board", "cases"]);
 // Screens made of cards flow into two columns when the window has room. Forms and long single
 // lists stay in one; wide tables just get the extra width.
-const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall"]);
+const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall", "cases"]);
 function layoutFor(r) {
   if (r.name === "admin") return !local.get("adminKey") ? "" : local.get("adminTab", "uploads") === "uploads" ? "cols" : "wide";
   return TWO_COLUMNS.has(r.name) ? "cols" : "";
 }
-const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams"];
+const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams", "cases"];
 
 // Some screens keep part of themselves for the phone: a strip down one side, or a clock in one
 // corner (see core/screen.js). The stylesheet can read how wide a margin is, but not what it is
@@ -229,6 +231,7 @@ export function render() {
     else if (r.name === "call") content = renderCall(ctx());
     else if (r.name === "gaps") content = renderGaps(ctx(), r.arg);
     else if (r.name === "didactics") content = renderDidactics(ctx());
+    else if (r.name === "cases") content = renderCases(ctx(), r.arg);
     else if (r.name === "more") content = renderMore(ctx());
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
@@ -262,7 +265,16 @@ document.addEventListener("visibilitychange", () => {
   rollToNewDay();
   reload({ quiet: true });
 });
-window.addEventListener("online", () => reload({ quiet: true }));
+window.addEventListener("online", () => {
+  reload({ quiet: true });
+  if (state.me && hasUnsent(state.me)) syncCaseLog(state.me).catch(() => {});
+});
+// The case log arrives from the server after a screen is drawn: redraw the screens that show it,
+// but never while someone is typing.
+onCaseLogChange(() => {
+  const typing = document.activeElement?.matches?.("input, textarea, select");
+  if (!typing && ["cases", "today", "more"].includes(route().name)) render();
+});
 // Turning or unfolding the phone changes which part of the screen it keeps.
 screenShape();
 window.addEventListener("resize", screenShape);

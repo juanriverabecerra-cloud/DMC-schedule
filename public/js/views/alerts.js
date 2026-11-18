@@ -2,7 +2,7 @@
 // out from the person's own day. The general lecture heads-ups can be turned off on their own.
 import { h, icon, notice, openSheet, toast, append, safely } from "../ui.js";
 import { local } from "../api.js";
-import { alertStatus, turnOnAlerts, turnOffAlerts, testAlert, lecturesHere, setLectureReminders } from "../push.js";
+import { alertStatus, turnOnAlerts, turnOffAlerts, testAlert, lecturesHere, setLectureReminders, caseNudgesHere, setCaseNudges } from "../push.js";
 import { isNativeApp } from "../native.js";
 
 export const ALERT_SUB = {
@@ -59,10 +59,20 @@ export function openAlerts(ctx) {
           h("label", { class: "checkline", style: { margin: "12px 0 0" } }, box, h("span", null, "Lecture heads-ups")),
           h("p", { class: "tiny muted", style: { margin: "4px 0 0" } }, "Your own presentations and mock orals always alert you."));
       })() : null,
+      status === "on" ? (() => {
+        const box = h("input", { type: "checkbox", checked: caseNudgesHere(), onchange: async () => {
+          box.disabled = true;
+          try { await setCaseNudges(box.checked); toast(box.checked ? "Case log nudges on" : "Case log nudges off"); } catch (err) { box.checked = !box.checked; toast(err.message); }
+          box.disabled = false;
+        } });
+        return h("div", null,
+          h("label", { class: "checkline", style: { margin: "12px 0 0" } }, box, h("span", null, "Case log nudges")),
+          h("p", { class: "tiny muted", style: { margin: "4px 0 0" } }, "Once you've started a case log: after a case day with nothing logged, and Sunday evening when cases are waiting for ACGME."));
+      })() : null,
       status === "on" && !ctx.state.me ? h("p", { class: "tiny muted" }, "Pick yourself under More so the alert can say where you are. Lecture alerts need it too.") : null,
       h("p", { class: "tiny muted", style: { marginBottom: 0 } }, local.get("adminKey")
         ? "On an admin's phone this also covers residents' requests: sick calls right away and one evening summary of swaps and no-call lists. Change it in Admin › Requests."
-        : "Only posted OR schedules and didactics. Nothing else is sent."),
+        : "Only posted OR schedules, didactics and your case log. Nothing else is sent."),
     ]);
   };
   draw();
