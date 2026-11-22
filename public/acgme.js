@@ -1,7 +1,10 @@
 // Runs on ACGME's Add Case page when a resident taps their "Log cases" bookmark. It fills the
 // next case from their DMC Schedule case log and stops: they check it and press ACGME's Submit.
-// It never submits. After Submit the page reloads; the next tap sees the case in ACGME's own
-// "Last 5 Cases" list, marks it entered in the app, and fills the one after.
+// It never submits. When Submit is pressed (or, on a computer, when the case shows in ACGME's
+// "Last 5 Cases"), the app marks it entered, and the next tap fills the one after.
+//
+// ACGME has two Add Case pages: the computer one (CaseEntry), and the one phones are sent to
+// (CaseEntryMobile, a few steps with Next). Both are handled.
 (function () {
   "use strict";
   var me = document.currentScript;
@@ -9,6 +12,8 @@
   var token = src.searchParams.get("k");
   var api = src.origin + "/api/acgme/" + encodeURIComponent(token || "");
   var ADD = "/ads/CaseLogs/CaseEntry/Insert";
+  var PHONE = "/ads/CaseLogs/CaseEntryMobile/Insert";
+  var onPhone = location.pathname.indexOf(PHONE) === 0;
   var MEMO = "dmc-acgme";
 
   // ---- a small bar along the bottom of ACGME's page ----
@@ -18,7 +23,7 @@
     var el = document.createElement("div");
     el.id = "dmc-bar";
     el.setAttribute("role", "status");
-    el.style.cssText = "position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:2147483647;background:#0b0f14;color:#f2f5f9;border-radius:14px;padding:12px 14px;font:15px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);box-sizing:border-box;width:auto;max-width:min(560px,calc(100vw - 16px));margin:0 auto;overflow-wrap:anywhere;text-align:left";
+    el.style.cssText = "position:fixed;left:8px;right:8px;" + (onPhone ? "top:calc(8px + env(safe-area-inset-top))" : "bottom:calc(8px + env(safe-area-inset-bottom))") + ";z-index:2147483647;background:#0b0f14;color:#f2f5f9;border-radius:14px;padding:12px 14px;font:15px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);box-sizing:border-box;width:auto;max-width:min(560px,calc(100vw - 16px));margin:0 auto;overflow-wrap:anywhere;text-align:left";
     var head = document.createElement("div");
     head.style.cssText = "display:flex;gap:8px;align-items:baseline";
     var tag = document.createElement("b");
@@ -78,8 +83,9 @@
   if (!token) { alert("This Log cases button is missing its link. Set it up again from the app's Case log."); return; }
   if (/acgmecloud\.org$/.test(location.hostname)) { bar({ title: "Sign in to ACGME first", lines: ["Then tap Log cases again."] }); return; }
   if (!local && !/(^|\.)acgme\.org$/.test(location.hostname)) { location.href = "https://apps.acgme.org" + ADD; return; }
-  if (!local && location.pathname.indexOf(ADD) !== 0) { location.href = ADD; return; }
-  var form = document.querySelector("form[action*='CaseEntry']");
+  // Any other ACGME page: go to Add Case (ACGME sends a phone on to its own version).
+  if (!local && location.pathname.indexOf(ADD) !== 0 && !onPhone) { location.href = ADD; return; }
+  var form = document.getElementById("caseEntryForm") || document.querySelector("form[action*='CaseEntry']");
   var $ = window.jQuery;
   if (!form || !$) { bar({ title: "This doesn't look like ACGME's Add Case page", lines: ["Open Case Logs › Add Cases, then tap Log cases again."] }); return; }
 
@@ -98,6 +104,10 @@
     return out;
   }
   function caseIdInput() {
+    var app = window.caseEntryApp;
+    var sel = app && app.globals && app.globals.CaseEntry99;
+    var byId = typeof sel === "string" && sel.charAt(0) === "#" ? document.getElementById(sel.slice(1)) : null;
+    if (byId) return byId;
     var labels = form.querySelectorAll("label");
     for (var i = 0; i < labels.length; i++) {
       if (/^\s*Case ID/.test(labels[i].textContent)) {
@@ -165,15 +175,11 @@
     return null;
   }
 
-  function fill(c) {
-    var warnings = [];
-    // Start clean: ticks from an earlier try, in either group, would be sent too.
-    form.querySelectorAll("input.cbprocedureid:checked").forEach(function (b) { b.checked = false; });
+  // What both pages share: Case ID, date, site, supervisor, age, case types, comments.
+  function details(c, warnings) {
     form.querySelectorAll("input[type=radio][id^=CaseTypes_]:checked").forEach(function (r) { r.checked = false; });
-    if (!setGroup(c.group)) warnings.push("Switch Group to " + (c.group === 680 ? "Pain Consultations and Procedures" : "Procedures") + " yourself.");
-
     var id = caseIdInput();
-    if (id) { id.value = c.caseId; $(id).trigger("input").trigger("change"); } else warnings.push("Type the Case ID: " + c.caseId);
+    if (id) { id.value = c.caseId; $(id).trigger("input").trigger("change"); } else if (c.caseId) warnings.push("Type the Case ID: " + c.caseId);
     var d = dateInput();
     if (d) {
       if ($.fn.datepicker) { try { $(d).datepicker("update", c.date); } catch (e) { /* plain input */ } }
@@ -193,6 +199,23 @@
       var el = document.getElementById("CaseTypes_" + r);
       if (el) { el.checked = true; $(el).trigger("change"); } else warnings.push("Couldn't tick one of the case types.");
     });
+    var notes = document.getElementById("Comments");
+    if (notes) notes.value = c.comments || "";
+  }
+
+  function fill(c) {
+    var warnings = [];
+    if (onPhone) fillPhone(c, warnings); else fillComputer(c, warnings);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return warnings;
+  }
+
+  // The computer page: every box is on the page, in a panel per group.
+  function fillComputer(c, warnings) {
+    // Start clean: ticks from an earlier try, in either group, would be sent too.
+    form.querySelectorAll("input.cbprocedureid:checked").forEach(function (b) { b.checked = false; });
+    if (!setGroup(c.group)) warnings.push("Switch Group to " + (c.group === 680 ? "Pain Consultations and Procedures" : "Procedures") + " yourself.");
+    details(c, warnings);
     var panel = panelFor(c.group);
     var missed = [];
     (c.items || []).forEach(function (it) {
@@ -200,28 +223,68 @@
       if (box) { box.checked = true; $(box).trigger("change"); } else missed.push(it.label);
     });
     if (missed.length) warnings.push("Tick these yourself: " + missed.join(", "));
-    var notes = document.getElementById("Comments");
-    if (notes) notes.value = c.comments || "";
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    return warnings;
+  }
+
+  // The phone page: details first, then a list of codes ACGME loads on the next step, where
+  // tapping a box adds the code to the case. The boxes are tapped the same way here, through
+  // ACGME's own code, and it ends on the last step, where the details, the codes and Submit
+  // are together.
+  var picked = function (id) {
+    return $("#selectedCodesTableBody tr").filter(function () { return String($(this).data("typetocodeid") || this.getAttribute("data-typetocodeid")) === String(id); }).length > 0;
+  };
+  // Some of ACGME's phone handlers read the tap that triggered them, and throw when there isn't
+  // one (the list they were loading has loaded by then). That mustn't stop the fill.
+  var quietly = function (fn) { try { fn(); } catch (e) { /* ACGME's handler wanted a real tap */ } };
+  function fillPhone(c, warnings) {
+    var ce = window.caseEntry;
+    details(c, warnings);
+    if (!ce || !ce.handlers || !document.getElementById("selectedCodesTableBody")) { warnings.push("Pick the codes yourself on the next step."); return; }
+    // Codes from an earlier try come off first (and changing Group would otherwise ask first).
+    $("#selectedCodesTableBody tr").each(function () {
+      var row = this;
+      var del = row.querySelector("a[onclick*='deleteCode']");
+      quietly(function () { if (del) del.click(); else $(row).remove(); });
+    });
+    quietly(function () { if (ce.currentState === 0) ce.handlers.nextClick(); }); // loads ACGME's list
+    if (String($("#Areas").val()) !== String(c.group)) quietly(function () { $("#Areas").val(String(c.group)).trigger("change"); });
+    // Every type in the group (set directly: ACGME's Types handler is one of the ones that throw).
+    var narrowed = !!$("#Types").val();
+    if (narrowed) { $("#Types").val(""); $("#TypeBasedSelectedTypeId").val(""); }
+    if (narrowed || !document.querySelector('#codes tr[data-areaid="' + c.group + '"]') || $("#codes tr[data-areaid]").length !== $('#codes tr[data-areaid="' + c.group + '"]').length) {
+      quietly(function () { ce.handlers.TemplateSearch(); });
+    }
+    var missed = [];
+    (c.items || []).forEach(function (it) {
+      var row = document.querySelector('#codes tr[data-typetocodeid="' + it.id + '"]');
+      var box = row && row.querySelector("input.addCodeToCase");
+      if (box && !box.checked) quietly(function () { box.click(); });
+      if (!picked(it.id)) missed.push(it.label);
+    });
+    if (missed.length) warnings.push("Add these yourself on the codes step: " + missed.join(", "));
+    quietly(function () { if (ce.currentState === 1) ce.handlers.nextClick(); }); // the last step: details, codes, Submit
   }
 
   // When the resident presses ACGME's Submit on a case this filled, and ACGME's own checks pass,
   // the app hears about it right away (so the last case of a sitting isn't left "waiting"). The
   // next tap still checks ACGME's Last 5 Cases.
-  var watched = null;
+  // Each tap of Log cases loads this script again on the same page, so the one watcher lives on
+  // the page itself: a newer tap replaces it rather than adding a second one (which, with Case IDs
+  // left blank, could take a different case's Submit for its own).
   function watchSubmit(c) {
-    var btn = document.getElementById("submitButton");
+    var btn = document.getElementById(onPhone ? "submitCaseButton" : "submitButton");
     if (!btn) return;
-    if (watched) btn.removeEventListener("click", watched, true);
-    watched = function () {
+    var was = window.__dmcWatch;
+    if (was) was.btn.removeEventListener("click", was.fn, true);
+    var watched = function () {
       var id = caseIdInput();
-      var ok = (!$.fn.valid || $(form).valid()) && form.querySelector("input.cbprocedureid:checked") && id && norm(id.value) === norm(c.caseId);
+      var hasCodes = onPhone ? $("#selectedCodesTableBody tr").length > 0 : !!form.querySelector("input.cbprocedureid:checked");
+      var ok = (!$.fn.valid || $(form).valid()) && hasCodes && id && norm(id.value) === norm(c.caseId);
       if (!ok) return;
       var body = JSON.stringify({ entered: [c.id] });
       if (!(navigator.sendBeacon && navigator.sendBeacon(api, body))) fetch(api, { method: "POST", body: body, keepalive: true }).catch(function () {});
     };
     btn.addEventListener("click", watched, true);
+    window.__dmcWatch = { btn: btn, fn: watched };
   }
 
   function markEntered(ids) {
@@ -230,12 +293,23 @@
     return fetch(api, { method: "POST", body: JSON.stringify({ entered: ids }) }).catch(function () {});
   }
 
+  // ACGME's own count of submitted cases, for a resident whose Case IDs keep a running number.
+  function reportCount() {
+    var el = document.getElementById("ProcedureCaseCount") || document.querySelector("#caseEntryCount strong");
+    var n = el ? parseInt(String(el.value || el.textContent).replace(/\D/g, ""), 10) : NaN;
+    if (!isFinite(n)) return;
+    fetch(api, { method: "POST", body: JSON.stringify({ acgmeCount: n }) }).catch(function () {});
+  }
+
+  // A case is called by its Case ID, or by its date when the resident leaves IDs blank.
+  function nameOf(c, midSentence) { return c.caseId || (midSentence ? "the " : "The ") + c.date + " case"; }
+
   function run(data, opts) {
     opts = opts || {};
     var seen = recentIds();
     var state = memo();
     var skipped = state.skipped || [];
-    var done = data.cases.filter(function (c) { return seen[norm(c.caseId)]; }).map(function (c) { return c.id; });
+    var done = data.cases.filter(function (c) { return c.caseId && seen[norm(c.caseId)]; }).map(function (c) { return c.id; });
     if (opts.confirmed) done.push(opts.confirmed);
     markEntered(done);
     var queue = data.cases.filter(function (c) { return done.indexOf(c.id) < 0 && skipped.indexOf(c.id) < 0; });
@@ -246,29 +320,34 @@
       return;
     }
     var next = queue[0];
-    var idBox = caseIdInput();
-    // Filled last time but not in ACGME's list: ask rather than guess (it may have been retyped).
-    if (state.filled === next.id && !opts.refill && idBox && norm(idBox.value) !== norm(next.caseId)) {
+    // This page already has this case filled in (no reload since), so a second tap just shows it.
+    var alreadyHere = window.__dmcFilled === next.id && !opts.refill;
+    // Filled last time, the page has reloaded since, and it isn't in ACGME's list: ask rather
+    // than guess (it may have been retyped, or Submit may not have gone through).
+    if (state.filled === next.id && !opts.refill && !alreadyHere) {
       bar({
-        title: "Did " + next.caseId + " go in?",
-        lines: ["It isn't in ACGME's Last 5 Cases. If you changed its Case ID before submitting, it's in."],
+        title: "Did " + nameOf(next, true) + " go in?",
+        // Without a Case ID there's nothing to find in Last 5 Cases (nor on the phone page, which has no such list).
+        lines: [onPhone || !next.caseId ? "The app didn't hear it being submitted. If you tapped Submit and ACGME took it, it's in." : "It isn't in ACGME's Last 5 Cases. If you changed its Case ID before submitting, it's in."],
         buttons: [["It's in", function () { run(data, { confirmed: next.id }); }, true], ["Fill it again", function () { run(data, { refill: true }); }]],
       });
       return;
     }
-    var warnings = idBox && norm(idBox.value) === norm(next.caseId) && !opts.refill && state.filled === next.id ? [] : fill(next);
+    var warnings = alreadyHere ? [] : fill(next);
+    window.__dmcFilled = next.id;
     memo({ filled: next.id, skipped: skipped });
     watchSubmit(next);
     var left = queue.length;
     bar({
-      title: next.caseId + (left === 1 ? " · last one" : " · " + left + " to go"),
-      lines: [next.summary, left === 1 ? "Check it, then tap Submit (top right)." : "Check it, then tap Submit (top right), then Log cases again for the next."],
+      title: nameOf(next) + (left === 1 ? " · last one" : " · " + left + " to go"),
+      lines: [next.summary, (onPhone ? "Check the details and the codes, then tap Submit at the bottom." : "Check it, then tap Submit (top right).") + (left === 1 ? "" : " Then Log cases again for the next.")],
       warnings: warnings,
       buttons: [["Skip this one", function () { memo({ skipped: skipped.concat(next.id) }); run(data); }]],
     });
   }
 
   bar({ title: "Getting your cases…" });
+  reportCount();
   fetch(api).then(function (res) {
     return res.json().then(function (body) {
       if (!res.ok) throw new Error(body && body.error ? body.error : "Couldn't reach DMC Schedule.");

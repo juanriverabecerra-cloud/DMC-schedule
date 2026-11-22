@@ -1,8 +1,8 @@
 // App shell: state, routing, header and tab bar.
-import { h, icon, avatar, toast, append, closeSheet } from "./ui.js";
+import { h, icon, avatar, toast, append, closeSheet, splitColumns } from "./ui.js";
 import { api, local, fetchDataset } from "./api.js";
 import { createModel } from "../core/model.js";
-import { todayLocal, addDays, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
+import { todayLocal, addDays, diffDays, relDay, parts, MONTH_SHORT, DOW_SHORT, dow, nowMinutesLocal } from "../core/dates.js";
 import { dayGaps } from "../core/gaps.js";
 import { relevantTo } from "../core/didactics.js";
 import { screenLayout } from "../core/screen.js";
@@ -14,6 +14,8 @@ import { renderHours } from "./views/hours.js";
 import { renderCall } from "./views/call.js";
 import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
+import { renderLayout, savedTabs } from "./views/layout.js";
+import { TAB_PAGES } from "../core/layout.js";
 import { renderRate } from "./views/rate.js";
 import { renderSwaps, renderNoCall } from "./views/requests.js";
 import { renderDaysOff } from "./views/daysoff.js";
@@ -41,23 +43,21 @@ const state = {
   error: null,
 };
 
-const TABS = [
-  ["today", "Today", "home"],
-  ["tonight", "Tonight", "moon"],
-  ["board", "Board", "grid"],
-  ["didactics", "Didactics", "book"],
-  ["more", "More", "more"],
-];
+// The tab bar is each person's own (Arrange, under More): their pages in their order, then More.
+const tabList = () => [...savedTabs().map((k) => [k, ...TAB_PAGES[k]]), ["more", "More", "more"]];
 
 const DATED = new Set(["today", "tonight", "board", "cases"]);
-// Screens made of cards flow into two columns when the window has room. Forms and long single
-// lists stay in one; wide tables just get the extra width.
-const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall", "cases"]);
+// Screens made of cards flow into two columns when the window has room. Forms, long single
+// lists and the case log (rows of buttons that want the width) stay in one; wide tables just
+// get the extra width.
+const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall", "layout"]);
 function layoutFor(r) {
   if (r.name === "admin") return !local.get("adminKey") ? "" : local.get("adminTab", "uploads") === "uploads" ? "cols" : "wide";
   return TWO_COLUMNS.has(r.name) ? "cols" : "";
 }
-const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams", "cases"];
+const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams", "cases", "layout"];
+// A page reached from More, unless it's one of this person's tabs.
+const underMore = (name) => MORE_PAGES.includes(name) && !savedTabs().includes(name);
 
 // Some screens keep part of themselves for the phone: a strip down one side, or a clock in one
 // corner (see core/screen.js). The stylesheet can read how wide a margin is, but not what it is
@@ -83,7 +83,7 @@ function screenShape() {
 function route() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [name, ...rest] = hash.split("/");
-  return { name: name || "today", arg: rest.join("/") };
+  return { name: name || savedTabs()[0], arg: rest.join("/") };
 }
 
 export function go(path) {
@@ -142,8 +142,17 @@ function setMe(pid) {
   syncWidget(pid || null);
 }
 
+// Above the date itself, how far it is from today (the date already names the weekday).
+function howFar(date, today) {
+  const n = diffDays(today, date);
+  if (Math.abs(n) <= 1) return relDay(date, today);
+  return n > 0 ? `In ${n} days` : `${-n} days ago`;
+}
+
 function topbar(r) {
   const bar = document.getElementById("topbar");
+  // The sign-in screen has its own big title: its bar just keeps the space at the top.
+  bar.classList.toggle("plain", r.name === "setup");
   const inner = h("div", { class: "topbar-inner" });
   const me = state.me && state.model?.person(state.me);
   const meBtn = me ? h("button", { class: "avatarbtn", "aria-label": "My schedule", onclick: () => go(`p/${state.me}`) }, avatar(state.model, state.me, "sm")) : null;
@@ -158,7 +167,7 @@ function topbar(r) {
       h("button", { class: "iconbtn", "aria-label": "Previous day", onclick: () => setDate(addDays(state.date, -1)) }, icon("left")),
       h("div", { class: "datenav" },
         h("div", { class: "label" },
-          h("span", { class: "sub" }, relDay(state.date, state.today)),
+          h("span", { class: "sub" }, howFar(state.date, state.today)),
           `${DOW_SHORT[dow(state.date)]}, ${MONTH_SHORT[m - 1]} ${d}`,
           input),
       ),
@@ -168,8 +177,8 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?" };
-    const back = MORE_PAGES.includes(r.name) || r.name === "p";
+    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?", layout: "Arrange", cases: "Case log" };
+    const back = underMore(r.name) || r.name === "p";
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
       h("h1", null, titles[r.name] || "DMC Schedule"),
@@ -200,9 +209,9 @@ function tabbar(r) {
   // Admins: red for a sick call today or tomorrow, blue for anything else waiting in Requests.
   const inbox = state.admin ? inboxCounts(state.today) : { open: 0, urgent: 0 };
   const red = gapsSoon || inbox.urgent > 0;
-  const inner = h("div", { class: "tabbar-inner" }, TABS.map(([id, label, ic]) =>
+  const inner = h("div", { class: "tabbar-inner" }, tabList().map(([id, label, ic]) =>
     h("button", {
-      class: "tab", "aria-current": r.name === id || (id === "more" && MORE_PAGES.includes(r.name)) ? "page" : null,
+      class: "tab", "aria-current": r.name === id || (id === "more" && underMore(r.name)) ? "page" : null,
       onclick: () => go(id),
     }, icon(ic), label,
     id === "more" && red ? h("i", { class: "dot", "aria-label": inbox.urgent ? "Sick call" : "Coverage gaps soon" }) : null,
@@ -233,6 +242,7 @@ export function render() {
     else if (r.name === "didactics") content = renderDidactics(ctx());
     else if (r.name === "cases") content = renderCases(ctx(), r.arg);
     else if (r.name === "more") content = renderMore(ctx());
+    else if (r.name === "layout") content = renderLayout(ctx());
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
     else if (r.name === "nocall") content = renderNoCall(ctx());
@@ -248,6 +258,13 @@ export function render() {
   view.replaceChildren(content);
   const layout = state.model ? layoutFor(r) : "";
   if (layout) document.body.dataset.layout = layout; else delete document.body.dataset.layout;
+  flowColumns();
+}
+
+// On a wide screen card screens use two columns (splitColumns in ui.js).
+function flowColumns() {
+  const root = document.getElementById("view").firstElementChild;
+  if (root) splitColumns(root);
 }
 
 // A phone left open past midnight moves on to the new day.
@@ -277,7 +294,19 @@ onCaseLogChange(() => {
 });
 // Turning or unfolding the phone changes which part of the screen it keeps.
 screenShape();
-window.addEventListener("resize", screenShape);
+let resizeTimer = null;
+let laidOutAt = window.innerWidth;
+window.addEventListener("resize", () => {
+  screenShape();
+  // Columns come and go with the width (a fold, a turn): lay the screen out again once it
+  // settles. Only the width matters: Safari's bars shrinking as you scroll change the height.
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (window.innerWidth === laidOutAt || document.activeElement?.matches?.("input, textarea, select")) return;
+    laidOutAt = window.innerWidth;
+    render();
+  }, 150);
+});
 onScreenRegions((screen) => { reserved = screen; screenShape(); });
 // The daily sheet can change through the afternoon: keep an open app current.
 setInterval(() => {

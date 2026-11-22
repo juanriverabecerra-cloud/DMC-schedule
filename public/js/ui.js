@@ -37,6 +37,8 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   left: '<path d="m15 5-7 7 7 7"/>',
   right: '<path d="m9 5 7 7-7 7"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   pager: '<rect x="3" y="7" width="18" height="10" rx="2.5"/><path d="M7 11h6"/>',
   phone: '<path d="M5 3h3l2 5-2.5 1.5a11 11 0 0 0 7 7L16 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 5a2 2 0 0 1 2-2z"/>',
   message: '<path d="M4 5h16v11H8l-4 4z"/>',
@@ -54,6 +56,7 @@ const ICONS = {
   shield: '<path d="M12 3 4.5 6v6c0 4.5 3.2 8 7.5 9 4.3-1 7.5-4.5 7.5-9V6z"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 18 5-5 4 4 3-3 4 4"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  arrange: '<path d="M4 6h9M4 12h9M4 18h9"/><path d="M18 5v14M15 8l3-3 3 3M15 16l3 3 3-3"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
   book: '<path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/>',
   video: '<rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-4v12l-6-4z"/>',
@@ -191,9 +194,63 @@ export function personRow(ctx, d, { sub, side, chips = true, onClick } = {}) {
   );
 }
 
+// ---- two columns on a wide screen ----
+// Card screens on a wide screen (the Duo opened, an iPad, a computer) use two columns, read down
+// the first and then the second. They're two real stacks rather than CSS columns, which in Safari
+// can split a card or push a margin to the top of the second column. The break goes where the
+// taller column is as short as it can be, and a section title stays with what follows it.
+// A full-width piece (a search box, a toolbar) stays full width with columns below it. A `.flow`
+// box (a list the screen redraws as you search or filter) is split inside itself; the screen
+// calls splitColumns on it again after each redraw, or after cards that load later arrive. It
+// can run again on a box it already split, and leaves alone a box someone is typing in.
+const COL_GAP = 16;
+export function splitColumns(box) {
+  if (!box?.isConnected || document.body.dataset.layout !== "cols") return;
+  const typing = document.activeElement?.matches?.("input, textarea, select") && box.contains(document.activeElement);
+  if (typing) return;
+  // Undo an earlier split first: its columns hold the pieces in their original order.
+  for (const done of [...box.children].filter((k) => k.matches(".cols2"))) done.replaceWith(...[...done.children].flatMap((col) => [...col.children]));
+  const view = document.getElementById("view");
+  const style = getComputedStyle(view);
+  const width = view.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  if (width < 580) return;
+  const kids = [...box.children];
+  const flows = kids.filter((k) => k.matches(".flow"));
+  if (kids.length >= 2) {
+    // Measure everything at the width it will have.
+    box.style.width = `${(width - COL_GAP) / 2}px`;
+    const tall = new Map(kids.map((k) => [k, k.getBoundingClientRect().height + (parseFloat(getComputedStyle(k).marginBottom) || 0)]));
+    box.style.width = "";
+    const out = [];
+    let run = []; // pieces, each a section title with what follows it, or one element
+    const flush = () => {
+      if (run.length < 2) { out.push(...run.flat()); run = []; return; }
+      const hs = run.map((piece) => piece.reduce((a, k) => a + tall.get(k), 0));
+      const total = hs.reduce((a, b) => a + b, 0);
+      let best = 1, bestH = Infinity, acc = 0;
+      for (let i = 1; i < run.length; i++) {
+        acc += hs[i - 1];
+        const hgt = Math.max(acc, total - acc);
+        if (hgt < bestH) { bestH = hgt; best = i; }
+      }
+      out.push(h("div", { class: "cols2" }, h("div", { class: "col" }, run.slice(0, best).flat()), h("div", { class: "col" }, run.slice(best).flat())));
+      run = [];
+    };
+    for (const k of kids) {
+      if (k.matches(".span-all, .toolbar, .flow")) { flush(); out.push(k); continue; }
+      const last = run.at(-1);
+      if (last && last.at(-1).matches(".section-title")) last.push(k); else run.push([k]);
+    }
+    flush();
+    box.replaceChildren(...out);
+  }
+  for (const f of flows) splitColumns(f);
+}
+
 export function card(title, body, { right, pad = true } = {}) {
   return h("section", { class: "card" },
-    title ? h("div", { class: "card-pad", style: { paddingBottom: pad ? "0" : "6px" } }, h("h3", { class: "card-title" }, title, right ? h("span", { class: "right" }, right) : null)) : null,
+    // A list or grid brings its own top padding, so the title sits as close to it as to text.
+    title ? h("div", { class: "card-pad", style: { paddingBottom: "0" } }, h("h3", { class: "card-title", style: pad ? null : { marginBottom: "2px" } }, title, right ? h("span", { class: "right" }, right) : null)) : null,
     pad ? h("div", { class: "card-pad", style: title ? { paddingTop: "0" } : null }, body) : body,
   );
 }

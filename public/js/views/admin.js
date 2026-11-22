@@ -1,6 +1,6 @@
 // Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
 // phone directory, people, settings and backups. Every call sends the admin key.
-import { h, icon, card, toast, notice, openSheet, avatar, segmented, append, safely } from "../ui.js";
+import { h, icon, card, toast, notice, openSheet, avatar, segmented, append, safely, splitColumns } from "../ui.js";
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
@@ -666,7 +666,9 @@ export function renderAdmin(ctx, arg) {
     );
     dailyHolder.replaceChildren(dailySection(ctx, status));
     didHolder.replaceChildren(didacticsSection(ctx, status));
-  }).catch(() => { dailyHolder.replaceChildren(dailySection(ctx, null)); didHolder.replaceChildren(didacticsSection(ctx, null)); });
+  }).catch(() => { dailyHolder.replaceChildren(dailySection(ctx, null)); didHolder.replaceChildren(didacticsSection(ctx, null)); })
+    // These cards arrive after the screen is laid out: balance the two columns again with them in.
+    .finally(() => splitColumns(root));
   root.append(
     liveSheetCard(ctx),
     dailyHolder,

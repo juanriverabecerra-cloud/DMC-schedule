@@ -12,14 +12,14 @@ export const CASE_ID_MAX = 25;
 
 // Form ids are ACGME's own codes for the anesthesiology form (the same for every resident).
 export const ACGME_SITES = {
-  harper: { id: 12634, name: "Harper-Hutzel Hospital", short: "Harper-Hutzel" },
-  drh: { id: 12633, name: "Detroit Receiving Hospital and University Health Center", short: "DRH" },
-  chm: { id: 12657, name: "Children's Hospital of Michigan", short: "Children's" },
-  va: { id: 12632, name: "John D. Dingell Department of Veterans Affairs Medical Center", short: "VA" },
-  sinai: { id: 12647, name: "Sinai-Grace Hospital", short: "Sinai-Grace" },
-  hvsh: { id: 12677, name: "Huron Valley-Sinai Hospital", short: "Huron Valley" },
-  karmanos: { id: 14246, name: "Barbara Ann Karmanos Cancer Institute - Detroit", short: "Karmanos" },
-  other: { id: 19367, name: "Other Site", short: "Other site" },
+  harper: { id: 12634, name: "Harper-Hutzel Hospital", short: "Harper-Hutzel", code: "HH" },
+  drh: { id: 12633, name: "Detroit Receiving Hospital and University Health Center", short: "DRH", code: "DRH" },
+  chm: { id: 12657, name: "Children's Hospital of Michigan", short: "Children's", code: "CHM" },
+  va: { id: 12632, name: "John D. Dingell Department of Veterans Affairs Medical Center", short: "VA", code: "VA" },
+  sinai: { id: 12647, name: "Sinai-Grace Hospital", short: "Sinai-Grace", code: "SG" },
+  hvsh: { id: 12677, name: "Huron Valley-Sinai Hospital", short: "Huron Valley", code: "HVS" },
+  karmanos: { id: 14246, name: "Barbara Ann Karmanos Cancer Institute - Detroit", short: "Karmanos", code: "KCI" },
+  other: { id: 19367, name: "Other Site", short: "Other site", code: "Other" },
 };
 // The schedule's site -> ACGME's site. OPSC and the pain clinic aren't separate on ACGME's list;
 // a resident's own choice for that kind of day is remembered and wins next time.
@@ -145,10 +145,6 @@ export const SECTIONS = [
   ], { group: "pain" }),
 ];
 export const ITEMS = new Map(SECTIONS.flatMap((s) => s.items.map((i) => [i.key, { ...i, section: s.key, area: s.title, group: s.group }])));
-// Boxes where ticking one should untick its partner.
-const EXCLUSIVE = [["cpb", "no-cpb"], ["cs", "cs-hr"], ["vag", "vag-hr"], ["vessels", "vessels-endo"]];
-// A block site means a block was done; one of these says which kind.
-const BLOCK_SITES = new Set(SECTIONS.find((s) => s.key === "block").items.map((i) => i.key));
 
 // ---- presets: one tap sets what was done (age and ASA stay as they are) ----
 export const PRESETS = {
@@ -292,13 +288,138 @@ export function blankCase({ id = "", date, day = date, kind = "or", group = "pro
   };
 }
 
-// After a change of date or number, a Case ID the resident didn't type follows along.
+// After a change of date or number, a Case ID the resident didn't type follows along (in the
+// default style; the screens use the resident's own style, below).
 export const withCaseId = (c) => (c.customId ? c : { ...c, caseId: caseIdFor(c.date, c.word || surgeonWord(c.surgeon), c.seq) });
 
-// Tick or untick one box, keeping ACGME's pairs straight. "high-risk" and "trauma" are shortcuts.
+// ---- Case ID styles: everyone names cases their own way ----
+// A style is a list of parts joined by a separator. Numbers come three ways: the case's place in
+// the day, its place among that day's cases with the same surgeon (or procedure), or a running
+// number that keeps counting from wherever the resident says (their ACGME total, say).
+export const ID_PARTS = {
+  date: "Date",
+  word: "Surgeon or procedure",
+  room: "Room",
+  site: "Hospital",
+  initials: "Your initials",
+  text: "Your own text",
+  day: "Case # of the day",
+  daySurgeon: "Case # with that surgeon",
+  total: "Running case #",
+};
+export const DATE_FORMATS = ["MM/DD/YY", "MM-DD-YY", "MMDDYY", "YYMMDD", "YYYY-MM-DD", "MM/DD", "MMDD"];
+export const SEPARATORS = [["-", "Dash"], ["_", "Underscore"], [" ", "Space"], ["/", "Slash"], ["", "None"]];
+// `start` is where the running number starts; `last` the highest one a case took into ACGME since
+// `setAt`, when the resident last said where to start (so they can restart lower if they need to).
+export const DEFAULT_NAMING = { parts: ["date", "word", "daySurgeon"], date: "MM/DD/YY", sep: "-", text: "", start: 1, last: 0, setAt: "" };
+export const NAMING_STYLES = [
+  { key: "habit", label: "Date, surgeon, number", parts: ["date", "word", "daySurgeon"], date: "MM/DD/YY", sep: "-" },
+  { key: "total", label: "One running number", parts: ["total"] },
+  { key: "date-total", label: "Date, running number", parts: ["date", "total"], date: "MM/DD/YY", sep: "-" },
+  { key: "date-day", label: "Date, case of the day", parts: ["date", "day"], date: "MMDDYY", sep: "-" },
+  { key: "word", label: "Surgeon, number", parts: ["word", "daySurgeon"], sep: "-" },
+  { key: "room", label: "Date, room, case of the day", parts: ["date", "room", "day"], date: "MM/DD/YY", sep: "-" },
+  { key: "blank", label: "Leave it blank", parts: [] },
+];
+
+export function cleanNaming(raw) {
+  const n = raw && typeof raw === "object" ? raw : {};
+  const parts = (Array.isArray(n.parts) ? n.parts : DEFAULT_NAMING.parts).filter((p) => ID_PARTS[p]).slice(0, 6);
+  const int = (v, d) => { const x = parseInt(v, 10); return Number.isFinite(x) && x >= 0 && x < 1e6 ? x : d; };
+  return {
+    parts: Array.isArray(n.parts) ? parts : [...DEFAULT_NAMING.parts],
+    date: DATE_FORMATS.includes(n.date) ? n.date : DEFAULT_NAMING.date,
+    sep: SEPARATORS.some(([v]) => v === n.sep) ? n.sep : DEFAULT_NAMING.sep,
+    text: String(n.text ?? "").replace(/[^\w .#/-]/g, "").slice(0, 12),
+    start: Math.max(1, int(n.start, 1)),
+    last: int(n.last, 0),
+    setAt: typeof n.setAt === "string" && !Number.isNaN(Date.parse(n.setAt)) ? new Date(n.setAt).toISOString() : "",
+  };
+}
+// Which ready-made style a resident's choice is, or "custom".
+export function styleOf(naming) {
+  const n = cleanNaming(naming);
+  const hit = NAMING_STYLES.find((st) => st.parts.join() === n.parts.join() && (!st.parts.includes("date") || st.date === n.date) && (st.parts.length < 2 || (st.sep ?? "-") === n.sep));
+  return hit && !n.parts.includes("text") ? hit.key : "custom";
+}
+export const usesTotal = (naming) => cleanNaming(naming).parts.includes("total");
+export const withStyle = (naming, key) => {
+  const st = NAMING_STYLES.find((x) => x.key === key);
+  const n = cleanNaming(naming);
+  return st ? { ...n, parts: [...st.parts], date: st.date || n.date, sep: st.sep ?? n.sep } : n;
+};
+
+function fmtCaseDate(date, f) {
+  const { y, m, d } = parts(date);
+  const MM = String(m).padStart(2, "0"), DD = String(d).padStart(2, "0"), YY = String(y).slice(-2);
+  return { "MM/DD/YY": `${MM}/${DD}/${YY}`, "MM-DD-YY": `${MM}-${DD}-${YY}`, MMDDYY: `${MM}${DD}${YY}`, YYMMDD: `${YY}${MM}${DD}`, "YYYY-MM-DD": `${y}-${MM}-${DD}`, "MM/DD": `${MM}/${DD}`, MMDD: `${MM}${DD}` }[f] || `${MM}/${DD}/${YY}`;
+}
+
+// One case's ID in a style. `nums` is { day, daySurgeon, total, initials }. ACGME takes 25
+// characters, so a long surgeon or procedure name is shortened first.
+export function formatCaseId(c, naming, nums = {}) {
+  const n = cleanNaming(naming);
+  const word = c.word || surgeonWord(c.surgeon) || "Case";
+  const piece = (p, w) => ({
+    date: fmtCaseDate(c.date, n.date),
+    word: w,
+    room: c.or ? `OR${String(c.or).replace(/\s+/g, "")}` : "",
+    site: ACGME_SITES[c.site]?.code || "",
+    initials: nums.initials || "",
+    text: n.text,
+    day: nums.day ? String(nums.day) : "",
+    daySurgeon: String(nums.daySurgeon || c.seq || 1),
+    total: nums.total ? String(nums.total) : "",
+  }[p] || "");
+  const build = (w) => n.parts.map((p) => piece(p, w)).filter(Boolean).join(n.sep);
+  let id = build(word);
+  if (id.length > CASE_ID_MAX && n.parts.includes("word")) id = build(word.slice(0, Math.max(1, word.length - (id.length - CASE_ID_MAX))));
+  return id.slice(0, CASE_ID_MAX);
+}
+
+// The highest running number a case has taken into ACGME since the resident said where to start.
+export function lastUsed(naming, cases) {
+  const n = cleanNaming(naming);
+  return Math.max(n.last, ...cases.filter((c) => c.enteredAt && c.num && c.enteredAt > n.setAt).map((c) => c.num));
+}
+
+// Every case's ID in the resident's style. `days` is [{ day, cards }], oldest first, each day's
+// cards in the order the screen shows them (sheet cases not logged yet included, so the day's
+// numbers match what the resident sees). Cases in ACGME keep their IDs but still count for the
+// day's numbers. Running numbers go to logged cases in that same order, which is the order the
+// Log cases button enters them, so they track ACGME's own count; sheet cases not logged yet get
+// the numbers after. Returns key (id, or slot for a sheet case) -> { num, caseId }.
+export function planIds(days, naming, { initials = "", last = 0 } = {}) {
+  const n = cleanNaming(naming);
+  const counting = n.parts.includes("total");
+  let next = Math.max(n.start, n.last + 1, last + 1);
+  const out = new Map();
+  const later = [];
+  for (const { cards } of days) {
+    const per = {};
+    cards.forEach((c, i) => {
+      const w = (c.word || surgeonWord(c.surgeon) || "").toLowerCase();
+      per[w] = (per[w] || 0) + 1;
+      if (c.enteredAt) return;
+      const nums = { day: i + 1, daySurgeon: per[w], initials };
+      if (counting && !c.id) { later.push([c, nums]); return; }
+      const num = counting ? next++ : 0;
+      out.set(c.id || c.slot, { num, caseId: c.customId ? c.caseId : formatCaseId(c, n, { ...nums, total: num }) });
+    });
+  }
+  for (const [c, nums] of later) {
+    const num = next++;
+    out.set(c.slot, { num: 0, caseId: formatCaseId(c, n, { ...nums, total: num }) });
+  }
+  return out;
+}
+
+// Every box is its own: ticking one never unticks or ticks another, so any combination ACGME's
+// form allows can be logged. "high-risk" and "trauma" are shortcuts for the boxes they name.
 export function toggleCode(c, key) {
   const codes = new Set(c.codes);
   if (key === "high-risk") {
+    // The delivery boxes already ticked, swapped for their high-risk versions (and back).
     const swaps = [["cs", "cs-hr"], ["vag", "vag-hr"]];
     const on = swaps.some(([, hr]) => codes.has(hr));
     for (const [plain, hr] of swaps) {
@@ -308,27 +429,28 @@ export function toggleCode(c, key) {
     return { ...c, codes: order([...codes]) };
   }
   if (key === "trauma") return { ...c, ltp: c.ltp === "trauma" ? "" : "trauma" };
-  if (codes.has(key)) codes.delete(key);
-  else {
-    codes.add(key);
-    for (const pair of EXCLUSIVE) if (pair.includes(key)) for (const other of pair) if (other !== key) codes.delete(other);
-    // A block site implies a block; a neuraxial site on a GA-only case doesn't guess which.
-    if (BLOCK_SITES.has(key) && !codes.has("pnb") && !codes.has("pnb-cath")) codes.add("pnb");
-  }
+  if (codes.has(key)) codes.delete(key); else codes.add(key);
   return { ...c, codes: order([...codes]) };
 }
 export const extraOn = (c, key) => (key === "high-risk" ? c.codes.some((k) => k === "cs-hr" || k === "vag-hr") : key === "trauma" ? c.ltp === "trauma" : c.codes.includes(key));
 
+// A preset's boxes, in high-risk form when the case is already high-risk.
+const presetCodes = (c, p) => (c.codes.some((k) => k === "cs-hr" || k === "vag-hr") ? p.codes.map((k) => (k === "cs" ? "cs-hr" : k === "vag" ? "vag-hr" : k)) : p.codes);
+
+// Presets add their boxes to what's there (two of them make a combination: a labor epidural that
+// became a C-section). Tapping one that's on takes its boxes off again, apart from boxes another
+// preset that's on still needs. A pain preset moves the case to ACGME's pain group; the other
+// group's boxes are kept, only not sent, so switching back loses nothing.
 export function applyPreset(c, key) {
   const p = PRESETS[key];
   if (!p) return c;
   const group = p.group || "proc";
-  // Keep the extras a resident added (an art line, a block site) when the main choice changes.
-  const keep = group === c.group && !p.word ? c.codes.filter((k) => ["access", "monitoring", "block"].includes(ITEMS.get(k)?.section) || k === "pnb-cath") : [];
-  const hr = c.codes.some((k) => k === "cs-hr" || k === "vag-hr");
-  let codes = [...new Set([...p.codes, ...keep])];
-  if (hr) codes = codes.map((k) => (k === "cs" ? "cs-hr" : k === "vag" ? "vag-hr" : k));
-  return { ...c, group, codes: order(codes), asa: group === "pain" ? "" : c.asa, emergency: group === "pain" ? false : c.emergency };
+  if (presetOn(c, key)) {
+    const still = new Set(Object.keys(PRESETS).filter((k) => k !== key && presetOn(c, k)).flatMap((k) => presetCodes(c, PRESETS[k])));
+    const drop = new Set(presetCodes(c, p).filter((k) => !still.has(k)));
+    return { ...c, codes: order(c.codes.filter((k) => !drop.has(k))) };
+  }
+  return { ...c, group, codes: order([...c.codes, ...presetCodes(c, p)]) };
 }
 export const presetOn = (c, key) => {
   const p = PRESETS[key];
@@ -336,6 +458,14 @@ export const presetOn = (c, key) => {
   const have = new Set(c.codes.map((k) => k.replace(/-hr$/, "")));
   return p.codes.every((k) => have.has(k));
 };
+
+// The same for a resident's own usual combination.
+export function applyCombo(c, combo) {
+  const on = combo.group === c.group && combo.codes.every((k) => c.codes.includes(k));
+  if (on) return { ...c, codes: c.codes.filter((k) => !combo.codes.includes(k)) };
+  return { ...c, group: combo.group, codes: order([...c.codes, ...combo.codes]) };
+}
+export const comboOn = (c, combo) => combo.group === c.group && combo.codes.every((k) => c.codes.includes(k));
 
 const ORDER = [...ITEMS.keys()];
 export const order = (codes) => [...new Set(codes)].filter((k) => ITEMS.has(k)).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
@@ -388,7 +518,9 @@ export function toAcgme(c) {
 
 // ---- learning: what this resident usually does, kept short so the cases themselves can go ----
 const surgeonKey = (s) => fold(surgeonWord(s));
-const comboKey = (c) => `${c.group}:${order(c.codes).join(",")}`;
+// Only the boxes of the case's own group count (the other group's are kept but not sent).
+const sentCodes = (c) => order(c.codes).filter((k) => ITEMS.get(k)?.group === (c.group === "pain" ? "pain" : "proc"));
+const comboKey = (c) => `${c.group}:${sentCodes(c).join(",")}`;
 // `seen` is the latest case date for each entry.
 export function summarize(cases) {
   const out = { surgeons: {}, combos: {}, supervisors: {}, sites: {} };
@@ -398,10 +530,10 @@ export function summarize(cases) {
     const sk = surgeonKey(c.surgeon);
     if (sk) {
       const was = out.surgeons[sk];
-      out.surgeons[sk] = !was || was.seen <= c.date ? { codes: c.codes, group: c.group, n: (was?.n || 0) + 1, seen: c.date } : { ...was, n: was.n + 1 };
+      out.surgeons[sk] = !was || was.seen <= c.date ? { codes: sentCodes(c), group: c.group, n: (was?.n || 0) + 1, seen: c.date } : { ...was, n: was.n + 1 };
     }
     const ck = `${kind}|${comboKey(c)}`;
-    const combo = out.combos[ck] || { kind, group: c.group, codes: order(c.codes), n: 0, seen: "" };
+    const combo = out.combos[ck] || { kind, group: c.group, codes: sentCodes(c), n: 0, seen: "" };
     combo.n++;
     if (c.date > combo.seen) combo.seen = c.date;
     out.combos[ck] = combo;

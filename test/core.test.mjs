@@ -1176,17 +1176,26 @@ test("case log: ACGME's form, presets and what a case still needs", async () => 
   c = A.applyPreset({ ...c, supervisor: { last: "Smith", first: "Alex" }, asa: "3" }, "ga-vl");
   assert.equal(A.isReady(c), true);
   assert.equal(A.summary(c), "GA · Video · Oral tube · ASA 3");
-  // Extras stay when the main choice changes; ACGME's pairs untick each other.
+  // Every box is its own: no box ticks or unticks another, so any combination can be logged.
   c = A.toggleCode(c, "art");
+  assert.deepEqual(A.toggleCode(A.toggleCode(c, "cpb"), "no-cpb").codes.filter((k) => /cpb/.test(k)), ["cpb", "no-cpb"]);
+  assert.deepEqual(A.toggleCode(A.toggleCode(c, "vessels"), "vessels-endo").codes.filter((k) => /vessels/.test(k)), ["vessels", "vessels-endo"]);
+  assert.ok(!A.toggleCode(c, "adductor").codes.includes("pnb"), "a block site doesn't tick Block by itself");
+  // Presets add to what's there; tapping one that's on takes off only what no other preset needs.
   c = A.applyPreset(c, "ga-dl");
-  assert.deepEqual(c.codes, ["general", "dl", "ett", "art"]);
-  assert.deepEqual(A.toggleCode(A.toggleCode(c, "cpb"), "no-cpb").codes.filter((k) => /cpb/.test(k)), ["no-cpb"]);
-  assert.ok(A.toggleCode(c, "adductor").codes.includes("pnb"), "a block site means a block");
+  assert.deepEqual(c.codes, ["general", "dl", "vl", "ett", "art"]);
+  assert.deepEqual(A.applyPreset(c, "ga-vl").codes, ["general", "dl", "ett", "art"], "video off, GA and tube stay for the DL preset");
+  const both = A.applyPreset(A.applyPreset(A.blankCase({ date: "2026-11-18" }), "labor-epi"), "cs-spinal");
+  assert.deepEqual(both.codes, ["spinal", "epidural", "cs", "vag", "lumbar"], "a labor epidural that became a C-section");
+  // Taking labor epidural off keeps what the still-highlighted C-section presets need (the epidural
+  // stays for "C-section · epidural"); only the vaginal delivery goes.
+  assert.deepEqual(A.applyPreset(both, "labor-epi").codes, ["spinal", "epidural", "cs", "lumbar"]);
+  assert.deepEqual(A.toggleCode(A.applyPreset(both, "labor-epi"), "epidural").codes, ["spinal", "cs", "lumbar"]);
   // High-risk swaps the delivery boxes, and survives a change of preset.
   let ob = A.toggleCode(A.applyPreset(c, "labor-epi"), "high-risk");
   assert.ok(ob.codes.includes("vag-hr") && !ob.codes.includes("vag"));
   ob = A.applyPreset(ob, "cs-spinal");
-  assert.ok(ob.codes.includes("cs-hr"));
+  assert.ok(ob.codes.includes("cs-hr") && !ob.codes.includes("cs"));
   assert.ok(A.presetOn(ob, "cs-spinal"));
 
   // What ACGME's page gets: ASA first (emergency uses its own box, 6 has none), and the right group.
@@ -1197,8 +1206,9 @@ test("case log: ACGME's form, presets and what a case still needs", async () => 
   assert.equal(out.group, 681);
   assert.equal(A.toAcgme({ ...c, asa: "6", emergency: true }).items[0].id, 156631);
   const pain = A.applyPreset(c, "chronic-consult");
-  assert.equal(pain.asa, "");
+  assert.equal(pain.group, "pain");
   assert.equal(A.isReady(pain), true);
+  assert.deepEqual(A.toggleCode({ ...pain, group: "proc" }, "x").codes, pain.codes, "the anesthetic boxes are kept for switching back");
   assert.deepEqual(A.toAcgme(pain).items.map((i) => i.id), [156751]);
   assert.equal(A.toAcgme(pain).group, 680);
 
@@ -1236,7 +1246,7 @@ test("case log: the day's cases come from the OR sheet, with the supervisor from
   assert.equal(A.nudgeAt(m.day("doe-jane", "2026-11-03")), 1095, "late resident: 6:15p");
 });
 
-test("case log: a procedure on its own (an intern's art line) needs no ASA and replaces, not adds", async () => {
+test("case log: a procedure on its own (an intern's art line) needs no ASA", async () => {
   const A = await import("../public/core/acgme.js");
   for (const key of A.PROCEDURES) {
     const p = A.PRESETS[key];
@@ -1249,8 +1259,109 @@ test("case log: a procedure on its own (an intern's art line) needs no ASA and r
   assert.equal(c.caseId, "11/18/26-Aline-1");
   assert.deepEqual(A.missing(c), [], "ready without an ASA");
   assert.deepEqual(A.toAcgme(c).items.map((i) => i.id), [1256338], "only the art line goes to ACGME");
-  assert.deepEqual(A.applyPreset(c, "proc-cvc").codes, ["cvc", "us"], "a different procedure replaces it");
+  assert.deepEqual(A.applyPreset(c, "proc-cvc").codes, ["art", "cvc", "us"], "a second procedure adds to it");
   // An ASA given anyway still goes in; an anesthetic case still needs one.
   assert.equal(A.toAcgme({ ...c, asa: "3" }).items[0].label, "3");
   assert.ok(A.missing({ ...c, kind: "or", codes: ["general"] }).includes("ASA"));
+});
+
+test("case log: Case ID styles, numbers of the day and a running number", async () => {
+  const { formatCaseId, cleanNaming, styleOf, withStyle, planIds, lastUsed, NAMING_STYLES } = await import("../public/core/acgme.js");
+  const c = { date: "2026-11-18", word: "Rook", or: "7", site: "harper", seq: 2 };
+  assert.equal(formatCaseId(c, cleanNaming()), "11/18/26-Rook-2");
+  assert.equal(formatCaseId(c, withStyle({}, "total"), { total: 222 }), "222");
+  assert.equal(formatCaseId(c, withStyle({}, "room"), { day: 3 }), "11/18/26-OR7-3");
+  assert.equal(formatCaseId(c, withStyle({}, "blank")), "");
+  assert.equal(formatCaseId(c, { parts: ["initials", "site", "date", "text", "day"], date: "YYMMDD", sep: "_", text: "DMC" }, { day: 4, initials: "SR" }), "SR_HH_261118_DMC_4");
+  // ACGME takes 25 characters: a long name is shortened, never the number.
+  assert.equal(formatCaseId({ ...c, word: "Abcdefghijklmnopqrstuvwxyz" }, cleanNaming()), "11/18/26-Abcdefghijklmn-2");
+  for (const st of NAMING_STYLES) assert.equal(styleOf(withStyle({}, st.key)), st.key);
+  assert.equal(styleOf({ parts: ["date", "text"] }), "custom");
+  assert.equal(cleanNaming({ parts: ["date", "bogus"], sep: "*", text: "<b>", start: -4 }).parts.join(), "date");
+  assert.equal(cleanNaming({ sep: "*" }).sep, "-");
+  assert.equal(cleanNaming({ text: "<b>" }).text, "b");
+
+  // Two days: one with a case already in ACGME, one with a sheet case not yet logged.
+  const days = [
+    { day: "2026-11-17", cards: [
+      { id: "a1", day: "2026-11-17", date: "2026-11-17", word: "Rook", seq: 1, enteredAt: "2026-11-18T01:00:00Z", num: 221, caseId: "221" },
+      { id: "a2", day: "2026-11-17", date: "2026-11-17", word: "Rook", seq: 2 },
+      { id: "a3", day: "2026-11-17", date: "2026-11-17", word: "Lee", seq: 1, customId: true, caseId: "mine" },
+    ] },
+    { day: "2026-11-18", cards: [
+      { slot: "s1", day: "2026-11-18", date: "2026-11-18", word: "Rook", seq: 1 },
+      { id: "b2", day: "2026-11-18", date: "2026-11-18", word: "Rook", seq: 2 },
+    ] },
+  ];
+  const habit = planIds(days, cleanNaming());
+  assert.equal(habit.has("a1"), false, "a case in ACGME keeps its ID");
+  assert.equal(habit.get("a2").caseId, "11/17/26-Rook-2", "counts the case already in ACGME");
+  assert.equal(habit.get("a3").caseId, "mine", "a name the resident typed stays");
+  assert.equal(habit.get("b2").caseId, "11/18/26-Rook-2", "the sheet case before it counts");
+  assert.equal(habit.get("s1").caseId, "11/18/26-Rook-1");
+  const daily = planIds(days, withStyle({}, "date-day"));
+  assert.equal(daily.get("a3").caseId, "mine");
+  assert.equal(daily.get("b2").caseId, "111826-2");
+
+  // Running number: logged cases in order, after the highest one in ACGME; sheet cases after them.
+  const counted = withStyle({ start: 200 }, "total");
+  const last = lastUsed(counted, days.flatMap((d) => d.cards));
+  assert.equal(last, 221);
+  const run = planIds(days, counted, { last });
+  assert.deepEqual(["a2", "a3", "b2", "s1"].map((k) => run.get(k).caseId), ["222", "mine", "224", "225"]);
+  assert.equal(run.get("a3").num, 223, "a renamed case still takes its number");
+  assert.equal(run.get("s1").num, 0, "a sheet case isn't numbered until it's logged");
+  // A new starting point resets the count, even below numbers already used.
+  const restart = { ...counted, start: 150, last: 0, setAt: "2026-11-19T00:00:00Z" };
+  assert.equal(lastUsed(restart, days.flatMap((d) => d.cards)), 0);
+  assert.equal(planIds(days, restart, { last: 0 }).get("a2").caseId, "150");
+});
+
+test("arrange: tabs and Today's cards in each person's own order", async () => {
+  const { arrange, tabsFrom, todayLayout, moved, DEFAULT_TABS, TODAY_SECTIONS, MAX_TABS } = await import("../public/core/layout.js");
+  // Nothing saved: the original layout.
+  assert.deepEqual(tabsFrom(null), DEFAULT_TABS);
+  assert.deepEqual(todayLayout(null).order, TODAY_SECTIONS.map((s) => s.key));
+  // Unknown pages and repeats drop out; never more than four; Today always stays.
+  assert.deepEqual(tabsFrom(["board", "bogus", "board", "cases"]), ["board", "cases", "today"]);
+  assert.deepEqual(tabsFrom(["board", "cases", "call", "hours", "off"]), ["board", "cases", "call", "today"]);
+  assert.equal(tabsFrom(["tonight", "today", "board", "cases", "call"]).length, MAX_TABS);
+  assert.deepEqual(tabsFrom(["tonight", "today", "board", "cases"]), ["tonight", "today", "board", "cases"], "the first tab can be anything");
+  assert.deepEqual(tabsFrom([]), ["today"]);
+  // A card added in an update slots in after the one it follows by default.
+  assert.deepEqual(arrange(["a", "b", "c", "d"], ["c", "a", "d"]), ["c", "a", "b", "d"]);
+  assert.deepEqual(arrange(["a", "b", "c"], ["x", "c", "c"]), ["a", "b", "c"], "unknown and repeated keys drop out; a new card with nothing before it goes first");
+  // The day card can't be hidden; unknown keys are ignored.
+  const mine = ["tonight", ...TODAY_SECTIONS.map((s) => s.key).filter((k) => k !== "tonight")];
+  const lay = todayLayout({ order: mine, hidden: ["day", "week", "bogus"] });
+  assert.deepEqual(lay.order, mine, "Tonight first, everything else as it was");
+  assert.deepEqual(lay.hidden, ["week"]);
+  // Moves stop at the ends.
+  assert.deepEqual(moved(["a", "b", "c"], "b", -1), ["b", "a", "c"]);
+  assert.deepEqual(moved(["a", "b", "c"], "a", -1), ["a", "b", "c"]);
+  assert.deepEqual(moved(["a", "b", "c"], "c", 1), ["a", "b", "c"]);
+  assert.deepEqual(moved(["a", "b", "c"], "z", 1), ["a", "b", "c"]);
+});
+
+test("case log server: style, running number and ACGME's count", async () => {
+  const { mergeLog, logView, helperPayload, markEntered, cleanCase } = await import("../lib/caselog.js");
+  const key = "k".repeat(20);
+  const today = "2026-11-21";
+  const mk = (id, date, num, extra = {}) => ({ id, day: date, date, kind: "or", word: "Rook", seq: 1, age: "d", asa: "2", codes: ["general"], supervisor: { last: "Smith" }, num, updatedAt: "2026-11-20T00:00:00Z", ...extra });
+  assert.equal(cleanCase(mk("abcdefgh", "2026-11-19", "12x")).num, 12);
+  assert.ok(cleanCase(mk("abcdefgh", "2026-11-19", 1)).createdAt);
+  let { rec } = mergeLog(null, { key, cases: [mk("aaaaaaaa", "2026-11-19", 223), mk("bbbbbbbb", "2026-11-18", 222)], naming: { parts: ["total"], start: 222 } }, today);
+  assert.deepEqual(logView(rec, today).naming.parts, ["total"]);
+  // The button enters by running number, so IDs follow ACGME's count.
+  assert.deepEqual(helperPayload(rec, false).cases.map((c) => c.id), ["bbbbbbbb", "aaaaaaaa"]);
+  markEntered(rec, ["bbbbbbbb"]);
+  assert.equal(rec.naming.last, 222, "the highest number in ACGME is kept");
+  // Another device's older style change keeps the newer count; a newer "start at" resets it.
+  ({ rec } = mergeLog(rec, { key, naming: { parts: ["date", "total"], start: 1, last: 0 } }, today));
+  assert.equal(rec.naming.start, 222);
+  assert.equal(rec.naming.last, 222);
+  assert.deepEqual(rec.naming.parts, ["date", "total"]);
+  ({ rec } = mergeLog(rec, { key, naming: { parts: ["total"], start: 300, last: 0, setAt: new Date().toISOString() } }, today));
+  assert.equal(rec.naming.start, 300);
+  assert.equal(rec.naming.last, 0);
 });

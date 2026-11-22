@@ -102,7 +102,7 @@ export function renderPerson(ctx, pid) {
           h("b", null, w.known ? Math.round(w.hours) : "—"),
           h("i", { style: { height: `${(w.hours / max) * 78}%`, background: w.hours > 80 ? "var(--gap)" : w.hours > 70 ? "var(--warn)" : "var(--accent)" } }),
           h("span", null, `${parts(w.start).m}/${parts(w.start).d}`)))),
-      rep.flags.length ? h("div", { class: "chips", style: { marginTop: "10px" } }, rep.flags.map((f) => h("span", { class: `chip ${f.level}` }, f.text))) : null,
+      rep.flags.length ? h("div", { class: "chips", style: { marginTop: "10px" } }, rep.flags.map((f) => h("span", { class: `chip long ${f.level}` }, f.text))) : null,
     )));
   };
   root.append(h("section", { class: "card" },

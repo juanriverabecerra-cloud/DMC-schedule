@@ -29,3 +29,22 @@ export async function promptInstall() {
   await e.prompt();
   return (await e.userChoice)?.outcome === "accepted";
 }
+
+// From the Home Screen app, links open in a small in-app browser that has neither the resident's
+// Favorites (where the Log cases button lives) nor, reliably, their saved passwords. iOS 17 and
+// later open an x-safari-https:// address in Safari itself (checked on the iOS simulator). Older
+// iPhones ignore it, so `fallback` runs if the app is still showing a moment later.
+export const opensInApp = () => isIos() && standalone() && !isNativeApp();
+export function openInSafari(url, { fallback } = {}) {
+  if (!opensInApp()) { window.open(url, "_blank", "noopener"); return; }
+  let left = false;
+  const away = () => { if (document.visibilityState === "hidden") left = true; };
+  document.addEventListener("visibilitychange", away);
+  window.addEventListener("pagehide", away);
+  location.href = url.replace(/^https?:\/\//, (m) => `x-safari-${m}`);
+  setTimeout(() => {
+    document.removeEventListener("visibilitychange", away);
+    window.removeEventListener("pagehide", away);
+    if (!left && document.visibilityState === "visible") fallback?.();
+  }, 1600);
+}

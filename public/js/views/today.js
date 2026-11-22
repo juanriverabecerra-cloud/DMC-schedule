@@ -1,4 +1,6 @@
-import { h, card, dayChips, personRow, notice, emptyState } from "../ui.js";
+import { h, icon, card, dayChips, personRow, notice, emptyState } from "../ui.js";
+import { local } from "../api.js";
+import { todayLayout } from "../../core/layout.js";
 import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, fmtMonth } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
@@ -126,87 +128,78 @@ export function renderToday(ctx) {
   const draft = draftNote(ctx, state.date);
   if (draft) root.append(draft);
 
-  const site = SITES[d.site]?.name;
-  const sub = [d.roles.length ? d.rotation || d.label : (d.rotation && d.rotation !== d.label ? d.rotation : ""), site].filter(Boolean).join(" · ");
-  root.append(h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
-    h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`),
-    h("h2", null, headline(d)),
-    sub ? h("div", { class: "subtitle" }, sub) : null,
-    h("div", { class: "chips" }, dayChips(d)),
-    d.late ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "You're the late resident: finish at your site, then help at Harper until 6p.") : null,
-    d.call === "24" ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "24-hour call tonight (6a–6a), same as H1.") : null,
-    d.code === "11-9" && !d.call ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "11 to 9 rotation: OB at Hutzel, Monday to Friday, 11a–9p.") : null,
-  ));
-
+  // Everything else is in the order the resident chose (Arrange, under More); each piece only
+  // shows when it has something.
   const tomorrow = addDays(state.today, 1);
-  const rooms = assignmentList(ctx, d);
-  if (rooms.length) root.append(card(state.date === tomorrow ? "Tomorrow's OR sheet" : "OR sheet", h("ul", { class: "list" }, rooms), { pad: false }));
-  else if (state.date === tomorrow && !model.daily(tomorrow) && d.status === "work" && ["harper", "opsc", "hutzel"].includes(d.site)) {
-    root.append(h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "Tomorrow's room assignments usually come out this evening."));
-  }
-
-  // After an OR day: the day's cases, already laid out from the sheet, one tap away.
-  const cases = casesTodayCard(ctx);
-  if (cases) root.append(cases);
-  const procQuick = procedureShortcut(ctx);
-  if (procQuick) root.append(procQuick);
-
-  // The sheet is posted the evening before: surface tomorrow's assignment while looking at today.
-  if (state.date === state.today && model.daily(tomorrow)) {
-    const t = model.day(pid, tomorrow);
-    if (t.roles.length) {
+  const mates = teammates(ctx, d);
+  const sections = {
+    day: () => {
+      const site = SITES[d.site]?.name;
+      const sub = [d.roles.length ? d.rotation || d.label : (d.rotation && d.rotation !== d.label ? d.rotation : ""), site].filter(Boolean).join(" · ");
+      return h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
+        h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`),
+        h("h2", null, headline(d)),
+        sub ? h("div", { class: "subtitle" }, sub) : null,
+        h("div", { class: "chips" }, dayChips(d)),
+        d.late ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "You're the late resident: finish at your site, then help at Harper until 6p.") : null,
+        d.call === "24" ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "24-hour call tonight (6a–6a), same as H1.") : null,
+        d.code === "11-9" && !d.call ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "11 to 9 rotation: OB at Hutzel, Monday to Friday, 11a–9p.") : null,
+      );
+    },
+    or: () => {
+      const rooms = assignmentList(ctx, d);
+      if (rooms.length) return card(state.date === tomorrow ? "Tomorrow's OR sheet" : "OR sheet", h("ul", { class: "list" }, rooms), { pad: false });
+      if (state.date === tomorrow && !model.daily(tomorrow) && d.status === "work" && ["harper", "opsc", "hutzel"].includes(d.site)) {
+        return h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "Tomorrow's room assignments usually come out this evening.");
+      }
+      return null;
+    },
+    // After an OR day: the day's cases, already laid out from the sheet, one tap away.
+    cases: () => [casesTodayCard(ctx), procedureShortcut(ctx)],
+    // The sheet is posted the evening before: surface tomorrow's assignment while looking at today.
+    tomorrow: () => {
+      if (state.date !== state.today || !model.daily(tomorrow)) return null;
+      const t = model.day(pid, tomorrow);
+      if (!t.roles.length) return null;
       const first = t.roles.find((r) => r.room || r.rooms);
       const room = first?.room || first?.rooms?.[0];
-      root.append(h("section", { class: "card hero", vars: { "--rot": t.color }, onclick: () => ctx.setDate(tomorrow), style: { cursor: "pointer" } },
+      return h("section", { class: "card hero", vars: { "--rot": t.color }, onclick: () => ctx.setDate(tomorrow), style: { cursor: "pointer" } },
         h("div", { class: "eyebrow" }, `Tomorrow · ${fmtDate(tomorrow, "long")}`),
         h("h2", { style: { fontSize: "20px" } }, headline(t)),
         room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.mda ? `MDA ${room.mda}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ")) : null,
-        h("div", { class: "chips" }, dayChips(t, { withTime: false }))));
-    }
+        h("div", { class: "chips" }, dayChips(t, { withTime: false })));
+    },
+    didactics: () => didacticsDayCard(ctx),
+    team: () => (mates.length ? card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }) : null),
+    quick: () => {
+      const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key)).slice(0, 5);
+      return quick.length ? card("Quick call", h("ul", { class: "list" }, quick.map((x) => contactRow(ctx, x))), { pad: false, right: h("a", { href: "#/call" }, "All numbers ›") }) : null;
+    },
+    tonight: () => tonightMini(ctx),
+    week: () => card("This week", weekStrip(ctx, pid), { pad: false }),
+    gaps: () => {
+      const gaps = dayGaps(model, state.date).filter((g) => g.level === "gap" && (g.people || []).length === 0);
+      return gaps.length && p.cls !== "PGY-1" ? notice("gap", "alert", h("b", null, "Coverage gap: "), gaps.map((g) => g.title).join("; "), " ", h("a", { href: "#/gaps" }, "Details")) : null;
+    },
+    hours: () => hoursCard(ctx, pid),
+    coming: () => card("Coming up", upcomingList(ctx, pid, state.date), { pad: false }),
+    exams: () => (state.date === state.today ? aheadCard(ctx, pid) : null),
+    next: () => {
+      const next = addMonths(monthKey(state.date), 1);
+      const nextRot = model.rotationFor(pid, next);
+      return nextRot ? h("section", { class: "card card-pad" },
+        h("h3", { class: "card-title" }, `Next month · ${fmtMonth(next)}`),
+        h("div", { style: { display: "flex", alignItems: "center", gap: "10px" } },
+          h("span", { class: "dotc", vars: { "--c": model.day(pid, `${next}-15`).color } }),
+          h("b", null, nextRot))) : null;
+    },
+    calendar: () => subscribeCard(ctx, pid),
+  };
+  const { order, hidden } = todayLayout(local.get("todayLayout"));
+  for (const key of order) {
+    if (hidden.includes(key)) continue;
+    for (const el of [sections[key]?.()].flat()) if (el) root.append(el);
   }
-
-  // Only on days with didactics, right after the day's assignment.
-  const did = didacticsDayCard(ctx);
-  if (did) root.append(did);
-
-  const mates = teammates(ctx, d);
-  if (mates.length) {
-    root.append(card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }));
-  }
-
-  const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key)).slice(0, 5);
-  if (quick.length) {
-    root.append(card("Quick call", h("ul", { class: "list" }, quick.map((x) => contactRow(ctx, x))), { pad: false, right: h("a", { href: "#/call" }, "All numbers ›") }));
-  }
-
-  const mini = tonightMini(ctx);
-  if (mini) root.append(mini);
-
-  root.append(card("This week", weekStrip(ctx, pid), { pad: false }));
-
-  const gaps = dayGaps(model, state.date).filter((g) => g.level === "gap" && (g.people || []).length === 0);
-  if (gaps.length && p.cls !== "PGY-1") {
-    root.append(notice("gap", "alert", h("b", null, "Coverage gap: "), gaps.map((g) => g.title).join("; "), " ", h("a", { href: "#/gaps" }, "Details")));
-  }
-
-  const hc = hoursCard(ctx, pid);
-  if (hc) root.append(hc);
-
-  root.append(card("Coming up", upcomingList(ctx, pid, state.date), { pad: false }));
-
-  const ahead = state.date === state.today ? aheadCard(ctx, pid) : null;
-  if (ahead) root.append(ahead);
-
-  const next = addMonths(monthKey(state.date), 1);
-  const nextRot = model.rotationFor(pid, next);
-  if (nextRot) {
-    root.append(h("section", { class: "card card-pad" },
-      h("h3", { class: "card-title" }, `Next month · ${fmtMonth(next)}`),
-      h("div", { style: { display: "flex", alignItems: "center", gap: "10px" } },
-        h("span", { class: "dotc", vars: { "--c": model.day(pid, `${next}-15`).color } }),
-        h("b", null, nextRot))));
-  }
-
-  root.append(subscribeCard(ctx, pid));
+  root.append(h("div", { class: "arrange-link span-all" }, h("a", { href: "#/layout" }, icon("arrange"), "Arrange this screen")));
   return root;
 }

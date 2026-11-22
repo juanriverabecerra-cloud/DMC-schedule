@@ -2,7 +2,7 @@
 // monthly no-call weekend days. Each ends in an email draft to the schedule's inbox.
 import { h, icon, card, notice, emptyState, avatar, openSheet, toast, segmented, callChip, smsHref, copyText, append } from "../ui.js";
 import { api, local, deviceKey } from "../api.js";
-import { addDays, addMonths, fmtDate, fmtMonth, monthKey, nowMinutesLocal } from "../../core/dates.js";
+import { addDays, addMonths, fmtDate, fmtMonth, monthKey, nowMinutesLocal, todayLocal } from "../../core/dates.js";
 import {
   SCHEDULE_EMAIL, mailto, upcomingShifts, whenShort, when, swapEmail, swapAsk, jeopardyOn, assignmentText, sickText, sickEmail,
   NO_CALL_REASONS, noCallMonth, weekendsOf, noCallEmail, shiftName, lc,
@@ -134,7 +134,7 @@ function agreedBlock(ctx, r) {
   const { model, state } = ctx;
   const other = r.pid === state.me ? r.agreed.pid : r.pid;
   return h("div", { class: "agreed" },
-    notice("", "check", h("b", null, `Agreed with ${model.name(other)}. `), r.emailedAt ? `Email drafted ${fmtDate(r.emailedAt.slice(0, 10))}. Send it if you haven't.` : "Send the email so the call sheet gets updated. Add them on CC so the schedule sees you both agree."),
+    notice("", "check", h("b", null, `Agreed with ${model.name(other)}. `), r.emailedAt ? `Email drafted ${fmtDate(todayLocal(new Date(r.emailedAt)))}. Send it if you haven't.` : "Send the email so the call sheet gets updated. Add them on CC so the schedule sees you both agree."),
     emailBlock(swapEmail(model, r), { onOpen: () => act(ctx, r.id, { action: "emailed" }) }));
 }
 
@@ -165,7 +165,7 @@ function myRequestCard(ctx, r) {
       r.status === "agreed" ? h("button", { class: "btn sm", onclick: () => { if (confirm("Undo the agreement and reopen the request?")) act(ctx, r.id, { action: "reopen" }, "Reopened"); } }, "Undo agreement") : null,
       h("button", { class: "btn sm danger", onclick: () => { if (confirm("Cancel this swap request?")) act(ctx, r.id, { action: "cancel" }, "Cancelled"); } }, "Cancel request"))
       : h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "Posted from another device: accept or cancel it there."),
-    h("p", { class: "tiny muted", style: { margin: "8px 0 0" } }, `Asked ${fmtDate(r.createdAt.slice(0, 10))}${state.me === r.pid ? "" : ` by ${model.name(r.pid)}`}.`)));
+    h("p", { class: "tiny muted", style: { margin: "8px 0 0" } }, `Asked ${fmtDate(todayLocal(new Date(r.createdAt)))}${state.me === r.pid ? "" : ` by ${model.name(r.pid)}`}.`)));
 }
 
 function theirRow(ctx, r) {
@@ -349,7 +349,7 @@ export function renderNoCall(ctx) {
         NO_CALL_REASONS.map((r) => h("option", { value: r, selected: entry.picks[date] === r }, r))))))) : null,
     card("Anything to add", h("textarea", { class: "input", style: { minHeight: "64px", fontSize: "16px" }, placeholder: "Optional, e.g. the wedding is out of state", maxlength: "500", "aria-label": "Note", oninput: (e) => { entry.note = e.target.value; store(); } }, entry.note)),
     picked.length ? null : h("p", { class: "small muted", style: { margin: "0 4px 10px" } }, "No days picked: the email says you have no requests this month."),
-    entry.sentAt ? notice("", "check", `Email drafted ${fmtDate(entry.sentAt.slice(0, 10))}. Change anything and send it again.`) : null,
+    entry.sentAt ? notice("", "check", `Email drafted ${fmtDate(todayLocal(new Date(entry.sentAt)))}. Change anything and send it again.`) : null,
     emailBlock(() => noCallEmail(model, me.id, month, entry.picks, entry.note), { onOpen: () => {
       entry.sentAt = new Date().toISOString();
       store();

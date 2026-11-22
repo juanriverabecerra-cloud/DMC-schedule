@@ -1,6 +1,6 @@
 // Didactics: the monthly conference schedule as an agenda, with one-tap Zoom (link or
 // dial-in with the meeting ID and passcode entered for you), what's yours, and conflicts.
-import { h, icon, card, notice, emptyState, segmented, avatar, copyText, toast, numberButton } from "../ui.js";
+import { h, icon, card, notice, emptyState, segmented, avatar, copyText, toast, numberButton, splitColumns } from "../ui.js";
 import { local } from "../api.js";
 import { fmtDate, fmtRange, fmtTime, fmtMonth, monthKey, addDays, relDay, nowMinutesLocal, DOW_SHORT, dow } from "../../core/dates.js";
 import { KINDS, ROLES, SERIES, eventHeadline, isGenericTitle, residentsOf, facultyOf, zoomTelHref, relevantTo } from "../../core/didactics.js";
@@ -244,7 +244,8 @@ export function renderDidactics(ctx) {
     }
   }
 
-  const listHolder = h("div");
+  // On a wide screen the days flow into two columns, each day whole.
+  const listHolder = h("div", { class: "flow" });
   function draw() {
     const f = prefs.filter;
     const events = D.month(month).filter((e) => f === "all" || (f === "mine" ? !!mineOf(e, me) : e.series === f));
@@ -254,14 +255,16 @@ export function renderDidactics(ctx) {
     for (const e of events) { if (!byDate.has(e.date)) byDate.set(e.date, []); byDate.get(e.date).push(e); }
     const past = [...byDate.keys()].filter((d) => d < state.today);
     const drawDate = (date) => {
-      listHolder.append(h("div", { class: `section-title${date === state.today ? " today" : ""}` },
-        fmtDate(date, "long"), ["Today", "Tomorrow"].includes(relDay(date, state.today)) ? h("span", { class: "count" }, relDay(date, state.today)) : null));
-      for (const e of byDate.get(date)) listHolder.append(sessionCard(ctx, e));
+      listHolder.append(h("div", { class: "dayblock" },
+        h("div", { class: `section-title${date === state.today ? " today" : ""}` },
+          fmtDate(date, "long"), ["Today", "Tomorrow"].includes(relDay(date, state.today)) ? h("span", { class: "count" }, relDay(date, state.today)) : null),
+        byDate.get(date).map((e) => sessionCard(ctx, e))));
     };
     if (past.length && !state.didShowPast) {
-      listHolder.append(h("button", { class: "btn block sm", style: { margin: "4px 0 8px" }, onclick: () => { state.didShowPast = true; draw(); } }, `Show earlier this month (${past.length} ${past.length === 1 ? "day" : "days"})`));
+      listHolder.append(h("button", { class: "btn block sm span-all", style: { margin: "4px 0 8px" }, onclick: () => { state.didShowPast = true; draw(); } }, `Show earlier this month (${past.length} ${past.length === 1 ? "day" : "days"})`));
     }
     for (const date of byDate.keys()) if (state.didShowPast || date >= state.today) drawDate(date);
+    splitColumns(listHolder);
   }
   const filterHolder = h("div", { class: "span-all", style: { margin: "4px 0 6px" } });
   const drawFilters = () => filterHolder.replaceChildren(segmented(FILTERS.filter(([k]) => k !== "mine" || me), prefs.filter, (v) => {

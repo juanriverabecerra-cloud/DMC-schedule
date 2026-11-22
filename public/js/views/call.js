@@ -149,7 +149,8 @@ export function renderCall(ctx) {
   }
   const search = h("input", { class: "input", type: "search", placeholder: "Search a name, room, unit or number", "aria-label": "Search contacts", value: state.callQuery || "" });
   const results = h("div");
-  const browse = h("div");
+  // On a wide screen the cards flow into two columns.
+  const browse = h("div", { class: "flow" });
 
   function drawResults() {
     const q = search.value.trim();

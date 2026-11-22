@@ -85,6 +85,10 @@ export function renderMore(ctx) {
         h("div", { class: "main" }, h("div", { class: "name" }, "Exams"), h("div", { class: "sub" }, exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns")),
         icon("right"));
     })() : null,
+    h("li", { class: "row tap", onclick: () => ctx.go("layout") },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("arrange")),
+      h("div", { class: "main" }, h("div", { class: "name" }, "Arrange"), h("div", { class: "sub" }, "Your tabs, and what Today shows first")),
+      icon("right")),
     h("li", { class: "row tap", onclick: () => ctx.go("rate") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("sparkle")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts", todo("rate")), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),

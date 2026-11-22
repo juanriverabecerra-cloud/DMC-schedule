@@ -1,4 +1,4 @@
-import { h, icon, personRow, emptyState, segmented, openSheet, notice } from "../ui.js";
+import { h, icon, personRow, emptyState, segmented, openSheet, notice, splitColumns } from "../ui.js";
 import { BOARD_ORDER, headline } from "../../core/model.js";
 import { fmtDate } from "../../core/dates.js";
 import { local } from "../api.js";
@@ -61,7 +61,8 @@ export function renderBoard(ctx) {
   if (draft) root.append(draft);
   const prefs = local.get("boardPrefs", { cls: "all", showOff: false });
   const search = h("input", { class: "input", type: "search", placeholder: "Search name or place", "aria-label": "Search", value: state.boardQuery || "" });
-  const listHolder = h("div");
+  // On a wide screen the groups flow into two columns (again after each search or filter).
+  const listHolder = h("div", { class: "flow" });
 
   function draw() {
     const q = search.value.trim().toLowerCase();
@@ -92,12 +93,13 @@ export function renderBoard(ctx) {
       );
     }
     if (hidden.length) {
-      listHolder.append(h("button", { class: "btn block", style: { marginTop: "4px" }, onclick: () => { prefs.showOff = true; local.set("boardPrefs", prefs); draw(); } },
+      listHolder.append(h("button", { class: "btn block span-all", style: { marginTop: "4px" }, onclick: () => { prefs.showOff = true; local.set("boardPrefs", prefs); draw(); } },
         `Show ${hidden.map(([g, n]) => `${g.toLowerCase()} (${n})`).join(", ")}`));
     }
     if (prefs.showOff) {
-      listHolder.append(h("button", { class: "btn block sm", style: { marginTop: "8px" }, onclick: () => { prefs.showOff = false; local.set("boardPrefs", prefs); draw(); } }, "Hide off / vacation"));
+      listHolder.append(h("button", { class: "btn block sm span-all", style: { marginTop: "8px" }, onclick: () => { prefs.showOff = false; local.set("boardPrefs", prefs); draw(); } }, "Hide off / vacation"));
     }
+    splitColumns(listHolder);
   }
 
   search.addEventListener("input", draw);

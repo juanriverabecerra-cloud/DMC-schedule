@@ -4,7 +4,7 @@ import { CLASS_ORDER } from "../../core/model.js";
 
 export function renderSetup(ctx) {
   const input = h("input", { class: "input", type: "password", autocomplete: "current-password", placeholder: "Passcode", "aria-label": "Passcode", required: true });
-  const err = h("p", { class: "small", style: { color: "var(--gap)", minHeight: "1.2em" } }, ctx.state.error || "");
+  const err = h("p", { class: "small setup-err" }, ctx.state.error || "");
   const btn = h("button", { class: "btn primary block", type: "submit" }, "Open schedule");
   const form = h("form", {
     onsubmit: async (e) => {

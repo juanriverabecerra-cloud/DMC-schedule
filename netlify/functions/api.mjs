@@ -146,13 +146,17 @@ export default async function handler(req) {
         // Sent as plain text so the browser needn't ask first.
         const body = await req.text().then((t) => { try { return JSON.parse(t); } catch { return {}; } });
         const ids = Array.isArray(body.entered) ? body.entered.filter((x) => typeof x === "string").slice(0, 50) : [];
+        // ACGME's own "Cases Submitted" count, read off the page: a running-number style can start after it.
+        const count = Number.isInteger(body.acgmeCount) && body.acgmeCount >= 0 && body.acgmeCount < 1e6 ? body.acgmeCount : null;
         let changed = 0;
-        if (ids.length) {
+        if (ids.length || count !== null) {
           await store.update(key, (r) => {
             if (!r) return undefined;
             const next = { ...r, cases: Object.fromEntries(Object.entries(r.cases || {}).map(([id, c]) => [id, { ...c }])) };
-            changed = markEntered(next, ids, true);
-            return changed ? next : undefined;
+            changed = ids.length ? markEntered(next, ids, true) : 0;
+            const newCount = count !== null && r.acgmeCount?.n !== count;
+            if (newCount) next.acgmeCount = { n: count, at: new Date().toISOString() };
+            return changed || newCount ? next : undefined;
           });
         }
         return json({ ok: true, changed }, 200, cors);
