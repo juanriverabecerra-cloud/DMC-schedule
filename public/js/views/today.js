@@ -7,7 +7,7 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
-import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote } from "./common.js";
+import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { installCard, reminderCard } from "./reminders.js";
@@ -167,7 +167,10 @@ export function renderToday(ctx) {
         h("div", { class: "eyebrow" }, `Tomorrow · ${fmtDate(tomorrow, "long")}`),
         h("h2", { style: { fontSize: "20px" } }, headline(t)),
         room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.mda ? `MDA ${room.mda}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ")) : null,
-        h("div", { class: "chips" }, dayChips(t, { withTime: false })));
+        h("div", { class: "chips" }, dayChips(t, { withTime: false })),
+        // Whether tomorrow's sheet is out yet, and since when.
+        model.ds.daily[tomorrow]?.draft ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "Still being finalized: rooms can change.")
+          : postedLine(ctx, tomorrow, "Posted") ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, ...postedLine(ctx, tomorrow, "Posted")) : null);
     },
     didactics: () => didacticsDayCard(ctx),
     team: () => (mates.length ? card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }) : null),

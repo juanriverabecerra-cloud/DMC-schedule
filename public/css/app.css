@@ -719,6 +719,10 @@ button.tap.mono { font-size: 13px; }
 .arrange-link svg { width: 15px; height: 15px; }
 .id-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setup-err { color: var(--gap); margin: -2px 0 12px; }
+/* When the day's OR sheet went out, and when it last changed: quiet, above the day. */
+.sheet-stamp { display: flex; align-items: center; gap: 6px; margin: -2px 4px 10px; font-size: 13px; color: var(--muted); }
+.sheet-stamp svg { width: 15px; height: 15px; color: var(--late); flex: none; }
+.sheet-stamp b { font-weight: 650; color: var(--text); }
 .setup-err:empty { display: none; }
 .topbar.plain { border-bottom-color: transparent; background: transparent; }
 .topbar.plain h1 { visibility: hidden; }

@@ -1,6 +1,6 @@
 // Offline support: the app shell is cached; schedule data is cached by the app itself
 // (localStorage), so API and calendar requests always go to the network.
-const CACHE = "dmc-shell-v26";
+const CACHE = "dmc-shell-v27";
 const NETWORK_WAIT = 3500; // a weak signal shouldn't leave the screen blank
 const SHELL = [
   "/", "/index.html", "/css/app.css", "/manifest.webmanifest",

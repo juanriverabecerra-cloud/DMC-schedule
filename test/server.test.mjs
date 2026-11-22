@@ -14,7 +14,14 @@ process.env.ADMIN_KEY = "admin-test";
 const { default: api } = await import("../netlify/functions/api.mjs");
 const { openStore } = await import("../lib/store.js");
 const push = await import("../lib/push.js");
-const { todayLocal, addDays, zonedTime } = await import("../public/core/dates.js");
+const { todayLocal, addDays, zonedTime, nowMinutesLocal } = await import("../public/core/dates.js");
+
+// The tests never reach Google: a test that wants the live sheet hands its workbook to `google`.
+let google = null;
+const realFetch = globalThis.fetch;
+globalThis.fetch = (url, opts) => (/^https:\/\/docs\.google\.com\//.test(String(url))
+  ? (google ? google(String(url)) : Promise.reject(new Error("No network in the tests.")))
+  : realFetch(url, opts));
 
 const call = async (method, url, body, headers = {}) => {
   const res = await api(new Request(`http://localhost${url}`, {
@@ -327,7 +334,7 @@ test("the workbook reads like the photo, wherever the blocks below the table lan
   assert.equal(looksComplete(wb, { ...p, rooms: [{ surgeon: "Smith", staff: "" }] }), false); // a room with nobody in it
 });
 
-test("the live sheet: updates quietly, alerts once when settled, then only the people it moved", async () => {
+test("the live sheet: updates quietly, alerts once it's ready, then only the people it moved", async () => {
   const st = openStore();
   const sync = await import("../lib/daily-sync.js");
   // 3p in Detroit on Mar 10, 2026; the sheet is for Mar 11.
@@ -349,36 +356,45 @@ test("the live sheet: updates quietly, alerts once when settled, then only the p
   await run(0);
   assert.equal((await daily()).draft, true); // shows right away, marked as not final
   assert.equal((await daily()).source, "sheet");
+  assert.equal((await daily()).postedAt, "");
   assert.equal(pa.received.length, 0);
-  await run(30);
-  assert.equal(pa.received.length, 0); // still inside the quiet window
+  await run(6);
+  assert.equal(pa.received.length, 0); // complete, but still being worked on a moment ago
   // An edit restarts the wait.
   bytes = await fakeWorkbook("2026-03-11", [...v1.slice(0, 2), ["3", "Lee", "", "Other", "X"]]);
-  await run(40);
-  await run(80);
+  await run(9);
+  await run(15);
   assert.equal(pa.received.length, 0);
-  await run(86);
-  assert.equal(pa.received.length, 1); // 46 minutes unchanged: one alert
+  await run(21);
+  assert.equal(pa.received.length, 1); // ready and 12 minutes unchanged: one alert
   assert.equal(pb.received.length, 1);
   assert.equal(pa.open(pa.received[0].body).title, "Tomorrow's OR schedule is posted");
   assert.equal((await daily()).draft, false);
+  assert.equal((await daily()).postedAt, at(21).toISOString()); // the app can say when it went out
+  assert.ok(Date.parse((await daily()).editedAt) < Date.parse((await daily()).postedAt), "no changes since it was posted");
   assert.deepEqual((await call("GET", "/api/daily-source", undefined, admin)).body.reach, { phones: 2, skipped: 0, sent: 2 }); // how far it got
-  await run(120);
+  await run(40);
   assert.equal(pa.received.length, 1); // never twice
-  // A correction after the alert: only the resident it moved hears, and once.
+  // A correction after the alert: only the resident it moved hears, once the edits stop.
   bytes = await fakeWorkbook("2026-03-11", v2);
-  await run(130);
-  assert.equal(pb.received.length, 1); // waits for it to settle
-  await run(165);
+  await run(50);
+  assert.equal((await daily()).editedAt, at(50).toISOString()); // "updated 4:50p" in the app
+  await run(55);
+  assert.equal(pb.received.length, 1); // still being edited
+  await run(61);
   assert.equal(pa.received.length, 1);
   assert.equal(pb.received.length, 2);
   const moved = pb.open(pb.received[1].body);
   assert.equal(moved.title, "Your assignment changed for tomorrow");
   assert.match(moved.body, /OR 3 with Lee/);
-  bytes = await fakeWorkbook("2026-03-11", v1);
-  await run(170);
-  await run(205);
-  assert.equal(pb.received.length, 2); // only once each, however many corrections follow
+  // Moved again later: told again, each time, up to three corrections.
+  for (const [i, v] of [v1, v2, v1].entries()) {
+    bytes = await fakeWorkbook("2026-03-11", v);
+    await run(70 + i * 20);
+    await run(81 + i * 20);
+  }
+  assert.equal(pa.received.length, 1); // OR 1 with Smith all along
+  assert.equal(pb.received.length, 4); // the first alert and three corrections, not a fourth
   assert.equal((await daily()).rooms[1].staff, "ResB"); // the app still has the latest
 
   // The next morning: the sheet is cleared, or holds tomorrow's cases under today's date.
@@ -416,6 +432,66 @@ test("the live sheet: updates quietly, alerts once when settled, then only the p
   await sync.disconnect(st);
 });
 
+test("opening the app reads the live sheet if nobody has in the last minute, and never alerts", async () => {
+  const st = openStore();
+  const sync = await import("../lib/daily-sync.js");
+  const person = { id: "a", last: "ResA", first: "Test", preferred: "Test", cls: "CA-1", canonical: "ResA, Test", aliases: [] };
+  const months = { "2026-03": { rows: { a: { rotation: "Basic Anesthesia", days: {} } }, days: 31 } };
+  await st.setJSON("dataset", { people: [person], months, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("daily-sync");
+  await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
+  const phone = await fakePhone();
+  await st.setJSON("push/subs", { a: { ...phone.sub, pid: "a" } });
+  try {
+    const full = [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "X"], ["3", "Lee", "", "M", "Y"]];
+    const bytes = await fakeWorkbook("2026-03-11", full);
+    let reads = 0;
+    const fetchBytes = async () => { reads++; return bytes; };
+    const at = (secs) => new Date(Date.parse("2026-03-10T19:00:00Z") + secs * 1000); // 3p, the sheet is for tomorrow
+    const daily = async () => (await st.getJSON("dataset")).daily["2026-03-11"];
+
+    await sync.peekDaily(st, { now: at(0), fetchBytes });
+    assert.equal(reads, 1); // the first person to open the app gets the sheet as it is right now
+    assert.equal((await daily()).draft, true);
+    assert.equal(await sync.peekDaily(st, { now: at(40), fetchBytes }), null);
+    assert.equal(reads, 1); // the next ones that minute don't wait on Google again
+    await sync.syncDaily(st, { now: at(120), fetchBytes });
+    assert.equal(await sync.peekDaily(st, { now: at(150), fetchBytes }), null);
+    assert.equal(reads, 2); // a scheduled check counts as a read too
+    // Ready and quiet for 15 minutes: opening the app still doesn't send the alert; the scheduled check does.
+    await sync.peekDaily(st, { now: at(15 * 60), fetchBytes });
+    assert.equal(reads, 3);
+    assert.equal(phone.received.length, 0);
+    await sync.syncDaily(st, { now: at(16 * 60), fetchBytes });
+    assert.equal(phone.received.length, 1);
+    assert.equal(reads, 4);
+    // Google slow for someone opening the app: admins aren't shown an error, and the next opener
+    // in that minute doesn't wait for it too.
+    const slow = async () => { reads++; throw Object.assign(new Error("timeout"), { name: "TimeoutError" }); };
+    assert.equal((await sync.peekDaily(st, { now: at(20 * 60), fetchBytes: slow })).error, null);
+    assert.equal(await sync.peekDaily(st, { now: at(20 * 60 + 30), fetchBytes: slow }), null);
+    assert.equal(reads, 5);
+    // Overnight (3a), nobody's editing: no reads.
+    assert.equal(await sync.peekDaily(st, { now: new Date("2026-03-11T07:00:00Z"), fetchBytes }), null);
+    assert.equal(reads, 5);
+
+    // Through the app's own request: the schedule it gets back already has the latest sheet.
+    const tomorrow = addDays(todayLocal(), 1);
+    const sheet = await fakeWorkbook(tomorrow, [["4", "Park", "", "M", "ResA"], ...full.slice(1)]);
+    let googled = 0;
+    google = async () => { googled++; return new Response(sheet, { headers: { "content-type": "application/octet-stream" } }); };
+    const res = await call("GET", "/api/data", undefined, viewer);
+    google = null;
+    const awake = nowMinutesLocal() >= 5 * 60;
+    assert.equal(googled, awake ? 1 : 0);
+    if (awake) assert.equal(res.body.daily[tomorrow].rooms[0].surgeon, "Park");
+    assert.equal(phone.received.length, 1); // still just the one alert
+  } finally {
+    phone.close();
+    await sync.disconnect(st);
+  }
+});
+
 test("the still-being-finalized label clears by itself, and phones find out", async () => {
   const st = openStore();
   const sync = await import("../lib/daily-sync.js");
@@ -435,22 +511,23 @@ test("the still-being-finalized label clears by itself, and phones find out", as
   const ds = () => st.getJSON("dataset");
   const draft = async () => (await ds()).daily["2026-03-11"].draft;
 
-  // First seen at 9:28p: 45 quiet minutes lands after the 10p cutoff.
-  const night = (mins) => new Date(Date.parse("2026-03-11T01:28:00Z") + mins * 60000);
+  // First seen at 9:55p: 10 quiet minutes lands after the 10p cutoff.
+  const night = (mins) => new Date(Date.parse("2026-03-11T01:55:00Z") + mins * 60000);
   await run(night(0));
   const first = (await ds()).updatedAt;
-  await run(night(30));
+  await run(night(6));
   assert.equal(await draft(), true);
-  await run(night(47));
+  await run(night(11));
   assert.equal(await draft(), false);
   assert.notEqual((await ds()).updatedAt, first); // otherwise phones keep getting "not modified"
+  assert.equal((await ds()).daily["2026-03-11"].postedAt, ""); // final, but nobody was told
   // A late edit brings the label back until the sheet is quiet again.
   bytes = await fakeWorkbook("2026-03-11", [...full.slice(0, 2), ["3", "Lee", "", "Other", "Y"]]);
-  await run(night(50));
+  await run(night(14));
   assert.equal(await draft(), true);
-  await run(night(80));
+  await run(night(20));
   assert.equal(await draft(), true);
-  await run(night(96));
+  await run(night(25));
   assert.equal(await draft(), false);
   assert.equal(phone.received.length, 0); // none of this buzzes anyone
 
@@ -687,7 +764,7 @@ test("a day first saved from the photo switches to the live sheet without alerti
   const { markAnnounced, readState, saveState } = sync;
   const { withDataset, setDaily } = await import("../lib/dataset.js");
   const state = await readState(st);
-  await withDataset(st, (d) => { setDaily(d, "2026-03-11", { ...photo, source: "photo" }); markAnnounced(state, d, "2026-03-11", new Date("2026-03-10T21:00:00Z")); });
+  await withDataset(st, (d) => { setDaily(d, "2026-03-11", { ...photo, source: "photo", editedAt: "2026-03-10T21:00:00.000Z" }); markAnnounced(state, d, "2026-03-11", new Date("2026-03-10T21:00:00Z")); });
   await saveState(st, state);
   // The workbook now reads properly: same rooms, the surgeon spelled right.
   await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
@@ -698,6 +775,8 @@ test("a day first saved from the photo switches to the live sheet without alerti
   assert.equal(saved.source, "sheet");
   assert.equal(saved.rooms[0].surgeon, "Smith");
   assert.equal(saved.draft, false);
+  assert.equal(saved.postedAt, "2026-03-10T21:00:00.000Z"); // still posted when the photo was saved
+  assert.ok(Date.parse(saved.editedAt) - Date.parse(saved.postedAt) < 60000, "a spelling fix isn't shown as an update");
   assert.equal(pa.received.length + pb.received.length, 0); // no "your assignment changed" for a spelling fix
   assert.equal((await readState(st)).rooms, 3);
   pa.close(); pb.close();

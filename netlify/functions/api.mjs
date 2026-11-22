@@ -10,7 +10,7 @@ import { createModel } from "../../public/core/model.js";
 import { buildIcs, feedRange } from "../../public/core/ics.js";
 import { todayLocal, addDays } from "../../public/core/dates.js";
 import { shiftBlock } from "../../public/core/requests.js";
-import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock, sheetAudience, noteReach } from "../../lib/daily-sync.js";
+import { sheetIdFrom, fetchSheet, readSource, saveSource, readState, saveState, syncDaily, publicStatus, disconnect, announce, markAnnounced, withSyncLock, sheetAudience, noteReach, peekDaily } from "../../lib/daily-sync.js";
 import { readXlsx } from "../../lib/xlsx.js";
 import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
 import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick, keepNoCallList, noCallHistory, forgetNoCallLists } from "../../lib/reqlog.js";
@@ -176,6 +176,8 @@ export default async function handler(req) {
     if (!isViewer(req)) return fail(401, "Passcode required");
 
     if (path === "/api/data" && method === "GET") {
+      // The latest from the live sheet first, if nobody has read it in the last minute.
+      await peekDaily(st).catch(() => null);
       const ds = await loadDataset(st);
       const etag = `"${ds.updatedAt || "empty"}"`;
       if (req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers: { etag } });
@@ -505,7 +507,9 @@ export default async function handler(req) {
         const { ds: stored, result } = await withDataset(st, (d) => {
           // A sheet that only came from the live workbook hasn't been announced yet: saving it here counts.
           const isNew = !d.daily[date] || (d.daily[date].source === "sheet" && !sync.days[date]?.alertedAt);
-          const out = setDaily(d, date, { ...body, hasPhoto });
+          // When phones were told, and when it last changed, are the server's own record, whatever
+          // the editor sends back.
+          const out = setDaily(d, date, { ...body, hasPhoto, postedAt: d.daily[date]?.postedAt || "", editedAt: new Date().toISOString() });
           // The first save of a day's sheet tells everyone; a later fix only when the admin asks.
           willSend = (isNew || body.notify === true) && shouldAlert(date, todayLocal());
           if (willSend) markAnnounced(sync, d, date);

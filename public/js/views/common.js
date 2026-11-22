@@ -1,7 +1,7 @@
 // Pieces shared by several screens: OR assignment details, the day sheet, upcoming events,
 // and the calendar subscription card.
 import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons } from "../ui.js";
-import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT } from "../../core/dates.js";
+import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT, fmtTime, nowMinutesLocal, todayLocal } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
@@ -169,12 +169,36 @@ export function upcomingList(ctx, pid, from) {
   )));
 }
 
-// A future day's sheet that's read live from the board runner's workbook and not final yet.
+// A moment as the app writes times (4:12p), with the day when it isn't today.
+export function clockAt(iso, today) {
+  const at = new Date(iso);
+  const day = todayLocal(at);
+  const time = fmtTime(nowMinutesLocal(at));
+  return day === today ? time : day === addDays(today, -1) ? `yesterday ${time}` : `${DOW_SHORT[dow(day)]} ${time}`;
+}
+
+// A future day's sheet that's read live from the board runner's workbook and not final yet; once
+// phones have been told it's out, when that was, and when it last changed if it has since.
 export function draftNote(ctx, date) {
+  const { today } = ctx.state;
   const sheet = ctx.model.ds.daily?.[date];
-  if (!sheet?.draft || date <= ctx.state.today) return null;
-  const at = sheet.sheetAt ? new Date(sheet.sheetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
-  return notice("warn", "info", h("b", null, "Still being finalized. "), `Rooms can change${at ? `; last update ${at}` : ""}.`);
+  if (!sheet || date < today) return null;
+  if (sheet.draft && date > today) {
+    const note = notice("warn", "info", h("b", null, "Still being finalized. "), `Rooms can change${sheet.sheetAt ? `; last update ${clockAt(sheet.sheetAt, today)}` : ""}.`);
+    note.classList.add("span-all"); // above both columns on a wide screen
+    return note;
+  }
+  const posted = postedLine(ctx, date);
+  return posted ? h("p", { class: "sheet-stamp span-all" }, icon("check"), h("span", null, ...posted)) : null;
+}
+
+// "OR sheet posted 4:12p", with " · updated 4:31p" when it changed after phones were told.
+export function postedLine(ctx, date, lead = "OR sheet posted") {
+  const sheet = ctx.model.ds.daily?.[date];
+  if (!sheet?.postedAt || sheet.draft) return null;
+  const { today } = ctx.state;
+  const edited = sheet.editedAt && Date.parse(sheet.editedAt) - Date.parse(sheet.postedAt) > 60000;
+  return [`${lead} ${clockAt(sheet.postedAt, today)}`, edited ? h("b", null, ` · updated ${clockAt(sheet.editedAt, today)}`) : null];
 }
 
 export function openDaySheet(ctx, pid, date) {
