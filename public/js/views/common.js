@@ -3,6 +3,7 @@
 import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons } from "../ui.js";
 import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT, fmtTime, nowMinutesLocal, todayLocal } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
+import { openEventSheet } from "./events.js";
 import { SITES } from "../../core/codes.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
@@ -98,8 +99,49 @@ export function assignmentList(ctx, d) {
         pat ? h("div", { class: "callchips" }, callChip(model.dir, "PAT clinic", pat.numbers)) : null)));
     }
     if (r.kind === "night") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "Night coverage"))));
+    // Cath lab, EP lab, CT...: the place, its MDA (with their numbers) and who else is there.
+    if (r.kind === "proc") {
+      const p = r.proc;
+      const others = [...p.staffIds, ...p.jaIds].filter((s) => s.id !== d.pid).map((s) => (s.id ? model.name(s.id) : s.name));
+      items.push(h("li", { class: "row" },
+        h("div", { class: "avatar", style: { borderRadius: "12px", "--c": "var(--accent)" } }, icon("heart")),
+        h("div", { class: "main" },
+          h("div", { class: "name" }, h("span", { class: "n" }, p.name), p.count && p.count !== "0" ? h("span", { class: "pill" }, `${p.count} case${p.count === "1" ? "" : "s"}`) : null),
+          h("div", { class: "roomline" }, [
+            r.asJa ? "You're the JA" : null,
+            p.mda ? h("span", null, "MDA ", h("b", null, p.mda)) : null,
+            others.length ? h("span", null, "With ", h("b", null, others.join(", "))) : null,
+          ].filter(Boolean).flatMap((x, i) => (i ? [" · ", x] : [x]))),
+          mdaChips(ctx, p.mda))));
+    }
+    // Where the board runner's list puts them when no room or block does (NORA, PACU...).
+    if (r.kind === "where") {
+      items.push(h("li", { class: "row" },
+        h("div", { class: "main" },
+          h("div", { class: "name" }, r.where),
+          h("div", { class: "sub" }, [r.mda ? `MDA ${r.mda}` : "", "From the board runner's list"].filter(Boolean).join(" · ")),
+          mdaChips(ctx, r.mda))));
+    }
+  }
+  // The Late/Call column, when the call sheet doesn't already say so.
+  if (d.sheetCall && !d.late && !d.call) {
+    items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, d.sheetCall), h("div", { class: "sub" }, "Late/Call on today's sheet"))));
+  }
+  // Notes at the bottom of the sheet that mention them.
+  for (const text of d.sheetNotes || []) {
+    items.push(h("li", { class: "row" }, h("div", { class: "avatar", style: { "--c": "var(--warn)" } }, icon("info")),
+      h("div", { class: "main" }, h("div", { class: "sub" }, "Note on the sheet"), h("div", { class: "name", style: { fontWeight: 550 } }, text))));
   }
   return items;
+}
+
+// Call buttons for an MDA named on the sheet, from the directory ("Rivers" or "Lakeside/ Hill").
+export function mdaChips(ctx, names) {
+  const { model } = ctx;
+  const chips = String(names || "").split("/").map((n) => n.replace(/\([^)]*\)/g, "").trim()).filter(Boolean)
+    .map((n) => ({ n, staff: model.dir.staff(n) })).filter((x) => x.staff?.numbers?.length)
+    .map((x) => callChip(model.dir, `MDA ${x.n}`, x.staff.numbers));
+  return chips.length ? h("div", { class: "callchips" }, chips) : null;
 }
 
 // Residents this person works with today, from the daily sheet.
@@ -153,18 +195,20 @@ export function upcoming(model, pid, from, days = 45, max = 7) {
     else out.push({ date, kind, label, sub: d.status === "work" && kind !== "call24" && kind !== "call12" ? headline(d) : "" });
   }
   flush();
-  return out.slice(0, max);
+  // Program events from the office's emails, in date order with the rest.
+  const events = model.events(addDays(from, 1), addDays(from, days), pid).map((e) => ({ date: e.date, kind: "event", label: e.title, sub: [e.start ? fmtTime(Number(e.start.slice(0, 2)) * 60 + Number(e.start.slice(3))) : "", e.place].filter(Boolean).join(" · "), event: e }));
+  return [...out, ...events].sort((a, b) => a.date.localeCompare(b.date)).slice(0, max);
 }
 
 export function upcomingList(ctx, pid, from) {
   const items = upcoming(ctx.model, pid, from);
   if (!items.length) return h("p", { class: "muted small", style: { margin: "0 16px 14px" } }, "Nothing notable in the next few weeks of uploaded schedules.");
-  return h("ul", { class: "list" }, items.map((e) => h("li", { class: "row tap", onclick: () => ctx.setDate(e.date) },
+  return h("ul", { class: "list" }, items.map((e) => h("li", { class: "row tap", onclick: () => (e.event ? openEventSheet(ctx, e.event) : ctx.setDate(e.date)) },
     h("div", { style: { width: "64px", flex: "none" } },
       h("div", { style: { fontWeight: 700, fontSize: "13px" } }, diffDays(ctx.state.today, e.date) < 7 ? relDay(e.date, ctx.state.today) : DOW_SHORT[dow(e.date)]),
       h("div", { class: "tiny muted" }, fmtDate(e.date, "md"))),
     h("div", { class: "main" },
-      h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" ? "info" : e.kind}` }, e.label)),
+      h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" || e.kind === "event" ? "info" : e.kind}` }, e.kind === "event" ? icon("event") : null, e.label)),
       e.end && e.end !== e.date ? h("div", { class: "sub" }, `${fmtDate(e.date)} – ${fmtDate(e.end)}`) : e.sub ? h("div", { class: "sub" }, e.sub) : null),
   )));
 }

@@ -1,6 +1,7 @@
 // All API routes plus the calendar feeds.
 import { openStore } from "../../lib/store.js";
-import { isAdmin, isViewer, isDemo, feedToken, pidFromToken, surveyKey, configured, env } from "../../lib/auth.js";
+import { isAdmin, isViewer, isDemo, feedToken, pidFromToken, surveyKey, configured, env, mailToken, isMailToken } from "../../lib/auth.js";
+import { cleanMail, ingestMail, senderRules, SENDER_SALT } from "../../lib/mail-intake.js";
 import { demoDataset, demoStore } from "../../lib/demo.js";
 import { widgetFeed, planFromQuery } from "../../lib/widget-feed.js";
 import {
@@ -121,6 +122,23 @@ export default async function handler(req) {
       const { ds, pid } = owner;
       const feed = widgetFeed(createModel(ds), pid, { plan: planFromQuery(pid, url.searchParams.get("x")) });
       return feed ? json(feed, 200, { "cache-control": "private, max-age=60" }) : fail(404, "Not found");
+    }
+
+    // ---- the program's emails, sent by the owner's Gmail script (Admin › Email intake) ----
+    // No passcode: the private address is the key, like a calendar link. The real program only.
+    const mailIn = path.match(/^\/api\/mail\/([\w-]+)$/);
+    if (mailIn && method === "POST") {
+      if (demo || !isMailToken(mailIn[1])) return fail(404, "Not found");
+      const mail = cleanMail(await req.json().catch(() => null));
+      if (!mail) return fail(400, "That doesn't look like an email.");
+      const queueRead = async (id) => {
+        if (!configured().ai) return false;
+        const res = await fetch(`${origin(req)}/bg/read-mail`, {
+          method: "POST", headers: { "content-type": "application/json", "x-mail-token": mailToken() }, body: JSON.stringify({ id }),
+        }).catch(() => null);
+        return !!(res && (res.ok || res.status === 202));
+      };
+      return json(await ingestMail(st, mail, { queueRead }));
     }
 
     // ---- ACGME's Add Case page reads the ready cases through the resident's private link ----
@@ -474,6 +492,12 @@ export default async function handler(req) {
     }
 
     if (!isAdmin(req)) return fail(403, "Admin key required");
+
+    // Email intake: the address for the Gmail script, and what came in lately.
+    if (path === "/api/mail-intake" && method === "GET") {
+      const log = (await st.getJSON("mail-log")) || { list: [] };
+      return json({ address: !demo && mailToken() ? `${origin(req)}/api/mail/${mailToken()}` : "", senders: { ...senderRules(), salt: SENDER_SALT }, lastAt: log.lastAt || null, list: log.list.slice(0, 30), ai: configured().ai });
+    }
 
     if (path === "/api/upload/call" && method === "POST") {
       const bytes = await bytesOf(req);

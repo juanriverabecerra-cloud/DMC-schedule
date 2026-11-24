@@ -1,6 +1,6 @@
 // Admin: uploads (call sheet, rotations, daily photo), review/edit of the daily sheet,
 // phone directory, people, settings and backups. Every call sends the admin key.
-import { h, icon, card, toast, notice, openSheet, avatar, segmented, append, safely, splitColumns } from "../ui.js";
+import { h, icon, card, toast, notice, openSheet, avatar, segmented, append, safely, splitColumns, copyText } from "../ui.js";
 import { api, local } from "../api.js";
 import { todayLocal, addDays, diffDays, fmtDate, fmtTime, fmtMonth, addMonths, DOW_SHORT } from "../../core/dates.js";
 import { KINDS, SERIES, ROLES, OWN_ROLES, clock, parseClock, cleanPersonName } from "../../core/didactics.js";
@@ -10,6 +10,7 @@ import { roleWord } from "../../core/model.js";
 import { formatDirectoryText } from "../../core/directory.js";
 import { createMatcher, splitNames, isCrnaMark } from "../../core/names.js";
 import { DEFAULT_SETTINGS, FILL_TAG_LABELS, mergeSettings } from "../../core/codes.js";
+import { mailScript } from "../../core/mail-script.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -122,8 +123,8 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
   const field = (label, value, onInput, placeholder = "") => h("label", { class: "field" }, h("span", null, label),
     h("input", { class: "input", value, placeholder, oninput: (e) => onInput(e.target.value) }));
 
-  const procText = h("textarea", { class: "input", style: { minHeight: "80px" }, placeholder: "Cath lab | 1 | Name" },
-    data.procedures.map((p) => `${p.name} | ${p.count} | ${p.mda}`).join("\n"));
+  const procText = h("textarea", { class: "input", style: { minHeight: "80px" }, placeholder: "Cath lab | 1 | MDA | Resident | JA" },
+    data.procedures.map((p) => [p.name, p.count, p.mda, p.staff || "", p.ja || ""].join(" | ").replace(/( \| )+$/, "")).join("\n"));
   const notesText = h("textarea", { class: "input", style: { minHeight: "70px" } }, data.notes.join("\n"));
   const saveBtn = h("button", { class: "btn primary block" }, icon("check"), "Save daily sheet");
 
@@ -140,7 +141,7 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
       field("OPSC rooms", data.opsc.rooms, (v) => { data.opsc.rooms = v; }),
       field("OPSC MDAs", data.opsc.mdas.join(", "), (v) => { data.opsc.mdas = list(v); })),
     field("OPSC residents", data.opsc.residents.join(", "), (v) => { data.opsc.residents = list(v); }),
-    h("label", { class: "field" }, h("span", null, "Procedure areas (name | count | MDA, one per line)"), procText),
+    h("label", { class: "field" }, h("span", null, "Procedure areas (name | count | MDA | resident | JA, one per line; the last two only if someone's sent there)"), procText),
     h("div", { class: "grid2" },
       field("Meyers lab rooms", data.meyers.rooms, (v) => { data.meyers.rooms = v; }),
       field("Meyers lab MDA", data.meyers.mda, (v) => { data.meyers.mda = v; })),
@@ -157,7 +158,7 @@ function openEditor(ctx, initialDate, initial, { source = "manual", photoId = nu
   const close = openSheet("Daily OR sheet", body);
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
-    data.procedures = procText.value.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((x) => x[0]).map(([name, count = "", mda = ""]) => ({ name, count, mda }));
+    data.procedures = procText.value.split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((x) => x[0]).map(([name, count = "", mda = "", staff = "", ja = ""]) => ({ name, count, mda, staff, ja }));
     data.notes = notesText.value.split("\n").map((x) => x.trim()).filter(Boolean);
     data.source = source;
     try {
@@ -441,7 +442,7 @@ function didacticsSection(ctx, status) {
 function uploadSection(ctx, title, help, path, extra) {
   const out = h("div");
   const ayInput = extra ? h("input", { class: "input", type: "number", min: "2020", max: "2100", placeholder: "e.g. 2026", style: { maxWidth: "140px" } }) : null;
-  const btn = fileButton("Choose .xlsx", "upload", ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", async (file) => {
+  const btn = fileButton("Choose .xlsx or .xlsm", "upload", ".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12", async (file) => {
     out.replaceChildren(h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } }, h("div", { class: "spinner" }), `Reading ${file.name}…`));
     const m = file.name.match(/(20\d\d)\s*[-–_ ]\s*(20\d\d)/);
     if (ayInput && !ayInput.value && m) ayInput.value = m[1];
@@ -613,6 +614,7 @@ function liveSheetCard(ctx) {
     append(body, [
       s.error ? notice("gap", "alert", h("b", null, "Can't read the sheet. "), `${s.error} The app keeps the last good version. The photo upload below still works.`) : null,
       s.held ? notice("warn", "info", h("b", null, "Latest version not shown. "), s.held) : null,
+      s.dateNote && !s.held ? notice("", "info", h("b", null, `Filed under ${fmtDate(s.date)}. `), s.dateNote) : null,
       h("dl", { class: "kv" },
         h("dt", null, "Sheet date"), h("dd", null, s.date ? fmtDate(s.date) : "—"),
         h("dt", null, "Rooms read"), h("dd", null, s.rooms == null ? "—" : `${s.rooms} with cases`),
@@ -626,6 +628,38 @@ function liveSheetCard(ctx) {
   }
   api("/api/daily-source").then(draw).catch(() => body.replaceChildren(h("p", { class: "small muted", style: { margin: 0 } }, "Couldn't load the sheet's status.")));
   return card("Live daily sheet", body);
+}
+
+function mailIntakeCard(ctx) {
+  const body = h("div", null, h("p", { class: "small muted", style: { margin: 0 } }, "Loading…"));
+  const when = (iso) => (iso ? `${fmtDate(todayLocal(new Date(iso)), "md")} ${new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "");
+  function draw(s) {
+    const steps = h("ol", { class: "small", style: { margin: "8px 0 10px", paddingLeft: "20px", lineHeight: 1.5 } },
+      h("li", null, "On a computer, signed in to the Gmail that gets the program's emails, open ", h("a", { href: "https://script.google.com/home/projects/create", target: "_blank", rel: "noopener" }, "a new Apps Script project"), "."),
+      h("li", null, "Delete what's there and paste the script (Copy the script, below). Press Save."),
+      h("li", null, "Pick ", h("b", null, "setup"), " in the toolbar and press Run. Google asks to let your own script read Gmail and reach the app: choose your account, then Advanced › Go to the project › Allow."));
+    const copy = h("button", { class: "btn primary", disabled: s.address ? null : true, onclick: () => copyText(mailScript(s.address, s.senders), "Script") }, icon("copy"), "Copy the script");
+    body.replaceChildren();
+    append(body, [
+      !s.address ? notice("warn", "info", "Email intake works on the real program only (not the demo), once the calendar secret is set on the server.") : null,
+      s.address && !s.ai ? notice("warn", "info", "Call schedules and invites come in either way. Reading other emails for events and the conference PDF needs ANTHROPIC_API_KEY in Netlify.") : null,
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "The program coordinators' emails to the residents come in by themselves: the monthly call schedule (a draft is marked as one until the final arrives; it never replaces a newer copy or a month you uploaded later), the conference schedule PDF, and events like the holiday party, grand rounds or a deadline, which show on Today, in Events and in calendar feeds."),
+      h("dl", { class: "kv" }, h("dt", null, "Last email"), h("dd", null, s.lastAt ? when(s.lastAt) : "None yet: set it up below")),
+      steps,
+      h("div", { class: "btnrow" }, copy),
+      s.list?.length ? h("h4", { class: "card-title", style: { marginTop: "14px" } }, "Lately") : null,
+      s.list?.length ? h("ul", { class: "list" }, s.list.slice(0, 12).map((x) => h("li", { class: "row", style: { minHeight: "48px", padding: "6px 0", alignItems: "flex-start" } },
+        h("div", { class: "main" },
+          h("div", { class: "name", style: { whiteSpace: "normal" } }, x.subject || (x.personal ? "A personal email (not kept)" : "(no subject)")),
+          h("div", { class: "sub", style: { whiteSpace: "normal" } }, `${when(x.date)} · ${x.actions.join(" · ")}`))))) : null,
+      h("p", { class: "disclaimer" }, "The script's address is private, like a calendar link: anyone with it could send the app emails. Don't share the script. Personal emails (to a few people) never leave Gmail."),
+    ]);
+  }
+  const el = card("Email intake", body);
+  // It arrives after the screen is laid out: balance the two columns again with it in.
+  api("/api/mail-intake").then(draw).catch(() => body.replaceChildren(h("p", { class: "small muted", style: { margin: 0 } }, "Couldn't load the email intake.")))
+    .finally(() => { const split = el.closest(".cols2"); splitColumns(split ? split.parentElement : el.parentElement); });
+  return el;
 }
 
 function backupSection(ctx) {
@@ -672,7 +706,8 @@ export function renderAdmin(ctx, arg) {
   root.append(
     liveSheetCard(ctx),
     dailyHolder,
-    uploadSection(ctx, "Monthly call schedule", "The .xlsx the program coordinator emails each month. Re-uploading a month replaces it; other months are kept.", "/api/upload/call"),
+    uploadSection(ctx, "Monthly call schedule", "The .xlsx or .xlsm the program coordinator emails each month (Email intake brings it in by itself). Re-uploading a month replaces it; other months are kept.", "/api/upload/call"),
+    mailIntakeCard(ctx),
     uploadSection(ctx, "Annual rotations", "The yearly rotations-by-site .xlsx. Used for months that don't have a call sheet yet.", "/api/upload/rotations", true),
     didHolder,
     directorySection(ctx),

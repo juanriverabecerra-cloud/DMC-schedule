@@ -7,6 +7,7 @@ export const TODAY_SECTIONS = [
   { key: "cases", label: "Case log", sub: "After a case day; line shortcuts for interns" },
   { key: "tomorrow", label: "Tomorrow", sub: "Once the sheet is out the evening before" },
   { key: "didactics", label: "Didactics", sub: "On days with a session" },
+  { key: "events", label: "Events", sub: "Program events today or tomorrow, and RSVPs due" },
   { key: "team", label: "Working with", sub: "Who's at your site" },
   { key: "quick", label: "Quick call", sub: "Numbers you'll likely need" },
   { key: "tonight", label: "Tonight", sub: "Who's on call" },
@@ -32,6 +33,7 @@ export const TAB_PAGES = {
   exams: ["Exams", "edit"],
   swaps: ["Swaps", "swap"],
   gaps: ["Gaps", "alert"],
+  events: ["Events", "event"],
 };
 export const DEFAULT_TABS = ["today", "tonight", "board", "didactics"];
 export const MAX_TABS = 4; // plus More, always last

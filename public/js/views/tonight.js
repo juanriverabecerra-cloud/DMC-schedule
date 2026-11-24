@@ -39,6 +39,23 @@ export function renderTonight(ctx) {
     group(ctx, "Obstetrics @ Hutzel", t.obMda ? `MDA ${t.obMda}` : "today", "ob", t.ob, (d) => d.label),
   ]);
 
+  // Attendings on call (from the board runner's egress list): who, and where.
+  const mdaRow = (a) => {
+    const staff = model.dir.staff(a.name);
+    return h("li", { class: "row contact" },
+      h("div", { class: "avatar" }, a.name.slice(0, 2).toUpperCase()),
+      h("div", { class: "main" },
+        h("div", { class: "name" }, staff?.name || a.name),
+        h("div", { class: "sub" }, [a.label, a.where, a.note].filter(Boolean).join(" · ")),
+        staff ? h("div", { class: "numrow" }, numberButtons(model.dir, staff.numbers)) : null));
+  };
+  if (t.mdaCall.length || t.mdaOther.length) {
+    root.append(h("section", { class: "card" },
+      h("div", { class: "card-pad", style: { paddingBottom: "4px" } },
+        h("h3", { class: "card-title" }, h("span", { class: "chip call24" }, "Attendings on call"), h("span", { class: "right muted" }, "egress list"))),
+      h("ul", { class: "list" }, [...t.mdaCall, ...t.mdaOther].map(mdaRow))));
+  }
+
   const dl = t.daily;
   if (dl) {
     const mdas = new Map();
@@ -53,6 +70,8 @@ export function renderTonight(ctx) {
     if (dl.sheet.meyers?.mda) add(dl.sheet.meyers.mda, "Meyers lab");
     if (dl.sheet.ob?.mda) add(dl.sheet.ob.mda, "OB");
     for (const m of dl.sheet.opsc?.mdas || []) add(m, "OPSC");
+    // Where the egress list puts the others ("H4 (OPSC)", "H5 (Meyers)"), and who's post-call.
+    for (const a of dl.attendings) if (a.kind === "site" || a.kind === "postcall") add(a.name, a.kind === "site" ? a.where : a.label);
     if (mdas.size) {
       root.append(h("section", { class: "card" },
         h("div", { class: "card-pad", style: { paddingBottom: "4px" } }, h("h3", { class: "card-title" }, "Attendings (MDA) today", h("span", { class: "right muted" }, "daily sheet"))),

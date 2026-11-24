@@ -1,6 +1,7 @@
 import { h, icon, card, dayChips, personRow, notice, emptyState } from "../ui.js";
 import { local } from "../api.js";
 import { todayLayout } from "../../core/layout.js";
+import { eventsTodayCard } from "./events.js";
 import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, fmtMonth } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
@@ -85,14 +86,16 @@ function tonightMini(ctx) {
     ["call24", "24-hr call", t.call24],
     ["call12", "12-hr call", t.call12],
     ["cardiac", "Cardiac call", t.cardiac],
-  ].filter(([, , list]) => list.length);
+  ].filter(([, , list]) => list.length).map(([cls, label, list]) => [cls, label, names(list)]);
+  // Attendings on call tonight, from the daily sheet's egress list.
+  for (const a of t.mdaCall) rows.push(["info", `MDA ${a.label.replace(/ call$/, "")}`, a.name]);
   if (!rows.length) return null;
   return h("section", { class: "card card-pad", onclick: () => ctx.go("tonight"), style: { cursor: "pointer" } },
     h("h3", { class: "card-title" }, "Who's on", h("span", { class: "right" }, "See all ›")),
-    h("div", { class: "stack" }, rows.map(([cls, label, list]) =>
+    h("div", { class: "stack" }, rows.map(([cls, label, who]) =>
       h("div", { style: { display: "flex", gap: "10px", alignItems: "center" } },
         h("span", { class: `chip ${cls}`, style: { minWidth: "104px", justifyContent: "center" } }, label),
-        h("span", { class: "small", style: { fontWeight: 600 } }, names(list))))),
+        h("span", { class: "small", style: { fontWeight: 600 } }, who)))),
   );
 }
 
@@ -173,6 +176,7 @@ export function renderToday(ctx) {
           : postedLine(ctx, tomorrow, "Posted") ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, ...postedLine(ctx, tomorrow, "Posted")) : null);
     },
     didactics: () => didacticsDayCard(ctx),
+    events: () => eventsTodayCard(ctx),
     team: () => (mates.length ? card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }) : null),
     quick: () => {
       const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key)).slice(0, 5);

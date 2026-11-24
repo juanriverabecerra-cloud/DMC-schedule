@@ -53,6 +53,10 @@ export const CODES = {
   "ELECT": { label: "Elective", site: "elective", group: "Elective" },
   "ELECT-J": { label: "Elective – Jeopardy", site: "elective", group: "Elective" },
   "NCD": { label: "NCD", site: "harper", group: "Other" },
+  // New in the December 2026 sheet.
+  "SIM": { label: "Simulation", site: "harper", group: "Other" },
+  "PAT/AP": { label: "PAT / Acute Pain", site: "harper", group: "PAT" },
+  "11-6": { label: "11a–6p (OB)", site: "hutzel", group: "Obstetrics", hours: [660, 1080] },
 };
 
 // Codes that are a shift or a status rather than a rotation.
@@ -99,6 +103,8 @@ const CODE_ALIASES = [
   [/^PEDS?$/, "CHM"],
   [/^POST[- ]?CALL$/, "PC"],
   [/^(OSPC|OPCS)$/, "OPSC"],
+  [/^BA\s*-\s*V$/, "BA-V"], // "BA- V"
+  [/^11\s*A?M?\s*(?:-|–|TO)\s*6\s*P?M?$|^6-NOV$/, "11-6"],
   [/^(SIM|ITE)[- ]H1$/, "H1"],
   [/^CALL$/, "H1"],
   [/^(BA|BA-V|AP|OPSC|PACU|CP|VA|HC|TH|HN|ACC|BD|JA|NORA|VASC)1$/, null], // the rotation with a Friday 24-hr marker: "BA1"

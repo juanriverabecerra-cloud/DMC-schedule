@@ -42,7 +42,7 @@ export function openDailySheet(ctx, date) {
   const s = dl.sheet;
   const lines = [
     s.opsc?.residents?.length || s.opsc?.mdas?.length ? ["OPSC", `${s.opsc.rooms ? `${s.opsc.rooms} rooms · ` : ""}MDAs ${s.opsc.mdas.join(", ")} · ${dl.opsc.map(nm).join(", ")}`] : null,
-    s.procedures?.length ? ["Procedures", s.procedures.map((p) => `${p.name} (${p.count})${p.mda ? ` ${p.mda}` : ""}`).join(", ")] : null,
+    s.procedures?.length ? ["Procedures", s.procedures.map((p) => `${p.name}${p.count ? ` (${p.count})` : ""}${p.mda ? ` ${p.mda}` : ""}${p.staff ? ` · ${p.staff}` : ""}`).join(", ")] : null,
     s.meyers?.mda ? ["Meyers lab", `${s.meyers.rooms ? `${s.meyers.rooms} rooms · ` : ""}${s.meyers.mda}`] : null,
     s.pat?.length ? ["PAT", dl.pat.map(nm).join(", ")] : null,
     s.ob?.mda || s.ob?.residents?.length ? ["OB", `${s.ob.mda ? `MDA ${s.ob.mda} · ` : ""}${dl.ob.map(nm).join(", ")}`] : null,

@@ -5,6 +5,7 @@ import { dow, monthKey, parts, addMonths, addDays, ymd, isFixedHoliday } from ".
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
 import { createDidactics } from "./didactics.js";
+import { attendingsOf } from "./attendings.js";
 
 const VAC_RE = /^vac(ation)?\b/i;
 const OFF_RE = /^(loa|off)\b/i;
@@ -24,7 +25,7 @@ const KEEP_POST = new Set(Object.values(ROLE_WORDS));
 export const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
 
 export const BOARD_ORDER = [
-  "Harper Main OR", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
+  "Harper Main OR", "Procedures", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
   "Basic Anesthesia", "Board Runner", "Junior Attending", "9-ICU", "Obstetrics", "VA", "Pediatrics", "Regional",
   "Sinai-Grace ICU", "Chronic Pain", "Elective", "CA-3 10a–7p", "On call", "Night float", "Interns (off-service)",
   "Other", "Post-call", "Vacation", "Off", "No schedule",
@@ -295,7 +296,65 @@ export function createModel(ds) {
     const night = resolve((sheet.night || []).join("/"), "Night coverage");
     for (const s of night) if (s.id) add(s.id, { kind: "night" });
 
-    const out = { sheet, rooms, roles, unmatched: unmatched.filter((u) => !/resident|rotator|crna/i.test(u.name)), others: unmatched.filter((u) => /resident|rotator/i.test(u.name)), opsc, pat, ob, night };
+    // Cath lab, EP lab, CT...: the resident sent there (Resident/CRNA column) and its JA.
+    const procedures = (sheet.procedures || []).map((p) => ({
+      ...p, staffIds: resolve(p.staff || "", p.name), jaIds: resolve(p.ja || "", `${p.name} JA`),
+    }));
+    for (const p of procedures) {
+      for (const s of p.staffIds) if (s.id) add(s.id, { kind: "proc", name: p.name, mda: p.mda, proc: p });
+      for (const s of p.jaIds) if (s.id) add(s.id, { kind: "proc", name: p.name, mda: p.mda, proc: p, asJa: true });
+    }
+
+    // The board runner's own list ("Location that day", "Late/Call"), and the Egress tab's
+    // assignments: where everyone is, including the people in no room. A place the call sheet
+    // already says (their rotation) adds nothing; anything else (cath lab, NORA...) becomes their
+    // role for the day when the sheet gives them no other.
+    const listed = new Map();
+    const note = (name, where, call, from) => {
+      const id = match(name, { prefer });
+      if (!id || !where && !call) return;
+      const was = listed.get(id);
+      if (!was || (from === "list" && was.from !== "list")) listed.set(id, { where, call, from });
+    };
+    for (const x of sheet.egress?.residents || []) note(x.name, x.where, "", "egress");
+    for (const x of sheet.people || []) note(x.name, x.where, x.call, "list");
+    const listCall = new Map();
+    for (const [id, x] of listed) {
+      const b = baseDay(id, date);
+      const code = normCode(x.where);
+      const known = !!CODES[code];
+      const sameAsRotation = known && (code === b.code || (!!CODES[b.code] && CODES[code].group === CODES[b.code].group));
+      const status = /^(vac|vacation|pc|post\s*call|off|nights?|nf)$/i.test(x.where);
+      const procHere = procedures.find((p) => p.name.toLowerCase() === String(x.where).toLowerCase());
+      const procLike = !!procHere || /\b(cath|ep lab|ct|mri|angio|tee|bedside|ir)\b/i.test(x.where);
+      if (!roles.has(id) && x.where && !sameAsRotation && !status) {
+        add(id, { kind: "where", where: known ? CODES[code].label : x.where, code: known ? code : "", proc: procLike, mda: procHere?.mda || "" });
+      }
+      if (x.call) listCall.set(id, x.call);
+    }
+
+    // Notes at the bottom of the sheet that name a resident ("Sam to VA and relieve Pat in 18")
+    // are shown on that resident's day. Surnames match; a first name only when one resident has it.
+    const notesFor = new Map();
+    const firstCount = new Map();
+    for (const p of people) for (const f of new Set([p.first, p.preferred].filter(Boolean).map((x) => x.toLowerCase()))) firstCount.set(f, (firstCount.get(f) || 0) + 1);
+    const word = (text, w) => new RegExp(`(^|[^a-z])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i").test(text);
+    for (const text of sheet.notes || []) {
+      for (const p of people) {
+        if (p.cls === undefined) continue;
+        const firsts = [p.first, p.preferred].filter((f) => f && f.length > 2 && firstCount.get(f.toLowerCase()) === 1);
+        if ((p.last && p.last.length > 2 && word(text, p.last)) || firsts.some((f) => word(text, f))) {
+          if (!notesFor.has(p.id)) notesFor.set(p.id, []);
+          notesFor.get(p.id).push(text);
+        }
+      }
+    }
+
+    const out = {
+      sheet, rooms, roles, unmatched: unmatched.filter((u) => !/resident|rotator|crna/i.test(u.name)), others: unmatched.filter((u) => /resident|rotator/i.test(u.name)),
+      opsc, pat, ob, night, procedures, notesFor, listCall,
+      attendings: attendingsOf(sheet.egress?.attendings),
+    };
     dailyCache.set(date, out);
     return out;
   }
@@ -305,7 +364,11 @@ export function createModel(ds) {
     if (cache.has(key)) return cache.get(key);
     const info = baseDay(pid, date);
     const dl = daily(date);
-    if (dl) info.roles = dl.roles.get(pid) || [];
+    if (dl) {
+      info.roles = dl.roles.get(pid) || [];
+      info.sheetNotes = dl.notesFor.get(pid) || [];
+      info.sheetCall = dl.listCall.get(pid) || ""; // the board runner's Late/Call column
+    }
     // Someone whose own post is PAT (or NORA / board runner) and who is also pulled for breaks
     // stays in that post; the breaks are an extra duty, listed after it.
     const post = info.status === "work" && (KEEP_POST.has(info.code) || info.roles.some((r) => r.kind === "pat"));
@@ -336,6 +399,9 @@ export function createModel(ds) {
     if (d.call === "H1" || d.call === "H2") return "On call";
     if (d.alsoBreaks) return d.roles.some((r) => r.kind === "pat") ? "PAT" : (BOARD_ORDER.includes(d.group) ? d.group : "Other");
     if (d.roles.some((r) => r.kind === "room" || r.kind === "breaks" || r.kind === "ja")) return "Harper Main OR";
+    if (d.roles.some((r) => r.kind === "proc")) return "Procedures";
+    const placed = d.roles.find((r) => r.kind === "where");
+    if (placed) return placed.proc ? "Procedures" : placed.code && BOARD_ORDER.includes(CODES[placed.code]?.group) ? CODES[placed.code].group : "Other";
     if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
     if (d.roles.some((r) => r.kind === "ob")) return "Obstetrics";
     if (d.roles.some((r) => r.kind === "pat")) return "PAT";
@@ -359,6 +425,9 @@ export function createModel(ds) {
       ja: r.filter((d) => d.status === "work" && (d.code === "JA" || d.roles.some((x) => x.kind === "ja"))),
       dailyNight: dl ? dl.night : [],
       obMda: dl?.sheet?.ob?.mda || "",
+      // Attendings from the Egress tab: on call tonight, pre-call, the board runner.
+      mdaCall: dl ? dl.attendings.filter((a) => a.kind === "call") : [],
+      mdaOther: dl ? dl.attendings.filter((a) => a.kind === "precall" || a.kind === "runner") : [],
       daily: dl,
     };
   }
@@ -396,6 +465,13 @@ export function createModel(ds) {
     ds, S, people, byId, months, match, classAt,
     person: (id) => byId.get(id),
     name, phone, rotationFor, day, roster, daily, tonight, boardGroup, holidays, coverageNeeded, hasCall, internPat,
+    // Program events from the office's emails (lib/mail-intake.js), soonest first. With `pid`,
+    // only the ones for that resident: a CA-1 simulation isn't on a CA-3's Today or calendar.
+    events: (from, to, pid) => (Array.isArray(ds.events) ? ds.events : []).filter((e) => {
+      if (e.cancelled || e.date < from || (to && e.date > to)) return false;
+      const classes = pid ? eventClasses(e.who) : [];
+      return !classes.length || classes.includes(byId.get(pid)?.cls);
+    }),
     site: (id) => SITES[id] || null,
   };
   api.dir = createDirectory(ds, api);
@@ -405,6 +481,16 @@ export function createModel(ds) {
 }
 
 // A short line describing what someone is doing, using the daily sheet when there is one.
+// Who a program event is for, as classes: "CA-1s", "CA-2 and CA-3 residents", "Interns". None
+// found (everyone, or a group like "residents going to the ASA") means it's shown to everyone.
+export function eventClasses(who) {
+  const s = String(who || "");
+  const out = new Set();
+  for (const m of s.matchAll(/\bCA\s*-?\s*([123])/gi)) out.add(`CA-${m[1]}`);
+  if (/\b(PGY\s*-?\s*1|interns?)\b/i.test(s)) out.add("PGY-1");
+  return [...out];
+}
+
 export function headline(d) {
   if (d.alsoBreaks) {
     const br = d.roles.find((r) => r.kind === "breaks");
@@ -417,9 +503,13 @@ export function headline(d) {
   if (br) return `Breaks · OR ${br.rooms.map((x) => x.or).join(", ")}`;
   const ja = d.roles.find((r) => r.kind === "ja");
   if (ja) return `Junior attending · OR ${ja.rooms.map((x) => x.or).join(", ")}`;
+  const proc = d.roles.find((r) => r.kind === "proc");
+  if (proc) return `${proc.name}${proc.asJa ? " · JA" : ""}${proc.mda ? ` · ${proc.mda}` : ""}`;
   if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
   if (d.roles.some((r) => r.kind === "ob")) return "OB @ Hutzel";
   if (d.roles.some((r) => r.kind === "pat")) return "PAT clinic";
+  const placed = d.roles.find((r) => r.kind === "where");
+  if (placed) return `${placed.where}${placed.mda ? ` · ${placed.mda}` : ""}`;
   return d.label || d.rotation || "—";
 }
 

@@ -1,6 +1,6 @@
 import { h, icon, card, avatar, classPill, segmented } from "../ui.js";
 import { local } from "../api.js";
-import { monthKey, fmtMonth } from "../../core/dates.js";
+import { monthKey, fmtMonth, fmtDate } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeCard } from "./common.js";
 import { remindersFor } from "./reminders.js";
@@ -85,6 +85,13 @@ export function renderMore(ctx) {
         h("div", { class: "main" }, h("div", { class: "name" }, "Exams"), h("div", { class: "sub" }, exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns")),
         icon("right"));
     })() : null,
+    (() => {
+      const next = ctx.model.events(ctx.state.today, undefined, ctx.state.me)[0];
+      return h("li", { class: "row tap", onclick: () => ctx.go("events") },
+        h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("event")),
+        h("div", { class: "main" }, h("div", { class: "name" }, "Events"), h("div", { class: "sub" }, next ? `Next: ${next.title}, ${fmtDate(next.date)}` : "Parties, lectures and conferences from the program office")),
+        icon("right"));
+    })(),
     h("li", { class: "row tap", onclick: () => ctx.go("layout") },
       h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("arrange")),
       h("div", { class: "main" }, h("div", { class: "name" }, "Arrange"), h("div", { class: "sub" }, "Your tabs, and what Today shows first")),
@@ -102,7 +109,7 @@ export function renderMore(ctx) {
 
   const m = model.ds.months?.[month];
   root.append(card("Data", h("dl", { class: "kv" },
-    h("dt", null, "Call sheets"), h("dd", null, model.months.map((x) => fmtMonth(x)).join(", ") || "None"),
+    h("dt", null, "Call sheets"), h("dd", null, model.months.map((x) => `${fmtMonth(x)}${model.ds.months[x]?.draft ? " (draft)" : ""}`).join(", ") || "None"),
     m?.lastUpdated ? [h("dt", null, "Sheet says"), h("dd", null, `Last updated ${m.lastUpdated}`)] : null,
     h("dt", null, "Synced"), h("dd", null, model.ds.updatedAt ? new Date(model.ds.updatedAt).toLocaleString() : "—"),
     h("dt", null, "Daily sheets"), h("dd", null, String(Object.keys(model.ds.daily || {}).length)),

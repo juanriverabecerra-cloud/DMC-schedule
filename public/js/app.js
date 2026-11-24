@@ -15,6 +15,7 @@ import { renderCall } from "./views/call.js";
 import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
 import { renderLayout, savedTabs } from "./views/layout.js";
+import { renderEvents } from "./views/events.js";
 import { TAB_PAGES } from "../core/layout.js";
 import { renderRate } from "./views/rate.js";
 import { renderSwaps, renderNoCall } from "./views/requests.js";
@@ -50,12 +51,12 @@ const DATED = new Set(["today", "tonight", "board", "cases"]);
 // Screens made of cards flow into two columns when the window has room. Forms, long single
 // lists and the case log (rows of buttons that want the width) stay in one; wide tables just
 // get the extra width.
-const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall", "layout"]);
+const TWO_COLUMNS = new Set(["today", "tonight", "board", "more", "call", "didactics", "p", "hours", "off", "exams", "swaps", "nocall", "layout", "events"]);
 function layoutFor(r) {
   if (r.name === "admin") return !local.get("adminKey") ? "" : local.get("adminTab", "uploads") === "uploads" ? "cols" : "wide";
   return TWO_COLUMNS.has(r.name) ? "cols" : "";
 }
-const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams", "cases", "layout"];
+const MORE_PAGES = ["call", "gaps", "admin", "hours", "rate", "swaps", "nocall", "off", "exams", "cases", "layout", "events"];
 // A page reached from More, unless it's one of this person's tabs.
 const underMore = (name) => MORE_PAGES.includes(name) && !savedTabs().includes(name);
 
@@ -177,7 +178,7 @@ function topbar(r) {
       meBtn,
     ]);
   } else {
-    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?", layout: "Arrange", cases: "Case log" };
+    const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?", layout: "Arrange", cases: "Case log", events: "Events" };
     const back = underMore(r.name) || r.name === "p";
     append(inner, [
       back ? h("button", { class: "iconbtn", "aria-label": "Back", onclick: () => (history.length > 1 ? history.back() : go("today")) }, icon("left")) : null,
@@ -243,6 +244,7 @@ export function render() {
     else if (r.name === "cases") content = renderCases(ctx(), r.arg);
     else if (r.name === "more") content = renderMore(ctx());
     else if (r.name === "layout") content = renderLayout(ctx());
+    else if (r.name === "events") content = renderEvents(ctx());
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
     else if (r.name === "nocall") content = renderNoCall(ctx());

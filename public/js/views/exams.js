@@ -3,7 +3,7 @@
 import { h, card, emptyState, segmented, append } from "../ui.js";
 import { local } from "../api.js";
 import { syncWidget } from "../native.js";
-import { diffDays, fmtDate, range } from "../../core/dates.js";
+import { addDays, diffDays, fmtDate, range } from "../../core/dates.js";
 import { EXAMS, TRACKS, examsFor, expectedSession, openSessions } from "../../core/exams.js";
 import { goldenSummary } from "../../core/daysoff.js";
 import { inDays, weekendLabel } from "./daysoff.js";
@@ -62,10 +62,13 @@ export function aheadCard(ctx, pid) {
   const exam = examsNow(ctx).exams[0];
   const eligible = ["CA-1", "CA-2", "CA-3"].includes(model.person(pid)?.cls);
   const golden = eligible ? goldenSummary(model, pid, state.today).next : null;
-  if (!exam && !golden) return null;
+  // The next program events (from the office's emails), within three months.
+  const events = model.events(addDays(state.today, 1), addDays(state.today, 92), pid).slice(0, 2);
+  if (!exam && !golden && !events.length) return null;
   const line = (text, value, to) => h("li", { class: "row tap", style: { minHeight: "44px" }, onclick: () => ctx.go(to) },
     h("div", { class: "main small" }, text), h("b", { class: "small" }, value));
   return card("Looking ahead", h("ul", { class: "list flush" },
     exam ? line(exam.long, countdownWord(exam), "exams") : null,
-    golden ? line(`Golden weekend, ${weekendLabel(golden)}`, inDays(diffDays(state.today, golden.sat)), "off") : null));
+    golden ? line(`Golden weekend, ${weekendLabel(golden)}`, inDays(diffDays(state.today, golden.sat)), "off") : null,
+    events.map((e) => line(e.title, inDays(diffDays(state.today, e.date)), "events"))));
 }

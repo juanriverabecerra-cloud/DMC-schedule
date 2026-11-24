@@ -1,5 +1,5 @@
 import { h, icon, card, avatar, classPill, dayChips, emptyState, numberButtons } from "../ui.js";
-import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT } from "../../core/dates.js";
+import { monthKey, monthDates, addMonths, fmtMonth, fmtDate, dow, parts, DOW_LETTER, academicYearOf, MONTH_SHORT, todayLocal } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES, GROUP_COLORS, groupOfRotation } from "../../core/codes.js";
 import { hoursReport } from "../../core/hours.js";
@@ -83,7 +83,12 @@ export function renderPerson(ctx, pid) {
   const title = h("span");
   const drawMonth = () => {
     title.textContent = fmtMonth(month);
-    gridHolder.replaceChildren(monthGrid(ctx, pid, month, (date) => openDaySheet(ctx, pid, date)));
+    const sheet = model.ds.months?.[month];
+    gridHolder.replaceChildren(...[
+      sheet?.draft ? h("p", { class: "small", style: { margin: "6px 14px 0", color: "var(--warn)", textAlign: "center" } },
+        `${sheet.mailAt ? `Draft emailed ${fmtDate(todayLocal(new Date(sheet.mailAt)), "md")}` : "A draft"}: it can still change until the final comes.`) : null,
+      monthGrid(ctx, pid, month, (date) => openDaySheet(ctx, pid, date)),
+    ].filter(Boolean));
     state.personMonth = { ...(state.personMonth || {}), [pid]: month };
     drawHours();
   };

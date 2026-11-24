@@ -288,7 +288,10 @@ test("the chiefs' inbox: sick calls alert admins once, swaps and no-call lists w
 });
 
 // A small workbook in the board runner's layout: `rooms` are [or, surgeon, time, mda, staff].
-async function fakeWorkbook(date, rooms, { egressDate = date } = {}) {
+// `list`: the board runner's own [resident, location, late/call] rows (columns L-N); `egress`:
+// the Egress tab's rows [slot, attending, code, resident, note]; `procs`: extra procedure rows
+// [label, mda, staff, ja] below the table.
+async function fakeWorkbook(date, rooms, { egressDate = date, list = null, egress = [], procs = [] } = {}) {
   const { zipSync, strToU8 } = await import("fflate");
   const cell = (ref, v) => (typeof v === "number" ? `<c r="${ref}"><v>${v}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>`);
   const row = (n, cells) => `<row r="${n}">${cells.map(([c, v]) => cell(`${c}${n}`, v)).join("")}</row>`;
@@ -296,10 +299,13 @@ async function fakeWorkbook(date, rooms, { egressDate = date } = {}) {
   const [y, m, d] = date.split("-");
   const stamp = (x) => { const [yy, mm, dd] = x.split("-"); return `${Number(mm)}/${Number(dd)}/${yy.slice(2)}`; };
   void y; void m; void d;
+  const listCells = (n) => (list ? (list[n - 3] ? [["L", list[n - 3][0]], ["M", list[n - 3][1] || ""], ["N", list[n - 3][2] || ""]] : []) : [["L", "Ignored"]]);
   const rows = [
     row(1, [["A", stamp(date)]]),
-    row(2, [["A", "OR"], ["B", "Surgeon"], ["C", "Time"], ["D", "# of cases"], ["E", "MDA"], ["F", "Resident/CRNA"], ["G", "JA"], ["H", "Breaks"], ["L", "Resident"]]),
-    ...rooms.map((r, i) => row(4 + i, [["A", r[0]], ...(r[1] ? [["B", r[1]], ["C", 0.3125], ["D", 2], ["E", r[3] || "Attending"]] : []), ...(r[4] ? [["F", r[4]]] : []), ["L", "Ignored"]])),
+    row(2, [["A", "OR"], ["B", "Surgeon"], ["C", "Time"], ["D", "# of cases"], ["E", "MDA"], ["F", "Resident/CRNA"], ["G", "JA"], ["H", "Breaks"], ["L", "Resident"], ...(list ? [["M", "Location that day"], ["N", "Late/Call"]] : [])]),
+    ...(list ? [row(3, listCells(3))] : []),
+    ...rooms.map((r, i) => row(4 + i, [["A", r[0]], ...(r[1] ? [["B", r[1]], ["C", 0.3125], ["D", 2], ["E", r[3] || "Attending"]] : []), ...(r[4] ? [["F", r[4]]] : []), ...listCells(4 + i)])),
+    ...(list ? list.slice(rooms.length + 1).map((x, i) => row(4 + rooms.length + i, [["L", x[0]], ["M", x[1] || ""], ["N", x[2] || ""]])) : []),
     row(30, [["A", "OPSC (3)"], ["B", "OpscMda"], ["G", "PAT"]]),
     row(31, [["B", "Residents"], ["G", "ResC"]]),
     row(32, [["B", "ResE"]]),
@@ -307,12 +313,17 @@ async function fakeWorkbook(date, rooms, { egressDate = date } = {}) {
     row(35, [["C", "Some note for the day"], ["G", "ObMda"], ["I", "ResF"]]),
     row(36, [["G", "Residents"]]),
     row(37, [["G", "ResG"]]),
+    ...procs.map((x, i) => row(45 + i, [["C", x[0]], ["E", x[1]], ...(x[2] ? [["F", x[2]]] : []), ...(x[3] ? [["G", x[3]]] : [])])),
+  ];
+  const egressRows = [
+    row(1, [["A", stamp(egressDate)], ...(egress.length ? [["B", "Anesthesiologist"], ["E", "Resident"]] : [])]),
+    ...egress.map((x, i) => row(2 + i, [["A", x[0]], ["B", x[1]], ["D", x[2]], ["E", x[3]], ["F", x[4]]].filter(([, v]) => v))),
   ];
   return zipSync({
     "xl/workbook.xml": strToU8('<workbook><sheets><sheet name="OR Schedule Assignments" r:id="rId1"/><sheet name="Egress List" r:id="rId2"/></sheets></workbook>'),
     "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>'),
     "xl/worksheets/sheet1.xml": strToU8(sheet(rows)),
-    "xl/worksheets/sheet2.xml": strToU8(sheet([row(1, [["A", stamp(egressDate)]])])),
+    "xl/worksheets/sheet2.xml": strToU8(sheet(egressRows)),
   });
 }
 
@@ -324,7 +335,7 @@ test("the workbook reads like the photo, wherever the blocks below the table lan
   assert.equal(p.date, "2026-03-11");
   assert.deepEqual(p.rooms.map((r) => [r.or, r.surgeon, r.time, r.cases, r.mda, r.staff]), [["1", "Smith", "7:30", "2", "Mda1", "ResA"], ["3", "Jones", "7:30", "2", "Mda2", "X"]]); // the empty OR 2 is dropped
   assert.deepEqual(p.opsc, { rooms: "3", mdas: ["OpscMda"], residents: ["ResE"] });
-  assert.deepEqual(p.procedures, [{ name: "Cath lab", count: "2", mda: "CathMda" }]);
+  assert.deepEqual(p.procedures, [{ name: "Cath lab", count: "2", mda: "CathMda", staff: "", ja: "" }]); // OB's cells in G stay OB's
   assert.deepEqual(p.pat, ["ResC"]);
   assert.deepEqual(p.ob, { mda: "ObMda", residents: ["ResG"] });
   assert.deepEqual(p.night, ["ResF"]);
@@ -402,9 +413,15 @@ test("the live sheet: updates quietly, alerts once it's ready, then only the peo
   const runAt = (mins) => sync.syncDaily(st, { now: morning(mins), fetchBytes: async () => bytes });
   bytes = await fakeWorkbook("2026-03-11", [["1"], ["2"], ["3"]]);
   assert.match((await runAt(0)).held, /mostly empty/);
+  // New rooms under today's date: the next day's sheet, started before its date was changed.
   bytes = await fakeWorkbook("2026-03-11", [["1", "New1", "", "M", ""], ["2", "New2", "", "M", ""], ["3", "New3", "", "M", ""]]);
-  assert.match((await runAt(3)).held, /rewritten/);
+  const early = await runAt(3);
+  assert.equal(early.held, null);
+  assert.equal(early.date, "2026-03-12");
+  assert.match(early.dateNote, /still says .*next OR day/);
   assert.equal((await daily()).rooms[0].surgeon, "Smith"); // today's rooms untouched
+  assert.equal((await st.getJSON("dataset")).daily["2026-03-12"].rooms[0].surgeon, "New1");
+  assert.equal((await st.getJSON("dataset")).daily["2026-03-12"].draft, true);
   // A real fix to today's sheet still goes through.
   bytes = await fakeWorkbook("2026-03-11", [["1", "Smith", "", "M", "ResC"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]]);
   assert.equal((await runAt(6)).held, null);
@@ -412,7 +429,7 @@ test("the live sheet: updates quietly, alerts once it's ready, then only the peo
   // The date moved on but the rooms didn't: not shown as the next day's sheet.
   bytes = await fakeWorkbook("2026-03-12", [["1", "Smith", "", "M", "ResC"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]]);
   assert.match((await runAt(9)).held, /previous day's rooms/);
-  assert.equal((await st.getJSON("dataset")).daily["2026-03-12"], undefined);
+  assert.equal((await st.getJSON("dataset")).daily["2026-03-12"].rooms[0].surgeon, "New1"); // not replaced by today's
 
   // If Google stops answering, the last good version stays and an admin can see why.
   const before = await daily();
@@ -1147,4 +1164,407 @@ test("case log nudges: after a case day with nothing logged, never twice, and we
   assert.equal(quiet.received.length, 0);
   assert.equal(jane.open(jane.received[0].body).url, "/#/cases/2026-11-16");
   jane.close(); quiet.close();
+});
+
+test("the board runner's list, the Egress tab and a resident sent to a procedure are all read", async () => {
+  const { readXlsx } = await import("../lib/xlsx.js");
+  const { parseDailyWorkbook } = await import("../lib/daily-sheet.js");
+  const wb = readXlsx(await fakeWorkbook("2026-03-11", [["1", "Smith", "", "Mda1", "ResA"], ["2", "Jones", "", "Mda2", "ResB"], ["3", "Lee", "", "Mda3", "X"]], {
+    list: [["ResA", "BA", ""], ["ResB", "BA", "Late"], ["ResH", "Cath lab", ""], ["ResJ", "EP lab", "H1"]],
+    egress: [["Board Runner", "Runner", "", "", ""], ["H1 (MOR call)", "Callmda- 8AM", "H1", "ResJ", ""], ["OB 14 (OB call)", "Obcall", "OB", "ResG", "until 7a"], ["H15 (MOR post call)", "Postmda", "", "", ""]],
+    procs: [["EP lab (1)", "EpMda", "ResJ", "ResK"], ["MRI", "MriMda", "", ""], ["CT - 3", "CtMda", "", ""]],
+  }));
+  const p = parseDailyWorkbook(wb);
+  assert.deepEqual(p.people, [
+    { name: "ResA", where: "BA", call: "" }, { name: "ResB", where: "BA", call: "Late" },
+    { name: "ResH", where: "Cath lab", call: "" }, { name: "ResJ", where: "EP lab", call: "H1" },
+  ]);
+  assert.equal(p.egressDate, "2026-03-11");
+  assert.deepEqual(p.egress.attendings, [
+    { slot: "Board Runner", name: "Runner" }, { slot: "H1 (MOR call)", name: "Callmda- 8AM" },
+    { slot: "OB 14 (OB call)", name: "Obcall" }, { slot: "H15 (MOR post call)", name: "Postmda" },
+  ]);
+  assert.deepEqual(p.egress.residents, [{ name: "ResJ", where: "H1", note: "" }, { name: "ResG", where: "OB", note: "until 7a" }]);
+  assert.deepEqual(p.procedures, [
+    { name: "Cath lab", count: "2", mda: "CathMda", staff: "", ja: "" },
+    { name: "EP lab", count: "1", mda: "EpMda", staff: "ResJ", ja: "ResK" },
+    { name: "MRI", count: "", mda: "MriMda", staff: "", ja: "" }, // no count written
+    { name: "CT", count: "3", mda: "CtMda", staff: "", ja: "" },
+  ]);
+  assert.deepEqual(p.notes, ["Some note for the day"]); // none of them became a note
+  assert.deepEqual(p.ob, { mda: "ObMda", residents: ["ResG"] }); // the procedure rows don't take OB's cells
+  assert.deepEqual(p.rooms.map((r) => r.staff), ["ResA", "ResB", "X"]); // the list beside the table isn't a room
+
+  // It's all kept when saved, and nothing else sneaks in.
+  const { cleanDaily } = await import("../lib/dataset.js");
+  const saved = cleanDaily({ ...p, dateNote: "The sheet still says Mar 10." }, "2026-03-11");
+  assert.deepEqual(saved.people, p.people);
+  assert.deepEqual(saved.egress, p.egress);
+  assert.equal(saved.procedures[1].ja, "ResK");
+  assert.equal(saved.dateNote, "The sheet still says Mar 10.");
+});
+
+test("which day a sheet is for: a stale date never skips a day or files one twice", async () => {
+  const { sheetDay, nextOrDay, isOrDay } = await import("../lib/daily-sync.js");
+  const rooms = (tag) => ({ rooms: [1, 2, 3].map((n) => ({ or: String(n), surgeon: `${tag}${n}` })) });
+  const fri = "2026-03-13", mon = "2026-03-16";
+  const fri3p = new Date("2026-03-13T19:00:00Z"), fri9a = new Date("2026-03-13T13:00:00Z");
+  const ds = { daily: { [fri]: rooms("Fri") } };
+  // New rooms, still dated Friday, on Friday afternoon: Monday's sheet being built.
+  const built = sheetDay({ date: fri, ...rooms("New") }, ds, fri3p);
+  assert.equal(built.date, mon);
+  assert.match(built.note, /still says .*Mon.*next OR day/);
+  // Friday's own rooms, touched up: still Friday's.
+  assert.deepEqual(sheetDay({ date: fri, ...rooms("Fri") }, ds, fri3p), { date: fri, note: "" });
+  // A date ahead at the top is used as it is.
+  assert.deepEqual(sheetDay({ date: mon, ...rooms("New") }, ds, fri3p), { date: mon, note: "" });
+  // The top still says Thursday, but the Egress tab (done late in the board runner's steps) moved on.
+  const eg = sheetDay({ date: "2026-03-12", egressDate: mon, ...rooms("New") }, ds, fri3p);
+  assert.equal(eg.date, mon);
+  assert.match(eg.note, /egress list says/);
+  // Rooms that are mostly Monday's saved sheet stay Monday's, whatever the top says.
+  const withMon = { daily: { ...ds.daily, [mon]: rooms("Mon") } };
+  assert.equal(sheetDay({ date: "2026-03-12", rooms: [...rooms("Mon").rooms, { or: "4", surgeon: "Added" }] }, withMon, fri3p).date, mon);
+  // A morning with no sheet for today yet: new rooms are today's; by afternoon they're the next OR day's.
+  const empty = { daily: {} };
+  assert.equal(sheetDay({ date: "2026-03-12", ...rooms("New") }, empty, fri9a).date, fri);
+  assert.match(sheetDay({ date: "2026-03-12", ...rooms("New") }, empty, fri9a).note, /morning/);
+  assert.equal(sheetDay({ date: "2026-03-12", ...rooms("New") }, empty, fri3p).date, mon);
+  // Holidays and weekends aren't OR days.
+  assert.equal(isOrDay("2026-03-14"), false);
+  assert.equal(nextOrDay("2026-11-25"), "2026-11-27"); // Thanksgiving
+  assert.equal(nextOrDay("2026-12-24"), "2026-12-28"); // Christmas on a Friday, then the weekend
+});
+
+// The monthly call schedule as the coordinator sends it: one sheet for the month.
+async function fakeCallWorkbook(sheetName, rows) {
+  const { zipSync, strToU8 } = await import("fflate");
+  const esc = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const col = (n) => { let s = ""; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+  const row = (r, cells) => `<row r="${r}">${cells.map((v, i) => (v === "" || v == null ? "" : `<c r="${col(i)}${r}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`)).join("")}</row>`;
+  const days = Array.from({ length: 31 }, (_, i) => String(i + 1));
+  const body = [
+    row(1, ["Last updated", "11/20/26"]),
+    row(3, ["Name", "Number", "Rotation", ...days]),
+    row(4, ["CA-1"]),
+    ...rows.map((r, i) => row(5 + i, [r.name, "", r.rotation, ...days.map((d) => r.days?.[d] || "")])),
+  ];
+  return zipSync({
+    "xl/workbook.xml": strToU8(`<workbook><sheets><sheet name="${sheetName}" r:id="rId1"/></sheets></workbook>`),
+    "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    "xl/worksheets/sheet1.xml": strToU8(`<worksheet><sheetData>${body.join("")}</sheetData></worksheet>`),
+  });
+}
+
+test("program emails: who counts, what's a call schedule, a conference schedule or an invite", async () => {
+  process.env.MAIL_SENDERS = "coordinator@example.edu";
+  const mi = await import("../lib/mail-intake.js");
+  const b64 = (text) => Buffer.from(text).toString("base64");
+  // What the script sends, checked.
+  assert.equal(mi.cleanMail({ id: "x", date: "2026-11-20T10:00:00Z" }), null); // id too short
+  assert.equal(mi.cleanMail({ id: "abcdef123", date: "not a date" }), null);
+  const mail = mi.cleanMail({
+    id: "abcdef123", from: "Coordinator <Coordinator@Example.edu>", subject: "Holiday Party", date: "2026-11-20T10:00:00Z", recipients: "40",
+    text: "Join us", attachments: [{ name: "a.ics", type: "text/calendar", data: b64("BEGIN:VCALENDAR") }, { name: "", data: b64("x") }, { name: "empty.pdf", data: "" }],
+  });
+  assert.equal(mail.recipients, 40);
+  assert.deepEqual(mail.attachments.map((a) => a.name), ["a.ics"]);
+  assert.equal(Buffer.from(mail.attachments[0].bytes).toString(), "BEGIN:VCALENDAR");
+
+  // The office's emails to the program count; one to a resident or two is personal.
+  assert.equal(mi.isProgramMail(mail), true);
+  assert.equal(mi.isProgramMail({ ...mail, recipients: 4 }), false);
+  assert.equal(mi.isProgramMail({ ...mail, from: "someone@example.edu" }), false);
+  const rules = mi.senderRules();
+  assert.ok(rules.hashes.includes(mi.senderHash("coordinator@example.edu")));
+  assert.ok(rules.domains.includes("example.edu"));
+  assert.ok(!JSON.stringify(rules).includes("coordinator"), "addresses go out hashed");
+
+  // Call schedules, and the spreadsheets that aren't.
+  const isCall = (subject, name) => mi.isCallSchedule({ subject }, { name });
+  assert.equal(isCall("1st DRAFT of DECEMBER Call & PAT Schedule", "DECEMBER 2026 Call Schedule (1st draft).xlsm"), true);
+  assert.equal(isCall("November Anesthesia Resident Call & PAT Schedule", "NOVEMBER 2026.xlsx"), true);
+  assert.equal(isCall("ASA Presentation Schedule", "ASA 2026 Presentation schedule.xlsx"), false);
+  assert.equal(isCall("Reimbursement Info for your Upcoming Trip", "Expense grid.xlsx"), false);
+  assert.equal(isCall("December Call Schedule", "Travel voucher call.xlsx"), false);
+  // The conference schedule PDF, and the PDFs that aren't.
+  const isConf = (subject, name) => mi.isDidacticsPdf({ subject }, { name });
+  assert.equal(isConf("November Didactic Schedules", "November 2026 Conference Schedule.pdf"), true);
+  assert.equal(isConf("November Anesthesia Resident Call & PAT Schedule", "November 2026 Call Schedule.pdf"), false);
+  assert.equal(isConf("PBLD's for NOVEMBER 2026 Attached", "PBLD conference case 1.pdf"), false);
+  assert.equal(mi.readingFor({ ...mail, attachments: [{ name: "November 2026 Conference Schedule.pdf" }], subject: "November Didactic Schedules" }, {}).kind, "didactics");
+  assert.equal(mi.readingFor({ ...mail, text: "short" }, {}), null);
+  assert.equal(mi.readingFor({ ...mail, text: "x".repeat(50) }, { ics: true }), null); // the invite said it all
+  assert.equal(mi.readingFor({ ...mail, text: "x".repeat(50) }, {}).kind, "events");
+
+  // Calendar invites: a time zone with colons in its name, UTC, all day, a Zoom link, a cancellation.
+  const ics = [
+    "BEGIN:VCALENDAR", "METHOD:REQUEST",
+    "BEGIN:VEVENT", "SUMMARY:Grand Rounds", "DTSTART;TZID=\"(UTC-05:00) Eastern Time (US & Canada)\":20261202T070000",
+    "DTEND;TZID=\"(UTC-05:00) Eastern Time (US & Canada)\":20261202T080000", "LOCATION:https://example.zoom.us/j/1", "END:VEVENT",
+    "BEGIN:VEVENT", "SUMMARY:Town\\, Hall", "DTSTART:20261210T220000Z", "DTEND:20261210T230000Z", "LOCATION:Main Auditorium", "END:VEVENT",
+    "BEGIN:VEVENT", "SUMMARY:Wellness Day", "DTSTART;VALUE=DATE:20261215", "STATUS:CANCELLED", "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  assert.deepEqual(mi.parseIcs(ics), [
+    { title: "Grand Rounds", date: "2026-12-02", start: "07:00", end: "08:00", place: "Zoom", link: "https://example.zoom.us/j/1", cancelled: false },
+    { title: "Town, Hall", date: "2026-12-10", start: "17:00", end: "18:00", place: "Main Auditorium", link: "", cancelled: false },
+    { title: "Wellness Day", date: "2026-12-15", start: "", end: "", place: "", link: "", cancelled: true },
+  ]);
+  assert.equal(mi.parseIcs(ics.replace("METHOD:REQUEST", "METHOD:CANCEL")).every((e) => e.cancelled), true);
+});
+
+test("program events: one event however it's named, moves, cancellations and short reminders", async () => {
+  const mi = await import("../lib/mail-intake.js");
+  const today = "2026-11-20";
+  const from = (id, date) => ({ id, from: "Coordinator <coordinator@example.edu>", subject: "s", date });
+  const invite = mi.cleanEvent({ title: "Holiday Party", date: "2026-12-12", start: "19:00", end: "23:00", place: "Downtown Hall", link: "http://not-https.example", rsvpBy: "2026-12-01", rsvpLink: "https://rsvp.example/x", kind: "social", note: "", who: "All residents", movedFrom: "2026-12-12" }, from("m1", "2026-11-10T10:00:00Z"));
+  assert.equal(invite.link, ""); // https only
+  assert.equal(invite.who, ""); // everyone isn't a group
+  assert.equal(invite.movedFrom, ""); // not moved onto its own day
+  assert.equal(invite.from, "Coordinator");
+  const ds = { events: [{ title: "Old thing", date: "2026-10-01", start: "" }], updatedAt: null, log: [] };
+  assert.equal(mi.upsertEvents(ds, [invite], today), 1);
+  assert.deepEqual(ds.events.map((e) => e.title), ["Holiday Party"]); // a month-old event drops off
+  assert.ok(ds.updatedAt, "phones see the change");
+
+  // A reminder names it differently and says less: the same event, and what the invite said stays.
+  const reminder = mi.cleanEvent({ title: "Anesthesia Holiday Party", date: "2026-12-12", start: "", kind: "social", note: "Dress code: festive" }, from("m2", "2026-12-05T10:00:00Z"));
+  mi.upsertEvents(ds, [reminder], today);
+  assert.equal(ds.events.length, 1);
+  assert.equal(ds.events[0].place, "Downtown Hall");
+  assert.equal(ds.events[0].start, "19:00");
+  assert.equal(ds.events[0].note, "Dress code: festive");
+  assert.equal(ds.events[0].id, invite.id); // the same event for calendars
+
+  // Different classes' sessions on one day are different events.
+  const sim1 = mi.cleanEvent({ title: "CA-1 Simulation", date: "2026-12-05", start: "08:00" }, from("m3", "2026-11-11T10:00:00Z"));
+  const sim2 = mi.cleanEvent({ title: "CA-2 Simulation", date: "2026-12-05", start: "08:00" }, from("m3", "2026-11-11T10:00:00Z"));
+  mi.upsertEvents(ds, [sim1, sim2], today);
+  assert.equal(ds.events.filter((e) => /Simulation/.test(e.title)).length, 2);
+  assert.equal(mi.sameEvent({ title: "Board Review", date: "2026-12-07" }, { title: "Board Review: Cardiac", date: "2026-12-07" }), true);
+  assert.equal(mi.sameEvent({ title: "Board Review", date: "2026-12-07" }, { title: "Wellness Lunch", date: "2026-12-07" }), false);
+  assert.equal(mi.sameEvent({ title: "Board Review", date: "2026-12-07" }, { title: "Board Review", date: "2026-12-08" }), false);
+  // A new time for the same session updates it.
+  mi.upsertEvents(ds, [mi.cleanEvent({ title: "CA-1 Simulation", date: "2026-12-05", start: "09:00" }, from("m3b", "2026-11-12T10:00:00Z"))], today);
+  assert.deepEqual(ds.events.filter((e) => e.title === "CA-1 Simulation").map((e) => e.start), ["09:00"]);
+
+  // An older email doesn't undo a newer one.
+  mi.upsertEvents(ds, [mi.cleanEvent({ title: "Holiday Party", date: "2026-12-12", place: "Somewhere else" }, from("m0", "2026-11-01T10:00:00Z"))], today);
+  assert.equal(ds.events.find((e) => /Party/.test(e.title)).place, "Downtown Hall");
+
+  // Moved to another day: gone from the old one.
+  const moved = mi.cleanEvent({ title: "Holiday Party", date: "2026-12-19", start: "19:00", movedFrom: "2026-12-12", place: "Downtown Hall" }, from("m4", "2026-12-06T10:00:00Z"));
+  mi.upsertEvents(ds, [moved], today);
+  assert.deepEqual(ds.events.filter((e) => /Party/.test(e.title)).map((e) => e.date), ["2026-12-19"]);
+  // Cancelled: kept, marked, and the app leaves it out.
+  mi.upsertEvents(ds, [mi.cleanEvent({ title: "Holiday Party", date: "2026-12-19", cancelled: true }, from("m5", "2026-12-07T10:00:00Z"))], today);
+  assert.equal(ds.events.find((e) => /Party/.test(e.title)).cancelled, true);
+  const { createModel } = await import("../public/core/model.js");
+  const model = createModel({ people: [], months: {}, daily: {}, settings: {}, directory: { people: {}, places: [] }, events: ds.events });
+  assert.deepEqual(model.events(today).map((e) => e.title), ["CA-2 Simulation", "CA-1 Simulation"]); // by time: 8a, then 9a
+});
+
+test("program emails arrive at a private address and land where they belong", async () => {
+  process.env.MAIL_SENDERS = "coordinator@example.edu";
+  const st = openStore();
+  await st.delete("mail-log");
+  const thisMonth = todayLocal().slice(0, 7);
+  const [y, m] = thisMonth.split("-").map(Number);
+  const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+  const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  const [ny, nm] = nextMonth.split("-").map(Number);
+  const lastMonth = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+  const [ly, lm] = lastMonth.split("-").map(Number);
+  await st.setJSON("dataset", { people: [], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+
+  const info = await call("GET", "/api/mail-intake", undefined, admin);
+  assert.equal(info.status, 200);
+  const address = new URL(info.body.address).pathname;
+  assert.match(address, /^\/api\/mail\/[\w-]{20,}$/);
+  assert.ok(info.body.senders.hashes.length >= 2 && info.body.senders.salt);
+  assert.equal((await call("GET", "/api/mail-intake", undefined, viewer)).status, 403); // admins only
+  // A wrong address is nothing at all, and so is the demo program.
+  assert.equal((await call("POST", "/api/mail/not-the-token-at-all-123", { id: "abcdef123" })).status, 404);
+
+  const rows = [{ name: "Resa, Test", rotation: "Basic Anesthesia", days: { 1: "BA", 2: "H1" } }, { name: "Resb, Test", rotation: "Obstetrics", days: { 1: "OB" } }];
+  const xlsm = async (sheet) => Buffer.from(await fakeCallWorkbook(sheet, rows)).toString("base64");
+  const send = (body) => call("POST", address, { from: "Coordinator <coordinator@example.edu>", recipients: 60, text: "Attached.", ...body });
+  const sentAt = (minsAgo) => new Date(Date.now() - minsAgo * 60000).toISOString();
+
+  // The first draft of next month's schedule: saved, and marked as a draft.
+  let r = await send({ id: "draft1aaa", subject: `1st DRAFT of ${MONTHS[nm - 1]} Call & PAT Schedule`, date: sentAt(300), attachments: [{ name: `${MONTHS[nm - 1]} ${ny} Call Schedule (1st draft).xlsm`, data: await xlsm(`${MONTHS[nm - 1]}, ${ny}`) }] });
+  assert.equal(r.status, 200);
+  assert.match(r.body.actions[0], new RegExp(`Call schedule \\(draft\\) saved for ${nextMonth}`));
+  let ds = await st.getJSON("dataset");
+  assert.equal(ds.months[nextMonth].draft, true);
+  assert.equal(ds.people.length, 2);
+  // Sent again (the script retried): nothing happens twice.
+  assert.equal((await send({ id: "draft1aaa", subject: "again", date: sentAt(300) })).body.already, true);
+  // The final: replaces the draft.
+  r = await send({ id: "final1aaa", subject: `${MONTHS[nm - 1]} Anesthesia Resident Call & PAT Schedule`, date: sentAt(200), attachments: [{ name: `${MONTHS[nm - 1]} ${ny}.xlsx`, data: await xlsm(`${MONTHS[nm - 1]}, ${ny}`) }] });
+  assert.match(r.body.actions[0], /saved for/);
+  assert.equal((await st.getJSON("dataset")).months[nextMonth].draft, false);
+  // A draft after the final, an older copy, and a past month are all turned away.
+  r = await send({ id: "draft2aaa", subject: `2nd DRAFT of ${MONTHS[nm - 1]} Call Schedule`, date: sentAt(100), attachments: [{ name: "Call Schedule (2nd draft).xlsx", data: await xlsm(`${MONTHS[nm - 1]}, ${ny}`) }] });
+  assert.match(r.body.actions[0], /not used: .*the final is already in/);
+  r = await send({ id: "older1aaa", subject: `${MONTHS[nm - 1]} Call Schedule`, date: sentAt(250), attachments: [{ name: "Call Schedule.xlsx", data: await xlsm(`${MONTHS[nm - 1]}, ${ny}`) }] });
+  assert.match(r.body.actions[0], /not used: .*a newer copy is already in/);
+  r = await send({ id: "past1aaaa", subject: `${MONTHS[lm - 1]} Call Schedule`, date: sentAt(50), attachments: [{ name: `${MONTHS[lm - 1]} ${ly} Call Schedule.xlsx`, data: await xlsm(`${MONTHS[lm - 1]}, ${ly}`) }] });
+  assert.match(r.body.actions[0], /not used: .*past month/);
+  // A spreadsheet that only looks like one is reported, not a crash.
+  r = await send({ id: "broken1aa", subject: "Call Schedule", date: sentAt(40), attachments: [{ name: "Call Schedule.xlsx", data: Buffer.from("not a zip").toString("base64") }] });
+  assert.equal(r.status, 200);
+  assert.match(r.body.actions[0], /Couldn't read Call Schedule\.xlsx/);
+
+  // An invite: its events go in straight away (Claude isn't needed for it).
+  const ics = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "SUMMARY:Town Hall", `DTSTART;TZID=Eastern Standard Time:${nextMonth.replace("-", "")}10T170000`, `DTEND;TZID=Eastern Standard Time:${nextMonth.replace("-", "")}10T180000`, "LOCATION:Main Auditorium", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  r = await send({ id: "invite1aa", subject: "Resident Town Hall", date: sentAt(30), attachments: [{ name: "invite.ics", type: "text/calendar", data: Buffer.from(ics).toString("base64") }] });
+  assert.match(r.body.actions[0], /1 event from the invite: Town Hall/);
+  ds = await st.getJSON("dataset");
+  assert.deepEqual(ds.events.map((e) => [e.title, e.date, e.start, e.place]), [["Town Hall", `${nextMonth}-10`, "17:00", "Main Auditorium"]]);
+  // Any other email waits for Claude, which isn't set up in the tests: nothing is left behind.
+  r = await send({ id: "party1aaa", subject: "Holiday Party", date: sentAt(20), text: "Please join us for the holiday party on Saturday, December 12 at 7pm." });
+  assert.match(r.body.actions[0], /Not read: Claude isn't set up/);
+  assert.equal(await st.getJSON("mailq/party1aaa"), null);
+
+  // A personal email: skipped, and not even its subject is kept.
+  r = await send({ id: "personal1", subject: "Your receipts", recipients: 2, date: sentAt(10), text: "Hi, about your receipts: please send them again." });
+  assert.match(r.body.actions[0], /personal/);
+  const log = (await call("GET", "/api/mail-intake", undefined, admin)).body;
+  const entry = log.list.find((x) => x.id === "personal1");
+  assert.equal(entry.subject, "");
+  assert.equal(entry.personal, true);
+  assert.ok(!JSON.stringify(log).includes("receipts"));
+  assert.equal(log.list[0].id, "personal1"); // newest first
+  assert.ok(log.lastAt);
+});
+
+test("the background reader saves a conference schedule and events, and never over an admin's month", async () => {
+  process.env.MAIL_SENDERS = "coordinator@example.edu";
+  const st = openStore();
+  const { readQueuedMail } = await import("../netlify/functions/read-mail-background.mjs");
+  const month = addDays(todayLocal(), 40).slice(0, 7);
+  await st.setJSON("dataset", { people: [], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] }, didactics: {} });
+  await st.delete("mail-didactics");
+  await st.update("mail-log", () => ({ list: [{ id: "conf1aaaa", actions: ["Conference schedule sent to be read"] }, { id: "evts1aaaa", actions: [] }, { id: "conf2aaaa", actions: [] }], lastAt: new Date().toISOString() }));
+  const base = { from: "Coordinator <coordinator@example.edu>", date: new Date().toISOString(), recipients: 60, attachments: [] };
+  const readPdf = async () => ({ didactics: { month, events: [{ date: `${month}-07`, start: "17:00", end: "18:00", title: "Airway", kind: "lecture" }] } });
+
+  await st.setJSON("mailq/conf1aaaa", { ...base, id: "conf1aaaa", subject: "Didactic Schedules", text: "", reading: { kind: "didactics", attachment: "x.pdf" } });
+  await st.setBytes("mailq/conf1aaaa.pdf", new Uint8Array([37, 80, 68, 70]), "application/pdf");
+  assert.match(await readQueuedMail(st, "conf1aaaa", { readPdf }), new RegExp(`saved for ${month} \\(1 sessions\\)`));
+  let ds = await st.getJSON("dataset");
+  assert.equal(ds.didactics[month].events[0].title, "Airway");
+  assert.equal(ds.didactics[month].hasPdf, true);
+  assert.ok(await st.getBytes(`didactics-pdf/${month}`));
+  assert.equal(await st.getJSON("mailq/conf1aaaa"), null); // done with
+  assert.equal(await st.getBytes("mailq/conf1aaaa.pdf"), null);
+
+  // An admin edits that month by hand: a later email's copy doesn't replace theirs.
+  await st.delete("mail-didactics");
+  await st.setJSON("mailq/conf2aaaa", { ...base, id: "conf2aaaa", subject: "Didactic Schedules (updated)", text: "", reading: { kind: "didactics", attachment: "x.pdf" } });
+  await st.setBytes("mailq/conf2aaaa.pdf", new Uint8Array([37, 80, 68, 70]), "application/pdf");
+  assert.match(await readQueuedMail(st, "conf2aaaa", { readPdf: async () => ({ didactics: { month, events: [{ date: `${month}-08`, title: "Other" }] } }) }), /not used: an admin already saved that month/);
+  assert.equal((await st.getJSON("dataset")).didactics[month].events[0].title, "Airway");
+
+  // Events: cleaned, merged, and the email's log says what was found.
+  await st.setJSON("mailq/evts1aaaa", { ...base, id: "evts1aaaa", subject: "Holiday Party", text: "Party!", reading: { kind: "events" } });
+  const readEvents = async (m) => {
+    assert.equal(m.subject, "Holiday Party"); // the reader gets the email
+    return [{ title: "Holiday Party", date: `${month}-12`, start: "19:00", end: "", place: "Hall", link: "", rsvpBy: "", rsvpLink: "", kind: "social", note: "", who: "", cancelled: false, movedFrom: "" }, { title: "No date", date: "soon" }];
+  };
+  assert.match(await readQueuedMail(st, "evts1aaaa", { readEvents }), new RegExp(`Events: Holiday Party \\(${month}-12\\)`));
+  ds = await st.getJSON("dataset");
+  assert.deepEqual(ds.events.map((e) => e.title), ["Holiday Party"]);
+  const log = await st.getJSON("mail-log");
+  assert.match(log.list.find((x) => x.id === "evts1aaaa").actions.at(-1), /Events: Holiday Party/);
+  // A reader that fails says so in the log instead of losing the email silently.
+  await st.setJSON("mailq/evts2aaaa", { ...base, id: "evts2aaaa", subject: "x", text: "y", reading: { kind: "events" } });
+  assert.match(await readQueuedMail(st, "evts2aaaa", { readEvents: async () => { throw new Error("overloaded"); } }), /Couldn't read it: overloaded/);
+  // Only the app itself can start a reading.
+  const { default: bg } = await import("../netlify/functions/read-mail-background.mjs");
+  assert.equal((await bg(new Request("http://localhost/bg/read-mail", { method: "POST", body: JSON.stringify({ id: "evts1aaaa" }) }))).status, 403);
+});
+
+test("the Gmail script sends only the office's emails to the program, oldest first, once each", async () => {
+  process.env.MAIL_SENDERS = "coordinator@example.edu";
+  const vm = await import("node:vm");
+  const { mailScript } = await import("../public/core/mail-script.js");
+  const info = (await call("GET", "/api/mail-intake", undefined, admin)).body;
+  const code = mailScript(info.address, info.senders);
+  assert.ok(!code.includes("coordinator@"), "no address is written in the script");
+
+  // A pretend Gmail and Apps Script, as Google provides them.
+  const msg = (id, from, to, subject, mins, attachments = []) => ({
+    getId: () => `18c0ffee${id}`, getFrom: () => from, getTo: () => to, getCc: () => "", getSubject: () => subject,
+    getDate: () => new Date(Date.parse("2026-11-20T15:00:00Z") + mins * 60000), getPlainBody: () => `About: ${subject}`,
+    getAttachments: () => attachments,
+  });
+  const att = (name, type, size) => ({ getName: () => name, getContentType: () => type, getSize: () => size, getBytes: () => [80, 75, -3, 4] });
+  const many = Array.from({ length: 12 }, (_, i) => `"Res${i}, Test" <res${i}@example.org>`).join(", ");
+  const office = "Coordinator <Coordinator@example.edu>";
+  let threads = [
+    [msg("m2", office, many, "Second", 20, [att("Call Schedule.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12", 1000), att("photo.jpg", "image/jpeg", 1000), att("huge.pdf", "application/pdf", 5 * 1024 * 1024), att("invite", "text/calendar", 300)]),
+      msg("m1", office, many, "First", 10)],
+    [msg("p1", office, "Me <me@example.org>, me2@example.org", "Personal", 30), msg("o1", "Someone <other@example.edu>", many, "Not the office", 40)],
+  ];
+  const props = {};
+  const sent = [];
+  const ids = () => sent.map((x) => x.body.id.slice(8));
+  const seen = () => JSON.parse(props.seen).map((x) => x.slice(8));
+  let query = "", answer = 200;
+  const sandbox = {
+    PropertiesService: { getUserProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) },
+    GmailApp: { search: (q) => { query = q; return threads.map((ms) => ({ getMessages: () => ms })); } },
+    Utilities: {
+      DigestAlgorithm: { SHA_256: "SHA_256" }, Charset: { UTF_8: "UTF_8" },
+      // Java bytes are signed.
+      computeDigest: (alg, text) => [...crypto.createHash("sha256").update(text, "utf8").digest()].map((b) => (b > 127 ? b - 256 : b)),
+      base64Encode: (bytes) => Buffer.from(bytes.map((b) => b & 255)).toString("base64"),
+    },
+    UrlFetchApp: { fetch: (url, opts) => { sent.push({ url, body: JSON.parse(opts.payload) }); return { getResponseCode: () => answer }; } },
+  };
+  // Each run starts fresh, as on Google's side; only the script's saved properties carry over.
+  const run = (line) => vm.runInNewContext(`${code}\n${line}`, { ...sandbox });
+  run("sendProgramEmails();");
+  assert.equal(query, "from:(wayne.edu OR example.edu) newer_than:45d"); // the first run looks back further
+  assert.deepEqual(ids(), ["m1", "m2"]); // oldest first; personal and other senders stay in Gmail
+  assert.equal(sent[0].url, info.address);
+  const m2 = sent[1].body;
+  assert.equal(m2.recipients, 12);
+  assert.deepEqual(m2.attachments.map((a) => a.name), ["Call Schedule.xlsm", "invite"]); // no photos, nothing too big
+  assert.equal(Buffer.from(m2.attachments[0].data, "base64").toString("latin1"), "PKý\u0004");
+  assert.deepEqual(seen().sort(), ["m1", "m2", "p1"]);
+
+  // What it sends is what the app takes.
+  for (const { url, body } of sent) assert.equal((await call("POST", new URL(url).pathname, body)).status, 200);
+
+  // Next time: only the last few days, and nothing twice.
+  sent.length = 0;
+  run("sendProgramEmails();");
+  assert.match(query, /newer_than:3d$/);
+  assert.equal(sent.length, 0);
+
+  // The app is busy: that email waits for the next run. Its address changed: the script says so.
+  threads = [[msg("m3", office, many, "Third", 50), msg("m4", office, many, "Fourth", 60)]];
+  answer = 503;
+  run("sendProgramEmails();");
+  assert.deepEqual(ids(), ["m3"]);
+  assert.ok(!seen().includes("m3"));
+  answer = 404;
+  assert.throws(() => run("sendProgramEmails();"), /address changed/);
+  answer = 200;
+  sent.length = 0;
+  run("sendProgramEmails();");
+  assert.deepEqual(ids(), ["m3", "m4"]);
+
+  // setup() starts the 30-minute check.
+  const triggers = [];
+  sandbox.ScriptApp = {
+    getProjectTriggers: () => [{ id: "old" }], deleteTrigger: (t) => triggers.push(["deleted", t.id]),
+    newTrigger: (fn) => ({ timeBased: () => ({ everyMinutes: (n) => ({ create: () => triggers.push(["created", fn, n]) }) }) }),
+  };
+  run("setup();");
+  assert.deepEqual(triggers, [["deleted", "old"], ["created", "sendProgramEmails", 30]]);
 });

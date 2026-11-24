@@ -213,6 +213,22 @@ export function buildIcs(model, pid, { from, to, appUrl = "", calName, didactics
       ]);
     }
   }
+  // Program events from the office's emails: the party, grand rounds, a conference.
+  for (const e of model.events?.(from, to, pid) || []) {
+    const mins = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+    const description = [e.note, e.rsvpBy ? `RSVP by ${e.rsvpBy}${e.rsvpLink ? `: ${e.rsvpLink}` : ""}` : "", e.link || "", appUrl ? `${appUrl}#/events` : ""].filter(Boolean).join("\n");
+    if (!e.start) { allDay(`event-${e.id}`, e.date, e.date, e.title, description); continue; }
+    event(`event-${e.id}`, [
+      `DTSTART;TZID=America/Detroit:${localStamp(e.date, mins(e.start))}`,
+      `DTEND;TZID=America/Detroit:${localStamp(e.date, e.end ? mins(e.end) : mins(e.start) + 60)}`,
+      `SUMMARY:${esc(e.title)}`,
+      ...(e.place ? [`LOCATION:${esc(e.place)}`] : []),
+      ...(e.link ? [`URL:${e.link}`] : []),
+      ...(description ? [`DESCRIPTION:${esc(description)}`] : []),
+      "CATEGORIES:Program event",
+      "TRANSP:TRANSPARENT",
+    ]);
+  }
   for (const r of runs(vac)) allDay(`${pid}-vac-${r.start}`, r.start, r.end, "Vacation");
   for (const r of runs(post)) allDay(`${pid}-pc-${r.start}`, r.start, r.end, "Post-call (off)");
   for (const r of runs(cardiac)) allDay(`${pid}-cardiac-${r.start}`, r.start, r.end, "Cardiac call (home)", "Cardiac call week. Hours count only if called in.");

@@ -7,7 +7,7 @@ import { hoursReport } from "../public/core/hours.js";
 import { dayGaps } from "../public/core/gaps.js";
 import { buildIcs } from "../public/core/ics.js";
 import { upsertPerson } from "../lib/people.js";
-import { setDaily } from "../lib/dataset.js";
+import { setDaily, canonicalizeDaily } from "../lib/dataset.js";
 
 const people = [
   { id: "doe-jane", last: "Doe", first: "Jane", preferred: "Jane", cls: "CA-1" },
@@ -176,7 +176,7 @@ test("PAT resident pulled for breaks stays in PAT", () => {
 });
 
 import { parseDirectoryText, buildDirectory, dialDigits } from "../public/core/directory.js";
-import { headline } from "../public/core/model.js";
+import { headline, eventClasses } from "../public/core/model.js";
 
 const DIR_TEXT = `## Dialing
 Ext 5xxxx = 313-555-xxxx
@@ -1364,4 +1364,112 @@ test("case log server: style, running number and ACGME's count", async () => {
   ({ rec } = mergeLog(rec, { key, naming: { parts: ["total"], start: 300, last: 0, setAt: new Date().toISOString() } }, today));
   assert.equal(rec.naming.start, 300);
   assert.equal(rec.naming.last, 0);
+});
+
+test("attendings by Egress slot: who's on call, pre-call, running the board and where the rest are", async () => {
+  const { slotInfo, cleanAttending, attendingsOf } = await import("../public/core/attendings.js");
+  assert.deepEqual(slotInfo("H1 (MOR call)"), { kind: "call", label: "Main OR call", where: "Harper" });
+  assert.deepEqual(slotInfo("OB 14 (OB call)"), { kind: "call", label: "OB call", where: "Hutzel" });
+  assert.deepEqual(slotInfo("CV (CHR & CSG)"), { kind: "call", label: "Cardiac call", where: "CHR & CSG" });
+  assert.equal(slotInfo("H13 (MOR pre call)").kind, "precall");
+  assert.equal(slotInfo("H13 OB (OB pre call)").label, "OB pre-call");
+  assert.equal(slotInfo("H16 (OB post call)").label, "OB post-call");
+  assert.equal(slotInfo("Board Runner").kind, "runner");
+  assert.deepEqual(slotInfo("H5 (Meyers)"), { kind: "site", label: "H5 (Meyers)", where: "Meyers lab" });
+  assert.equal(slotInfo("H4 (OPSC)").where, "OPSC");
+  assert.equal(slotInfo("H2").kind, "slot");
+  assert.deepEqual(cleanAttending("Rivers- 8AM"), { name: "Rivers", note: "8AM" });
+  assert.deepEqual(cleanAttending("lakeside"), { name: "Lakeside", note: "" });
+  assert.deepEqual(cleanAttending("Hill/ Stone"), { name: "Hill/ Stone", note: "" });
+  const list = attendingsOf([
+    { slot: "H15 (MOR post call)", name: "Post" }, { slot: "H4 (OPSC)", name: "Opsc" }, { slot: "Board Runner", name: "Runner" },
+    { slot: "H13 (MOR pre call)", name: "Pre" }, { slot: "H1 (MOR call)", name: "Call- 8AM" }, { slot: "OB 14 (OB call)", name: "" },
+  ]);
+  assert.deepEqual(list.map((a) => [a.kind, a.name]), [["call", "Call"], ["precall", "Pre"], ["runner", "Runner"], ["site", "Opsc"], ["postcall", "Post"]]); // a blank slot is left out
+  assert.deepEqual(attendingsOf(undefined), []);
+});
+
+test("the daily sheet places everyone: a procedure, the board runner's list, notes and tonight's attendings", () => {
+  const ds = fairnessDataset();
+  const date = "2026-11-02";
+  ds.daily[date] = {
+    date, rooms: [{ or: "1", surgeon: "Surg", staff: "ResA", ja: "", breaks: "" }], opsc: {}, ob: {}, pat: [], night: [],
+    procedures: [{ name: "Cath lab", count: "2", mda: "CathMda", staff: "ResC", ja: "" }, { name: "EP lab", count: "1", mda: "EpMda", staff: "", ja: "ResF" }],
+    people: [{ name: "ResA", where: "BA", call: "" }, { name: "ResC", where: "Cath lab", call: "" }, { name: "ResE", where: "NORA", call: "Late" }, { name: "ResD", where: "OB", call: "" }],
+    egress: {
+      attendings: [{ slot: "H1 (MOR call)", name: "Callmda- 8AM" }, { slot: "OB 14 (OB call)", name: "obcall" }, { slot: "Board Runner", name: "Runner" }, { slot: "H13 (MOR pre call)", name: "Premda" }, { slot: "H15 (MOR post call)", name: "Postmda" }],
+      residents: [{ name: "ResE", where: "ELECT-J", note: "" }, { name: "ResB", where: "Vacation", note: "" }],
+    },
+    notes: ["ResE to VA after lunch", "Room 9 closes at noon"],
+  };
+  const m = createModel(ds);
+  // Sent to the cath lab from the Resident/CRNA column, with the lab's MDA.
+  const c = m.day("c", date);
+  assert.deepEqual(c.roles.filter((r) => r.kind === "proc").map((r) => [r.name, r.mda, !!r.asJa]), [["Cath lab", "CathMda", false]]);
+  assert.equal(c.roles.some((r) => r.kind === "where"), false); // the list saying "Cath lab" adds nothing more
+  assert.equal(headline(c), "Cath lab · CathMda");
+  assert.equal(headline(m.day("f", date)), "EP lab · JA · EpMda");
+  // Somewhere the call sheet doesn't say, from the board runner's own list (it wins over Egress).
+  const e = m.day("e", date);
+  assert.deepEqual(e.roles.filter((r) => r.kind === "where").map((r) => [r.where, r.code]), [["NORA", "NORA"]]);
+  assert.equal(e.sheetCall, "Late");
+  assert.deepEqual(e.sheetNotes, ["ResE to VA after lunch"]);
+  // Their own rotation, a status or a room already given: nothing added.
+  assert.equal(m.day("d", date).roles.some((r) => r.kind === "where"), false); // OB is their rotation
+  assert.equal(m.day("b", date).roles.some((r) => r.kind === "where"), false); // "Vacation"
+  assert.deepEqual(m.day("a", date).roles.map((r) => r.kind), ["room"]);
+  assert.deepEqual(m.day("a", date).sheetNotes, []);
+  // Tonight: the attendings on call, then pre-call and the board runner. Post-call isn't tonight.
+  const t = m.tonight(date);
+  assert.deepEqual(t.mdaCall.map((a) => [a.label, a.name, a.note, a.where]), [["Main OR call", "Callmda", "8AM", "Harper"], ["OB call", "Obcall", "", "Hutzel"]]);
+  assert.deepEqual(t.mdaOther.map((a) => [a.kind, a.name]), [["precall", "Premda"], ["runner", "Runner"]]);
+  // The board gets a Procedures group.
+  assert.equal(m.boardGroup(c), "Procedures");
+  // Saved by hand with a misspelling: written back in roster spelling, like the rooms.
+  const { changes } = setDaily(ds, date, { ...ds.daily[date], procedures: [{ ...ds.daily[date].procedures[0], staff: "resc" }, ds.daily[date].procedures[1]] });
+  assert.deepEqual(canonicalizeDaily(ds, date), []); // already in roster spelling
+  assert.equal(ds.daily[date].procedures[0].staff, "ResC");
+  assert.ok(changes.some((x) => x.where === "Cath lab" && x.to === "ResC"));
+});
+
+test("codes seen on the newer sheets", async () => {
+  const { normCode, CODES } = await import("../public/core/codes.js");
+  assert.equal(normCode("SIM"), "SIM");
+  assert.equal(normCode("PAT/AP"), "PAT/AP");
+  assert.equal(CODES["PAT/AP"].group, "PAT");
+  assert.equal(normCode("BA- V"), "BA-V");
+  assert.equal(normCode("11-6"), "11-6");
+  assert.deepEqual(CODES["11-6"].hours, [660, 1080]);
+});
+
+test("program events go in each resident's calendar feed, timed in Detroit or all day", () => {
+  const ds = fairnessDataset();
+  ds.events = [
+    { id: "ev1", title: "Holiday Party", date: "2026-11-21", start: "19:00", end: "", place: "Downtown Hall", link: "", rsvpBy: "2026-11-14", rsvpLink: "https://rsvp.example/x", note: "Festive", cancelled: false },
+    { id: "ev2", title: "Wellness Day", date: "2026-11-24", start: "", end: "", place: "", link: "https://example.zoom.us/j/1", note: "", cancelled: false },
+    { id: "ev3", title: "Cancelled Talk", date: "2026-11-25", start: "07:00", end: "08:00", cancelled: true },
+    { id: "ev4", title: "Next Year Gala", date: "2027-03-01", start: "18:00", cancelled: false },
+    { id: "ev5", title: "Senior Simulation", date: "2026-11-26", start: "08:00", who: "CA-2 and CA-3 residents", cancelled: false },
+    { id: "ev6", title: "Junior Simulation", date: "2026-11-27", start: "08:00", who: "CA-1s", cancelled: false },
+  ];
+  const m = createModel(ds);
+  const ics = buildIcs(m, "a", { from: "2026-11-01", to: "2026-12-31", appUrl: "https://app.example" }).replace(/\r\n /g, "");
+  const ev = (uid) => ics.split("BEGIN:VEVENT").find((b) => b.includes(`UID:event-${uid}@`)) || "";
+  assert.match(ev("ev1"), /DTSTART;TZID=America\/Detroit:20261121T190000/);
+  assert.match(ev("ev1"), /DTEND;TZID=America\/Detroit:20261121T200000/); // an hour when no end is given
+  assert.match(ev("ev1"), /SUMMARY:Holiday Party/);
+  assert.match(ev("ev1"), /LOCATION:Downtown Hall/);
+  assert.match(ev("ev1"), /RSVP by 2026-11-14: https:\/\/rsvp\.example\/x/);
+  assert.match(ev("ev1"), /CATEGORIES:Program event/);
+  assert.match(ev("ev2"), /DTSTART;VALUE=DATE:20261124/);
+  assert.equal(ev("ev3"), ""); // cancelled
+  assert.equal(ev("ev4"), ""); // outside the feed's range
+  // Another class's session stays off this CA-1's feed and lists; the Events page lists everything.
+  assert.equal(ev("ev5"), "");
+  assert.match(ev("ev6"), /SUMMARY:Junior Simulation/);
+  assert.deepEqual(m.events("2026-11-20", "2026-11-30", "a").map((e) => e.id), ["ev1", "ev2", "ev6"]);
+  assert.deepEqual(m.events("2026-11-20", "2026-11-30").map((e) => e.id), ["ev1", "ev2", "ev5", "ev6"]);
+  assert.deepEqual(eventClasses("CA-2 and CA-3 residents"), ["CA-2", "CA-3"]);
+  assert.deepEqual(eventClasses("Interns"), ["PGY-1"]);
+  assert.deepEqual(eventClasses("Residents going to the ASA"), []);
 });
