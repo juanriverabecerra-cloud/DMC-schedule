@@ -25,12 +25,14 @@ export const ACGME_SITES = {
 // a resident's own choice for that kind of day is remembered and wins next time.
 const SITE_FOR = { harper: "harper", hutzel: "harper", opsc: "harper", pain: "harper", va: "va", chm: "chm", hvsh: "hvsh", sinai: "sinai" };
 
+// `acgme` is the option exactly as ACGME's Patient Age list prints it; `tap`, the same in fewer
+// characters, keeping ACGME's letter.
 export const AGES = [
-  { key: "a", id: 30, short: "<3 mo", label: "Under 3 months" },
-  { key: "b", id: 31, short: "<3 y", label: "3 months to 3 years" },
-  { key: "c", id: 32, short: "<12 y", label: "3 to 12 years" },
-  { key: "d", id: 33, short: "12–65", label: "12 to 65 years" },
-  { key: "e", id: 34, short: "65+", label: "65 and over" },
+  { key: "a", id: 30, short: "<3 mo", tap: "a. <3 mo", label: "Under 3 months", acgme: "a. < 3 months" },
+  { key: "b", id: 31, short: "<3 y", tap: "b. 3 mo–3 yr", label: "3 months to 3 years", acgme: "b. >= 3 mos. and < 3 yr." },
+  { key: "c", id: 32, short: "<12 y", tap: "c. 3–12 yr", label: "3 to 12 years", acgme: "c. >= 3 yr. and < 12 yr." },
+  { key: "d", id: 33, short: "12–65", tap: "d. 12–65 yr", label: "12 to 65 years", acgme: "d. >= 12 yr. and < 65 yr." },
+  { key: "e", id: 34, short: "65+", tap: "e. 65+ yr", label: "65 and over", acgme: "e. >= 65 year" },
 ];
 export const ASA_IDS = { 1: 156628, 2: 156632, 3: 156634, 4: 156636, 5: 156630, 6: 156631, "1E": 156629, "2E": 156633, "3E": 156635, "4E": 156637, "5E": 156626 };
 export const GROUPS = { proc: 681, pain: 680 };
@@ -146,6 +148,32 @@ export const SECTIONS = [
 ];
 export const ITEMS = new Map(SECTIONS.flatMap((s) => s.items.map((i) => [i.key, { ...i, section: s.key, area: s.title, group: s.group }])));
 
+// How ACGME's Add Case page lays each section out, read off the real page (2026-11-18): the boxes
+// with no sub-heading first, then each sub-heading with its boxes, in the page's own order. The
+// case form shows them the same way, so it looks like the page residents already know.
+const PAGE_ORDER = {
+  type: ["cse", "epidural", "general", "mac", "spinal", "pnb-cath", "pnb"],
+  airway: ["sga", "dl", "vl", "ett", "nasal", "fob", "awake", "blocker", "dlt", "airway-other", "jet", "mask"],
+  category: ["no-cpb", "cpb", "vessels-endo", "vessels", "neuro-endo", "crani", "crani-vasc", "cs", "cs-hr", "vag", "vag-hr", "thoracic"],
+  access: ["art", "cvc", "pa", "us"],
+  monitoring: ["csf", "ep", "tee"],
+  neuraxial: ["caudal", "cervical", "lumbar", "t1-7", "t8-12"],
+  block: ["adductor", "ankle", "axillary", "esp", "femoral", "infraclavicular", "interscalene", "lumbar-plexus", "paravertebral", "popliteal", "ql", "retrobulbar", "saphenous", "sciatic", "supraclavicular", "tap", "block-other"],
+};
+export function pageLayout(section) {
+  const s = typeof section === "string" ? SECTIONS.find((x) => x.key === section) : section;
+  if (!s) return [];
+  const rank = PAGE_ORDER[s.key] || s.items.map((i) => i.key);
+  const items = [...s.items].sort((a, b) => rank.indexOf(a.key) - rank.indexOf(b.key));
+  const out = [{ sub: "", items: items.filter((i) => !i.sub) }];
+  for (const i of items.filter((x) => x.sub)) {
+    let block = out.find((b) => b.sub === i.sub);
+    if (!block) out.push(block = { sub: i.sub, items: [] });
+    block.items.push(i);
+  }
+  return out.filter((b) => b.items.length);
+}
+
 // ---- presets: one tap sets what was done (age and ASA stay as they are) ----
 export const PRESETS = {
   "ga-dl": { label: "GA · tube · DL", codes: ["general", "dl", "ett"] },
@@ -237,10 +265,14 @@ export function surgeonWord(name) {
 
 // A supervisor as the app keeps it: the directory's full name when the sheet's name matches one.
 export function supervisorFrom(model, name, site = "harper") {
-  const raw = tidy(name).split(/[/,&+]/)[0].trim();
-  if (!raw) return null;
-  const s = model?.dir?.staff?.(raw, { site });
-  return s ? { last: s.last, first: s.first || "", name: `${s.last}, ${s.first || ""}`.replace(/, $/, "") } : { last: raw.split(" ").at(-1), first: "", name: raw };
+  return supervisorsFrom(model, name, site)[0] || null;
+}
+// Every attending in one MDA cell: "Rook / Sable" is a room that changed hands during the day.
+export function supervisorsFrom(model, name, site = "harper") {
+  return tidy(name).split(/[/,&+]| and /i).map((x) => x.trim()).filter(Boolean).map((raw) => {
+    const s = model?.dir?.staff?.(raw, { site });
+    return s ? { last: s.last, first: s.first || "", name: `${s.last}, ${s.first || ""}`.replace(/, $/, "") } : { last: raw.split(" ").at(-1), first: "", name: raw };
+  });
 }
 
 // Everything the schedule says about one resident's cases on one day.
@@ -256,9 +288,17 @@ export function dayCases(model, pid, date) {
   const opsc = d.roles?.find((r) => r.kind === "opsc");
   const supervisor = rooms[0]?.supervisor || (ob?.mda ? supervisorFrom(model, ob.mda, "hutzel") : null) || (opsc?.mdas?.length === 1 ? supervisorFrom(model, opsc.mdas[0], "opsc") : null);
   const expected = rooms.reduce((n, r) => n + r.cases, 0);
+  // Everyone the sheet names over this resident's cases, offered first when picking a supervisor
+  // (a room's MDA often hands over midday: "Rook / Sable").
+  const seen = new Set();
+  const sheetSupervisors = [
+    ...(d.roles || []).filter((r) => r.kind === "room").flatMap((r) => supervisorsFrom(model, r.room.mda, "harper")),
+    ...(ob?.mda ? supervisorsFrom(model, ob.mda, "hutzel") : []),
+    ...(opsc?.mdas || []).flatMap((m) => supervisorsFrom(model, m, "opsc")),
+  ].filter((s) => { const k = s.last.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   const where = rooms.length ? rooms.map((r) => `OR ${r.or}${r.surgeon ? ` · ${r.surgeon}` : ""}`).join(", ")
     : ob ? "Hutzel OB" : opsc ? "OPSC" : d.call ? d.label : d.label || "";
-  return { d, kind, site, rooms, supervisor, expected, where, overnight: (d.shifts || []).some((s) => s.end > 1440) };
+  return { d, kind, site, rooms, supervisor, sheetSupervisors, expected, where, overnight: (d.shifts || []).some((s) => s.end > 1440) };
 }
 
 // When to nudge about a day's cases: 15 minutes after the shift ends, and the next morning at

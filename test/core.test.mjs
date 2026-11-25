@@ -1246,6 +1246,35 @@ test("case log: the day's cases come from the OR sheet, with the supervisor from
   assert.equal(A.nudgeAt(m.day("doe-jane", "2026-11-03")), 1095, "late resident: 6:15p");
 });
 
+test("case log: the form follows ACGME's page, and every attending in a room's MDA cell is offered", async () => {
+  const A = await import("../public/core/acgme.js");
+  // Each section lists every one of its boxes exactly once, under ACGME's own sub-headings.
+  for (const sec of A.SECTIONS) {
+    const shown = A.pageLayout(sec).flatMap((b) => b.items.map((i) => i.key));
+    assert.deepEqual([...shown].sort(), sec.items.map((i) => i.key).sort(), sec.key);
+  }
+  // As the page prints them (read off the real page): boxes with no sub-heading, then each sub-heading.
+  assert.deepEqual(A.pageLayout("airway").map((b) => [b.sub, b.items.map((i) => i.label)]), [
+    ["", ["Supraglottic Airway"]],
+    ["Laryngoscope", ["Direct", "Indirect"]],
+    ["Intubation", ["Oral ETT", "Nasal ETT", "Flexible Bronchoscopic", "Awake"]],
+    ["Lung Isolation", ["Bronchial blocker", "DLT"]],
+    ["Other (airway management)", ["Airway Mgmt - Other", "Jet ventilation", "Mask"]],
+  ]);
+  assert.deepEqual(A.pageLayout("type")[0].items.map((i) => i.label), ["CSE", "Epidural", "General Maintenance", "MAC &/or Sedation", "Spinal"]);
+  assert.deepEqual(A.AGES.map((a) => a.acgme), ["a. < 3 months", "b. >= 3 mos. and < 3 yr.", "c. >= 3 yr. and < 12 yr.", "d. >= 12 yr. and < 65 yr.", "e. >= 65 year"]);
+  // A room that changed hands: both attendings are offered, the first is the cases' default.
+  const ds = dataset();
+  setDaily(ds, "2026-11-02", { rooms: [{ or: "7", surgeon: "Rook", time: "7:30", cases: "3", mda: "Wrenn / Teal", staff: "Doe" }] });
+  const day = A.dayCases(createModel(ds), "doe-jane", "2026-11-02");
+  assert.deepEqual(day.sheetSupervisors.map((x) => x.last), ["Wrenn", "Teal"]);
+  assert.equal(day.supervisor.last, "Wrenn");
+  // Each case carries its own supervisor to ACGME.
+  const one = { ...A.blankCase({ date: "2026-11-02", surgeon: "Rook", seq: 1 }), supervisor: { last: "Wrenn", first: "" } };
+  const two = { ...A.blankCase({ date: "2026-11-02", surgeon: "Rook", seq: 2 }), supervisor: { last: "Teal", first: "" } };
+  assert.deepEqual([A.toAcgme(one).supervisor.last, A.toAcgme(two).supervisor.last], ["Wrenn", "Teal"]);
+});
+
 test("case log: a procedure on its own (an intern's art line) needs no ASA", async () => {
   const A = await import("../public/core/acgme.js");
   for (const key of A.PROCEDURES) {

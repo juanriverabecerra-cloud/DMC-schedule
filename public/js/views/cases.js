@@ -4,9 +4,9 @@
 import { h, icon, notice, toast, openSheet, closeSheet, copyText, safely } from "../ui.js";
 import { fmtDate, addDays, nowMinutesLocal, diffDays, todayLocal } from "../../core/dates.js";
 import {
-  AGES, ACGME_SITES, ACGME_ADD, SECTIONS, PRESETS, PROCEDURES, kindInfo, dayCases, startingCards, blankCase,
+  AGES, ACGME_SITES, ACGME_ADD, SECTIONS, PRESETS, PROCEDURES, kindInfo, dayCases, startingCards, blankCase, pageLayout,
   DEFAULT_NAMING, NAMING_STYLES, ID_PARTS, DATE_FORMATS, SEPARATORS, CASE_ID_MAX, cleanNaming, styleOf, withStyle, planIds, lastUsed,
-  toggleCode, extraOn, applyPreset, presetOn, applyCombo, comboOn, missing, isReady, summary, usual, recentSupervisors, dayWord, ITEMS, caseDateFor,
+  toggleCode, applyPreset, presetOn, applyCombo, comboOn, missing, isReady, summary, usual, recentSupervisors, dayWord, caseDateFor,
 } from "../../core/acgme.js";
 import {
   caseLog, casesOnDay, allCases, saveCase, removeCase, setDayNote, dayNote, setNaming, loadCaseLog, syncCaseLog, markCasesEntered, bookmarklet, hasUnsent,
@@ -14,7 +14,6 @@ import {
 import { openInSafari, opensInApp, isIos as onIphone } from "../install.js";
 import { local } from "../api.js";
 
-const expanded = new Set();
 let lastLoad = 0;
 
 // Fetch the server copy now and then (a render never waits for it).
@@ -27,8 +26,6 @@ function ensureLoaded(pid) {
   }
 }
 
-const EXTRA_LABEL = { "high-risk": "High-risk", trauma: "Trauma" };
-const extraLabel = (k) => EXTRA_LABEL[k] || (ITEMS.get(k)?.short ?? k);
 const keyOf = (c) => c.id || c.slot;
 const isIOS = onIphone;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -108,7 +105,8 @@ export function renderCases(ctx, arg) {
   // A line or an intubation on its own: what interns (and anyone on an ICU month) log now and then.
   const procedural = isIntern(model, pid) || !day.kind;
   if (procedural && date <= state.today) root.append(procedureCard(ctx, pid, date, day));
-  cards.forEach((c, i) => root.append(caseCard(ctx, pid, day, c, i)));
+  const openKey = openKeyFor(date, cards);
+  cards.forEach((c, i) => root.append(caseCard(ctx, pid, day, c, i, { open: formKey(c) === openKey, next: cards.slice(i + 1).find((x) => !x.enteredAt) })));
   if (date <= state.today && (day.kind || cards.length)) root.append(addCard(ctx, pid, day, cards));
   root.append(acgmeCard(ctx, pid, L));
   return root;
@@ -131,7 +129,7 @@ export function addProcedure(ctx, pid, date, preset) {
     supervisor: note.supervisor || recent?.supervisor || null, age: "d",
   });
   const c = saveCase(pid, applyPreset(base, preset));
-  expanded.add(c.id);
+  openFor.set(date, formKey(c));
   return c;
 }
 
@@ -156,9 +154,10 @@ function dayHeader(ctx, pid, date, day, cards) {
   const entered = real.filter((c) => c.enteredAt).length;
   const total = cards.length;
   // The day's supervisor: one set for the day, the sheet's, or the one every case shares.
+  // Cases with different supervisors (the attending changed during the day) say so.
   const named = [...new Set(real.map((c) => supName(c.supervisor)).filter(Boolean))];
-  const supervisor = note.supervisor || day.supervisor || (named.length === 1 ? real.find((c) => c.supervisor).supervisor : null);
-  const mixed = !supervisor && named.length > 1;
+  const mixed = named.length > 1;
+  const supervisor = mixed ? null : (named.length === 1 ? real.find((c) => c.supervisor).supervisor : null) || note.supervisor || day.supervisor;
   const site = note.site || cards[0]?.site || day.site;
   const status = !total ? (day.kind ? "Nothing logged yet" : "No cases expected")
     : entered === total ? `All ${total} in ACGME`
@@ -169,7 +168,7 @@ function dayHeader(ctx, pid, date, day, cards) {
     h("h2", null, status),
     h("div", { class: "subtitle" }, [day.where, day.expected ? plural(day.expected, "case") + " on the sheet" : ""].filter(Boolean).join(" · ") || (day.kind ? kindInfo(day.kind).label : "Not a case day on your schedule")),
     day.kind || total ? h("div", { class: "taps", style: { marginTop: "10px" } },
-      h("button", { class: `tap${supervisor || mixed ? "" : " need"}`, onclick: () => pickSupervisor(ctx, pid, { day: date }) }, icon("user"), supervisor ? supName(supervisor) : mixed ? `${named.length} supervisors` : "Pick supervisor"),
+      h("button", { class: `tap${supervisor || mixed ? "" : " need"}`, title: "Supervisor for the whole day; change any one case in its own form", onclick: () => pickSupervisor(ctx, pid, { day: date, sheet: day.sheetSupervisors }) }, icon("user"), supervisor ? supName(supervisor) : mixed ? `${named.length} supervisors` : "Supervisor"),
       h("button", { class: "tap", onclick: () => pickSite(ctx, pid, { day: date }) }, ACGME_SITES[site]?.short || "Site")) : null,
     note.none ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "Marked: no cases this day. ", h("a", { href: "#/cases", onclick: (e) => { e.preventDefault(); setDayNote(pid, date, { none: false }); ctx.render(); } }, "Undo")) : null);
 }
@@ -181,89 +180,161 @@ function statusPill(c) {
   return h("span", { class: "pill", style: { "--c": "var(--warn)" } }, `Needs ${need[0]}`);
 }
 
-function caseCard(ctx, pid, day, c, index) {
+// ---- one case, the way ACGME's Add Case page has it ----
+// One case is open at a time, laid out top to bottom like ACGME's page (Case Date, Site,
+// Supervisor, Patient Age, Life-Threatening Pathology, Difficult Airway Management, Comments,
+// Group, ASA Physical Status, then the boxes under ACGME's own headings and words), so it feels
+// like the page residents already know. The others fold to one line. "Next case" moves down the day.
+const openFor = new Map(); // day -> the open case's key, or "" when the resident closed them all
+const formKey = (c) => c.slot || c.id; // a sheet case keeps its key once it's saved
+const shownOptional = new Set();
+const commentsOpen = new Set();
+
+// The first case still missing something opens by itself, and stays open (even once it's ready)
+// until the resident moves on with Next case or Done.
+function openKeyFor(date, cards) {
+  if (!openFor.has(date)) {
+    const first = cards.find((c) => !c.enteredAt && !isReady(c));
+    openFor.set(date, first ? formKey(first) : "");
+  }
+  return openFor.get(date);
+}
+const scrollToCase = (key) => key && requestAnimationFrame(() => document.querySelector(`[data-case="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+function openCase(ctx, date, key) {
+  openFor.set(date, key);
+  ctx.render();
+  scrollToCase(key);
+}
+
+// Gone from the log (and, for a sheet case, from the day), so it isn't waiting for ACGME any more.
+function deleteCase(pid, c) {
+  if (c.id) removeCase(pid, c.id);
+  if (c.slot) setDayNote(pid, c.day, { hidden: [...new Set([...dayNote(pid, c.day).hidden, c.slot])] });
+}
+
+const ageOf = (c) => AGES.find((a) => a.key === c.age);
+// The folded line: who, how old, ASA and what was done.
+const lineOf = (c) => [c.supervisor?.last || "", ageOf(c)?.tap || "", summary(c)].filter(Boolean).join(" · ") || "Nothing picked yet";
+
+function caseCard(ctx, pid, day, c, index, { open, next }) {
   const set = (change) => commit(ctx, pid, c, change);
-  const k = keyOf(c);
-  const open = expanded.has(k);
-  const info = kindInfo(c.kind || day.kind);
-  const head = h("div", { class: "case-head" },
-    h("span", { class: "case-num" }, String(index + 1)),
-    c.enteredAt ? h("div", { class: "case-id" }, c.caseId || "No Case ID", c.or ? h("span", { class: "muted" }, ` · OR ${c.or}`) : null)
-      : h("button", { class: "case-id link", title: "Rename", "aria-label": `Case ID ${c.caseId || "blank"}. Rename`, onclick: () => renameCase(ctx, pid, c) },
-        h("span", { class: "n" }, c.caseId || "No Case ID"), c.or ? h("span", { class: "muted" }, ` · OR ${c.or}`) : null, icon("edit", 'class="pen"')),
-    statusPill(c));
+  const key = formKey(c);
+  const num = h("span", { class: "case-num" }, String(index + 1));
+  const where = c.or ? h("span", { class: "muted" }, ` · OR ${c.or}`) : null;
 
   if (c.enteredAt) {
-    return h("section", { class: "card case done" }, head,
-      h("div", { class: "case-sum" }, summary(c)),
+    return h("section", { class: "card case done", "data-case": key },
+      h("div", { class: "case-head" }, num, h("div", { class: "case-id" }, c.caseId || "No Case ID", where), statusPill(c)),
+      h("div", { class: "case-line" }, lineOf(c)),
       h("div", { class: "btnrow", style: { marginTop: "8px" } }, h("button", { class: "btn sm ghost", onclick: () => markCasesEntered(pid, [c.id], false).then(() => ctx.render()) }, "Not in ACGME after all")));
   }
 
-  const ages = h("div", { class: "case-row" }, h("span", { class: "lbl" }, "Age"),
-    h("div", { class: "taps" }, AGES.map((a) => h("button", { class: "tap age", title: a.label, "aria-label": a.label, "aria-pressed": String(c.age === a.key), onclick: () => set({ age: a.key }) }, a.short))));
-  const asa = c.group === "pain" ? null : h("div", { class: `case-row${c.kind === "procedure" ? " optional" : ""}` }, h("span", { class: "lbl", title: c.kind === "procedure" ? "Optional for a procedure on its own" : null }, "ASA"),
-    h("div", { class: "taps" },
-      ["1", "2", "3", "4", "5", "6"].map((n) => h("button", { class: "tap asa", "aria-pressed": String(c.asa === n), onclick: () => set({ asa: c.asa === n ? "" : n, emergency: n === "6" ? false : c.emergency }) }, n)),
-      h("button", { class: "tap asa", "aria-pressed": String(!!c.emergency), disabled: c.asa === "6" || null, title: "Emergency", onclick: () => set({ emergency: !c.emergency }) }, "E")));
+  if (!open) {
+    return h("section", { class: `card case slim${isReady(c) ? " ready" : ""}${c.id ? "" : " fresh"}`, "data-case": key, role: "button", tabindex: "0", "aria-label": `Case ${index + 1}, ${c.caseId || "no Case ID"}. Open`,
+      onclick: () => openCase(ctx, c.day, key), onkeydown: (e) => { if (e.key === "Enter") openCase(ctx, c.day, key); } },
+      h("div", { class: "case-head" }, num, h("div", { class: "case-id" }, h("span", { class: "n" }, c.caseId || "No Case ID"), where), statusPill(c), icon("down", 'class="chev"')),
+      h("div", { class: "case-line" }, lineOf(c)));
+  }
 
-  // The resident's own usual choices come first, then the ones for this kind of day.
+  const head = h("div", { class: "case-head" }, num,
+    h("button", { class: "case-id link", title: "Rename", "aria-label": `Case ID ${c.caseId || "blank"}. Rename`, onclick: () => renameCase(ctx, pid, c) },
+      h("span", { class: "n" }, c.caseId || "No Case ID"), where, icon("edit", 'class="pen"')),
+    statusPill(c),
+    h("button", { class: "iconbtn sm", "aria-label": "Fold this case", onclick: () => openCase(ctx, c.day, "") }, icon("up")));
+
+  const need = new Set(missing(c));
+  const label = (text, { req = false, note = "" } = {}) => h("div", { class: "cf-lbl" }, text, req ? h("span", { class: "req" }, "*") : null, note ? h("span", { class: "muted" }, ` ${note}`) : null);
+  const choice = (on, text, onclick, cls = "radio") => h("button", { class: `tap ${cls}`, "aria-pressed": String(!!on), onclick }, text);
+  const field = (lbl, ...kids) => h("div", { class: "cf-row" }, lbl, ...kids);
+  const select = (value, placeholder, onclick, warn) => h("button", { class: `cf-select${warn ? " need" : ""}`, onclick }, h("span", { class: value ? "" : "muted" }, value || placeholder), icon("down"));
+
+  const form = h("div", { class: "cf" });
+  // Case Date (with the next day's date for a case after midnight on call).
+  form.append(field(label("Case Date", { req: true }),
+    h("div", { class: "cf-inline" },
+      h("div", { class: "cf-select static" }, h("span", null, fmtDate(c.date, "md") + "/" + c.date.slice(0, 4))),
+      day.overnight ? choice(c.date !== c.day, "After midnight", () => set({ date: caseDateFor(c.day, c.date === c.day) }), "box") : null)));
+  form.append(field(label("Site", { req: true }), select(ACGME_SITES[c.site]?.name, "-- Select --", () => pickSite(ctx, pid, { card: c }), need.has("site"))));
+  const later = laterCards(ctx, pid, day, c);
+  form.append(field(label("Supervisor", { req: true }), select(supName(c.supervisor), "-- Select --", () => pickSupervisor(ctx, pid, { card: c, day: c.day, sheet: day.sheetSupervisors, later }), need.has("supervisor"))));
+  form.append(field(label("Patient Age", { req: true }),
+    h("div", { class: `taps${need.has("age") ? " need" : ""}` }, AGES.map((a) => h("button", { class: "tap radio", title: a.acgme, "aria-label": a.label, "aria-pressed": String(c.age === a.key), onclick: () => set({ age: a.key }) }, a.tap)))));
+  form.append(field(label("Life-Threatening Pathology"),
+    h("div", { class: "taps" }, [["nontrauma", "Non-Trauma"], ["trauma", "Trauma"]].map(([v, t]) => choice(c.ltp === v, t, () => set({ ltp: c.ltp === v ? "" : v }))))));
+  form.append(field(label("Difficult Airway Management"),
+    h("div", { class: "taps" }, [["anticipated", "Anticipated"], ["unanticipated", "Unanticipated"]].map(([v, t]) => choice(c.airway === v, t, () => set({ airway: c.airway === v ? "" : v }))))));
+  // "Add Comments", as on ACGME's page: a link until there's something to say.
+  if (c.comments || commentsOpen.has(key)) {
+    const notes = h("textarea", { class: "input plain", rows: "2", maxlength: "500", placeholder: "Nothing that identifies the patient", "aria-label": "Comments", onchange: (e) => set({ comments: e.target.value }) });
+    notes.value = c.comments || "";
+    form.append(field(label("Comments"), notes));
+  } else {
+    form.append(h("button", { class: "cf-link", onclick: () => { commentsOpen.add(key); ctx.render(); } }, "Add Comments"));
+  }
+  form.append(field(label("Group"),
+    h("div", { class: "segmented" }, [["proc", "Procedures"], ["pain", "Pain Consultations and Procedures"]].map(([g, t]) =>
+      h("button", { type: "button", "aria-pressed": String(c.group === g), onclick: () => set({ group: g }) }, t)))));
+
+  const box = (sec) => h("div", { class: "cf-sec" },
+    h("div", { class: "cf-sec-title" }, sec.title),
+    ...pageLayout(sec).map((b) => h("div", { class: "cf-sub" },
+      b.sub ? h("div", { class: "cf-sub-title" }, b.sub) : null,
+      h("div", { class: "taps" }, b.items.map((i) => h("button", { class: "tap box", "aria-pressed": String(c.codes.includes(i.key)), onclick: () => set(toggleCode(c, i.key)) }, i.label))))));
+
+  if (c.group !== "pain") {
+    const optional = c.kind === "procedure";
+    const pick = (n, e) => set(c.asa === n && !!c.emergency === e ? { asa: "", emergency: false } : { asa: n, emergency: e });
+    form.append(h("div", { class: `cf-sec${need.has("ASA") ? " need" : ""}` },
+      h("div", { class: "cf-sec-title" }, "ASA Physical Status", optional ? h("span", { class: "muted" }, " (optional for a procedure on its own)") : h("span", { class: "req" }, "*")),
+      h("div", { class: "cf-sub" }, h("div", { class: "cf-sub-title" }, "Non-emergency"),
+        h("div", { class: "taps" }, ["1", "2", "3", "4", "5", "6"].map((n) => h("button", { class: "tap box asa", "aria-pressed": String(c.asa === n && (!c.emergency || n === "6")), onclick: () => pick(n, false) }, n)))),
+      h("div", { class: "cf-sub" }, h("div", { class: "cf-sub-title" }, "Emergency"),
+        h("div", { class: "taps" }, ["1", "2", "3", "4", "5"].map((n) => h("button", { class: "tap box asa", "aria-pressed": String(c.asa === n && !!c.emergency), onclick: () => pick(n, true) }, `${n}E`))))));
+  }
+  form.append(quickFill(ctx, pid, day, c, set));
+  for (const sec of SECTIONS.filter((x) => x.group === c.group)) {
+    // The two optional site lists open by themselves once they matter (a spinal, a block).
+    const ticked = sec.items.some((i) => c.codes.includes(i.key));
+    const relevant = sec.key === "neuraxial" ? c.codes.some((k) => ["spinal", "epidural", "cse"].includes(k))
+      : sec.key === "block" ? c.codes.some((k) => ["pnb", "pnb-cath"].includes(k)) : true;
+    const k = `${key}|${sec.key}`;
+    if (!sec.optional || ticked || relevant || shownOptional.has(k)) form.append(box(sec));
+    else form.append(h("button", { class: "cf-link", onclick: () => { shownOptional.add(k); ctx.render(); } }, `${sec.title} ›`));
+  }
+
+  const foot = h("div", { class: "cf-foot" },
+    h("button", { class: "btn sm ghost danger", onclick: () => {
+      if (c.id && !confirm("Delete this case? It isn't in ACGME yet, so nothing there changes.")) return;
+      deleteCase(pid, c);
+      openFor.set(c.day, next ? formKey(next) : "");
+      ctx.render();
+      toast(c.id ? "Case deleted" : "Taken off this day");
+    } }, icon("trash"), c.id ? "Delete case" : "Not a case"),
+    h("button", { class: "btn sm primary", onclick: () => openCase(ctx, c.day, next ? formKey(next) : "") }, next ? "Next case" : "Done", next ? icon("down") : icon("check")));
+
+  return h("section", { class: `card case open${isReady(c) ? " ready" : ""}${c.id ? "" : " fresh"}`, "data-case": key }, head, form, foot);
+}
+
+// The app's own shortcut: one tap ticks a usual set of boxes (the resident's own first).
+function quickFill(ctx, pid, day, c, set) {
+  const info = kindInfo(c.kind || day.kind);
   const mine = usual(caseLog(pid).learned, c.kind || day.kind).filter((m) => m.group === c.group);
-  // A pain consult or procedure offers the pain choices, whatever kind of day it is.
   const offered = c.group === "pain" ? [...new Set([...kindInfo("pain").presets, "acute-consult", "pca-pcea"])]
     : c.kind === "procedure" ? PROCEDURES
-      : info.presets.filter((p) => (PRESETS[p].group || "proc") === "proc" || info.add);
+      : info.presets.filter((p) => (PRESETS[p].group || "proc") === "proc");
   const presetKeys = offered.filter((p) => !mine.some((m) => m.label === PRESETS[p].label));
-  const doing = h("div", { class: "case-row top" }, h("span", { class: "lbl" }, "Did"),
+  return h("div", { class: "cf-quick" },
+    h("div", { class: "cf-sub-title" }, "Quick fill", h("span", { class: "muted" }, " · ticks the boxes below")),
     h("div", { class: "taps" },
       mine.map((m) => h("button", { class: "tap preset mine", "aria-pressed": String(comboOn(c, m)), onclick: () => set(applyCombo(c, m)) }, icon("sparkle"), m.label)),
       presetKeys.map((p) => h("button", { class: "tap preset", "aria-pressed": String(presetOn(c, p)), onclick: () => set(applyPreset(c, p)) }, PRESETS[p].label))));
-  const extras = h("div", { class: "case-row" }, h("span", { class: "lbl" }, "Add"),
-    h("div", { class: "taps" }, info.extras.filter((x) => (x === "high-risk" ? c.codes.some((k2) => /^(cs|vag)/.test(k2)) : true)).map((x) =>
-      h("button", { class: "tap", "aria-pressed": String(extraOn(c, x)), onclick: () => set(toggleCode(c, x)) }, extraLabel(x)))));
-
-  const sum = summary(c, { asa: false });
-  const line = h("button", { class: "case-sum link", "aria-expanded": String(open), onclick: () => { if (open) expanded.delete(k); else expanded.add(k); ctx.render(); } },
-    h("span", null, sum || "Nothing picked yet"), h("span", { class: "more" }, open ? "Fewer options" : "All options"), icon(open ? "left" : "right"));
-
-  return h("section", { class: `card case${isReady(c) ? " ready" : ""}${c.id ? "" : " fresh"}` },
-    head, ages, asa, doing, c.group === "pain" ? null : extras, line, open ? allOptions(ctx, pid, day, c, set) : null);
 }
 
-// Everything on ACGME's form, grouped as ACGME groups it.
-function allOptions(ctx, pid, day, c, set) {
-  const sections = SECTIONS.filter((s) => s.group === c.group);
-  const wrap = h("div", { class: "case-all" });
-  wrap.append(h("div", { class: "segmented", style: { marginBottom: "10px" } },
-    [["proc", "Anesthetic"], ["pain", "Pain consult or procedure"]].map(([g, label]) =>
-      h("button", { type: "button", "aria-pressed": String(c.group === g), onclick: () => set({ group: g }) }, label))));
-  for (const s of sections) {
-    wrap.append(h("div", { class: "case-sec" }, h("div", { class: "case-sec-title" }, s.title.replace(/ \(Optional\)$/, ""), s.optional ? h("span", { class: "muted" }, " · optional") : null),
-      h("div", { class: "taps" }, s.items.map((i) => h("button", { class: "tap", "aria-pressed": String(c.codes.includes(i.key)), onclick: () => set(toggleCode(c, i.key)) }, i.short)))));
-  }
-  if (c.group === "proc") {
-    wrap.append(h("div", { class: "case-sec" }, h("div", { class: "case-sec-title" }, "Life-threatening pathology"),
-      h("div", { class: "taps" }, [["nontrauma", "Non-trauma"], ["trauma", "Trauma"]].map(([v, label]) => h("button", { class: "tap", "aria-pressed": String(c.ltp === v), onclick: () => set({ ltp: c.ltp === v ? "" : v }) }, label)))));
-    wrap.append(h("div", { class: "case-sec" }, h("div", { class: "case-sec-title" }, "Difficult airway"),
-      h("div", { class: "taps" }, [["anticipated", "Anticipated"], ["unanticipated", "Unanticipated"]].map(([v, label]) => h("button", { class: "tap", "aria-pressed": String(c.airway === v), onclick: () => set({ airway: c.airway === v ? "" : v }) }, label)))));
-  }
-  wrap.append(h("div", { class: "case-sec" }, h("div", { class: "case-sec-title" }, "Case details"),
-    h("div", { class: "taps" },
-      h("button", { class: `tap${c.supervisor ? "" : " need"}`, onclick: () => pickSupervisor(ctx, pid, { card: c }) }, icon("user"), c.supervisor ? supName(c.supervisor) : "Pick supervisor"),
-      h("button", { class: "tap", onclick: () => pickSite(ctx, pid, { card: c }) }, ACGME_SITES[c.site]?.short || "Site"),
-      day.overnight ? h("button", { class: "tap", "aria-pressed": String(c.date !== c.day), onclick: () => set({ date: caseDateFor(c.day, c.date === c.day) }) }, "After midnight") : null,
-      h("button", { class: "tap", onclick: () => renameCase(ctx, pid, c) }, icon("edit"), "Rename"))));
-  const notes = h("textarea", { class: "input plain", rows: "2", maxlength: "500", placeholder: "Comments for ACGME (optional, nothing that identifies the patient)", "aria-label": "Comments", onchange: (e) => set({ comments: e.target.value }) });
-  notes.value = c.comments || "";
-  wrap.append(h("div", { class: "case-sec" }, notes));
-  wrap.append(h("div", { class: "btnrow", style: { marginTop: "10px" } },
-    h("button", { class: "btn sm danger", onclick: () => {
-      if (c.id) removeCase(pid, c.id);
-      if (c.slot) setDayNote(pid, c.day, { hidden: [...new Set([...dayNote(pid, c.day).hidden, c.slot])] });
-      expanded.delete(keyOf(c));
-      ctx.render();
-      toast("Case removed");
-    } }, "Remove this case")));
-  return wrap;
+// The cases after this one on the same day that aren't in ACGME yet, in the screen's order.
+function laterCards(ctx, pid, day, c) {
+  const cards = cardsFor(pid, c.day, dayCases(ctx.model, pid, c.day), caseLog(pid));
+  const i = cards.findIndex((x) => formKey(x) === formKey(c));
+  return i < 0 ? [] : cards.slice(i + 1).filter((x) => !x.enteredAt);
 }
 
 // Adding a case: "same again", or (on OB, block and pain days) straight from a preset.
@@ -281,7 +352,7 @@ function addCard(ctx, pid, day, cards) {
     });
     return { ...base, ...extra.change };
   };
-  const add = (extra) => { const c = saveCase(pid, make(extra)); expanded.delete(c.id); ctx.render(); };
+  const add = (extra) => { const c = saveCase(pid, make(extra)); openCase(ctx, ctx.state.date, formKey(c)); };
   return h("section", { class: "card card-pad case-add" },
     info.add ? h("div", { class: "case-row top", style: { marginTop: 0 } }, h("span", { class: "lbl" }, "Add"),
       h("div", { class: "taps" }, info.presets.map((p) => h("button", { class: "tap preset", onclick: () => add({ word: dayWord(day), or: "", surgeon: "", change: applyPreset(make({ word: dayWord(day), or: "", surgeon: "", change: {} }), p) }) }, icon("add"), PRESETS[p].label)))) : null,
@@ -296,32 +367,51 @@ function addCard(ctx, pid, day, cards) {
 }
 
 // ---- pickers ----
-function pickSupervisor(ctx, pid, { day, card }) {
+// Supervisor: for the whole day (the day's header), or for one case. Attendings change during
+// the day, so from a case it can also go to the cases after it. The day's sheet names come first.
+function pickSupervisor(ctx, pid, { day, card, sheet = [], later = [] }) {
   const { model } = ctx;
   const L = caseLog(pid);
-  const staff = (model.dir?.raw?.staff || []).map((s) => ({ last: s.last, first: s.first || "", name: `${s.last}, ${s.first || ""}` }));
+  const staff = (model.dir?.raw?.staff || []).map((s) => ({ last: s.last, first: s.first || "" }));
   const recent = recentSupervisors(L.learned);
+  let alsoLater = false;
   const choose = (s) => {
     const sup = { last: s.last, first: s.first || "", name: supName(s) };
-    if (card) commit(ctx, pid, card, { supervisor: sup });
-    else {
+    if (card) {
+      saveCase(pid, { ...card, supervisor: sup });
+      if (alsoLater) for (const x of later) saveCase(pid, { ...x, supervisor: sup });
+      ctx.render();
+      toast(alsoLater && later.length ? `${sup.last} for this case and ${later.length === 1 ? "the one" : `the ${later.length}`} after it` : `${sup.last} for this case`);
+    } else {
       setDayNote(pid, day, { supervisor: sup });
-      // Cases already saved for the day that still lack one (or had the sheet's) follow along.
+      // Cases already saved for the day follow along.
       for (const c of casesOnDay(pid, day)) if (!c.enteredAt) saveCase(pid, { ...c, supervisor: sup });
       ctx.render();
+      toast(`${sup.last} for the day`);
     }
     closeSheet();
   };
   const list = h("ul", { class: "list" });
   const input = h("input", { class: "input", placeholder: "Search or type a last name", autocomplete: "off", "aria-label": "Supervisor" });
+  // One row per person: the sheet's "Rook" and the directory's "Rook, Alex" are the same one.
+  const same = (a, b) => a.last.toLowerCase() === b.last.toLowerCase() && (!a.first || !b.first || a.first.toLowerCase() === b.first.toLowerCase());
+  const pool = [];
+  for (const [rows, tag] of [[sheet, "On the OR sheet"], [recent, "Recent"], [staff, ""]]) {
+    for (const r of rows) {
+      const was = pool.find((x) => same(x, r));
+      if (was) { if (!was.first && r.first) was.first = r.first; continue; }
+      pool.push({ last: r.last, first: r.first || "", tag });
+    }
+  }
   const draw = () => {
     const q = input.value.trim().toLowerCase();
-    const seen = new Set();
-    const rows = [...recent.map((r) => ({ ...r, recent: true })), ...staff]
-      .filter((s) => { const key = `${s.last}|${s.first}`.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return !q || `${s.last} ${s.first}`.toLowerCase().includes(q); })
-      .sort((a, b) => (b.recent ? 1 : 0) - (a.recent ? 1 : 0) || a.last.localeCompare(b.last))
+    const rows = pool.filter((s) => !q || `${s.last} ${s.first}`.toLowerCase().includes(q))
+      .sort((a, b) => (!!b.tag - !!a.tag) || (a.tag && b.tag ? 0 : a.last.localeCompare(b.last)))
       .slice(0, 40);
-    list.replaceChildren(...rows.map((s) => h("li", { class: "row tap", onclick: () => choose(s) }, h("div", { class: "main" }, h("div", { class: "name" }, supName(s)), s.recent ? h("div", { class: "sub" }, "Recent") : null))));
+    const current = card?.supervisor;
+    list.replaceChildren(...rows.map((s) => h("li", { class: "row tap", onclick: () => choose(s) },
+      h("div", { class: "main" }, h("div", { class: "name" }, supName(s)), s.tag ? h("div", { class: "sub" }, s.tag) : null),
+      current && same(current, s) ? icon("check") : null)));
     if (q && !rows.some((s) => s.last.toLowerCase() === q)) {
       const typed = input.value.trim().replace(/\s+/g, " ");
       const [last, first = ""] = typed.includes(",") ? typed.split(",").map((x) => x.trim()) : [typed.split(" ").at(-1), typed.split(" ").slice(0, -1).join(" ")];
@@ -330,8 +420,12 @@ function pickSupervisor(ctx, pid, { day, card }) {
   };
   input.addEventListener("input", draw);
   draw();
-  openSheet(card ? "Supervisor for this case" : "Supervisor for the day", h("div", { class: "card-pad" }, input, list));
-  setTimeout(() => input.focus(), 50);
+  const scope = card && later.length ? h("label", { class: "check", style: { margin: "0 0 10px" } },
+    h("input", { type: "checkbox", onchange: (e) => { alsoLater = e.target.checked; } }),
+    h("span", null, `Also the ${plural(later.length, "case")} after this one (the attending changed)`)) : null;
+  openSheet(card ? "Supervisor for this case" : "Supervisor for the day", h("div", { class: "card-pad" }, scope, input, list));
+  // With names to tap already, the keyboard would only cover them.
+  if (!pool.some((x) => x.tag)) setTimeout(() => input.focus(), 50);
 }
 
 function pickSite(ctx, pid, { day, card }) {
@@ -521,8 +615,45 @@ function acgmeCard(ctx, pid, L) {
     }), needDays.length > 4 ? ", …" : "") : null,
     h("div", { class: "btnrow" }, h("button", { class: `btn sm${ready.length ? " primary" : ""}`, onclick: () => openEnterSheet(ctx) }, icon("upload"), ready.length ? "Enter in ACGME" : "How entering works")),
     countNudge(ctx, pid, L),
+    ready.length + notReady.length ? h("button", { class: "case-sum", onclick: () => openSavedSheet(ctx) },
+      h("span", null, `${plural(ready.length + notReady.length, "case")} saved, not in ACGME yet`), h("span", { class: "more" }, "See or delete"), icon("right")) : null,
     h("button", { class: "case-sum", onclick: () => openNamingSheet(ctx) },
       h("span", { class: "id-line" }, "Case IDs ", idExample(ctx, pid)), h("span", { class: "more" }, "Change"), icon("right")));
+}
+
+// Every case saved here and not in ACGME yet, from any day: open one, or delete the ones that
+// won't be entered (a half-filled case, a case that didn't happen).
+export function openSavedSheet(ctx) {
+  const pid = ctx.state.me;
+  if (!pid) return;
+  const body = h("div", { class: "card-pad saved" });
+  const remove = (list) => { for (const c of list) deleteCase(pid, c); draw(); ctx.render(); };
+  const order = (c) => `${c.day}${String(c.num || 0).padStart(7, "0")}${c.or}${String(c.seq).padStart(2, "0")}`;
+  function draw() {
+    const all = allCases(pid).filter((c) => !c.enteredAt).sort((a, b) => (order(a) > order(b) ? 1 : -1));
+    if (!all.length) {
+      body.replaceChildren(h("p", { class: "small muted", style: { margin: 0 } }, "Nothing saved that isn't in ACGME. Cases you log show up here until they're entered."));
+      return;
+    }
+    const incomplete = all.filter((c) => !isReady(c));
+    const days = [...new Set(all.map((c) => c.day))];
+    body.replaceChildren(
+      h("p", { class: "small muted", style: { marginTop: 0 } }, "Saved in your case log and waiting for ACGME. Delete any you won't enter; nothing in ACGME changes."),
+      incomplete.length ? h("div", { class: "btnrow", style: { marginBottom: "12px" } }, h("button", { class: "btn sm danger", onclick: () => {
+        if (confirm(`Delete the ${plural(incomplete.length, "case")} still missing details? This can't be undone.`)) { remove(incomplete); toast(`${plural(incomplete.length, "case")} deleted`); }
+      } }, icon("trash"), `Delete the ${plural(incomplete.length, "incomplete case")}`)) : null,
+      ...days.map((d) => h("div", { class: "saved-day" },
+        h("div", { class: "case-sec-title" }, fmtDate(d, "long")),
+        h("ul", { class: "list" }, all.filter((c) => c.day === d).map((c) => h("li", { class: "row" },
+          h("button", { class: "main saved-open", onclick: () => { openFor.set(c.day, formKey(c)); closeSheet(); if (ctx.state.date !== c.day) ctx.setDate(c.day); else ctx.render(); scrollToCase(formKey(c)); } },
+            h("div", { class: "name" }, h("span", { class: "n mono" }, c.caseId || "No Case ID"), statusPill(c)),
+            h("div", { class: "sub" }, lineOf(c))),
+          h("button", { class: "iconbtn sm danger", "aria-label": `Delete ${c.caseId || "this case"}`, onclick: () => {
+            if (confirm(`Delete ${c.caseId || "this case"}? It isn't in ACGME, and this can't be undone.`)) { remove([c]); toast("Case deleted"); }
+          } }, icon("trash"))))))));
+  }
+  draw();
+  openSheet("Saved, not in ACGME yet", body);
 }
 
 // The style, shown as a real ID: the next case waiting, or a made-up one.
