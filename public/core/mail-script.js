@@ -1,7 +1,8 @@
 // The Google Apps Script that brings the program office's emails in. It runs in the owner's own
 // Gmail every 30 minutes and only ever sends emails from the office that went to 10+ people.
 // Who counts as the office comes from the server as salted hashes (lib/mail-intake.js), so no
-// one's address is written in this public code.
+// one's address is written in this public code. Apps Script's Run menu starts on the first
+// function in the file, so setup comes first, and the helper ends in "_", which hides it there.
 export function mailScript(address, { hashes = [], domains = [], salt = "" } = {}) {
   return `// DMC Schedule: brings the program office's emails into the app (Admin › Email intake).
 // Runs in your own Gmail every 30 minutes. Only emails from the office that went to 10 or more
@@ -14,9 +15,12 @@ const MIN_RECIPIENTS = 10;
 const KEEP = /\\.(xlsx|xlsm|pdf|ics)$/i;
 const MAX_FILE = 4 * 1024 * 1024, MAX_TOTAL = 4.2 * 1024 * 1024;
 
-function hashOf(text) {
-  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
-    .map((b) => ((b + 256) % 256).toString(16).padStart(2, "0")).join("");
+// Run this once (pick "setup" in the menu next to Debug, then Run): it checks now, then every
+// 30 minutes by itself.
+function setup() {
+  ScriptApp.getProjectTriggers().forEach((t) => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger("sendProgramEmails").timeBased().everyMinutes(30).create();
+  sendProgramEmails();
 }
 
 function sendProgramEmails() {
@@ -26,7 +30,7 @@ function sendProgramEmails() {
   const messages = [];
   GmailApp.search(query, 0, 200).forEach((t) => t.getMessages().forEach((m) => {
     const from = (m.getFrom().match(/[\\w.+-]+@[\\w.-]+\\.\\w+/) || [""])[0].toLowerCase();
-    if (seen.indexOf(m.getId()) < 0 && SENDERS.indexOf(hashOf(SALT + from)) >= 0) messages.push(m);
+    if (seen.indexOf(m.getId()) < 0 && SENDERS.indexOf(hashOf_(SALT + from)) >= 0) messages.push(m);
   }));
   messages.sort((a, b) => a.getDate() - b.getDate()); // oldest first, so a newer copy wins
   try {
@@ -59,11 +63,9 @@ function sendProgramEmails() {
   }
 }
 
-// Run this once: it checks now, then every 30 minutes.
-function setup() {
-  ScriptApp.getProjectTriggers().forEach((t) => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger("sendProgramEmails").timeBased().everyMinutes(30).create();
-  sendProgramEmails();
+function hashOf_(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text || ""), Utilities.Charset.UTF_8)
+    .map((b) => ((b + 256) % 256).toString(16).padStart(2, "0")).join("");
 }
 `;
 }

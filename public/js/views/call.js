@@ -3,7 +3,7 @@
 import { h, icon, avatar, classPill, numberButtons, emptyState, card, copyText } from "../ui.js";
 import { fmtDate } from "../../core/dates.js";
 import { CLASS_ORDER } from "../../core/model.js";
-import { techChip } from "./common.js";
+import { techChip, runnerName } from "./common.js";
 
 const ESSENTIALS = [
   /^resident board runner/i, /^mda board runner/i, /^crna board runner/i, /^harper or main desk/i, /^pacu harper/i,
@@ -94,8 +94,10 @@ export function quickContacts(ctx, pid, date) {
     const siteStaff = { va: "va", sinai: "sinai", hvsh: "hvsh" }[d.site];
     if (siteStaff) dir.raw.staff.filter((s) => s.site === siteStaff).forEach((s) => add({ key: `staff:${s.id}`, title: s.name, sub: `${model.site(d.site)?.short} attending`, numbers: s.numbers }));
     if (["harper", "opsc", "hutzel"].includes(d.site) || d.call) {
-      add(placeItem(dir, /^resident board runner/i, "Board runner"));
-      add(placeItem(dir, /^mda board runner/i, "Board runner"));
+      const runner = model.daily(date)?.runner;
+      const res = runner?.resident;
+      add(placeItem(dir, /^resident board runner/i, res ? `Board runner · ${res.id ? nm(res) : res.name} today` : "Board runner"));
+      add(placeItem(dir, /^mda board runner/i, runner?.mda ? `Board runner · ${runnerName(model, runner)} today` : "Board runner"));
     }
   }
   if (d.call || d.late) {

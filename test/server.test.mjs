@@ -291,7 +291,7 @@ test("the chiefs' inbox: sick calls alert admins once, swaps and no-call lists w
 // `list`: the board runner's own [resident, location, late/call] rows (columns L-N); `egress`:
 // the Egress tab's rows [slot, attending, code, resident, note]; `procs`: extra procedure rows
 // [label, mda, staff, ja] below the table.
-async function fakeWorkbook(date, rooms, { egressDate = date, list = null, egress = [], procs = [] } = {}) {
+async function fakeWorkbook(date, rooms, { egressDate = date, list = null, egress = [], procs = [], top } = {}) {
   const { zipSync, strToU8 } = await import("fflate");
   const cell = (ref, v) => (typeof v === "number" ? `<c r="${ref}"><v>${v}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>`);
   const row = (n, cells) => `<row r="${n}">${cells.map(([c, v]) => cell(`${c}${n}`, v)).join("")}</row>`;
@@ -301,7 +301,7 @@ async function fakeWorkbook(date, rooms, { egressDate = date, list = null, egres
   void y; void m; void d;
   const listCells = (n) => (list ? (list[n - 3] ? [["L", list[n - 3][0]], ["M", list[n - 3][1] || ""], ["N", list[n - 3][2] || ""]] : []) : [["L", "Ignored"]]);
   const rows = [
-    row(1, [["A", stamp(date)]]),
+    row(1, [["A", top ?? stamp(date)]]), // `top: " "` leaves it blank, as the board runner sometimes does
     row(2, [["A", "OR"], ["B", "Surgeon"], ["C", "Time"], ["D", "# of cases"], ["E", "MDA"], ["F", "Resident/CRNA"], ["G", "JA"], ["H", "Breaks"], ["L", "Resident"], ...(list ? [["M", "Location that day"], ["N", "Late/Call"]] : [])]),
     ...(list ? [row(3, listCells(3))] : []),
     ...rooms.map((r, i) => row(4 + i, [["A", r[0]], ...(r[1] ? [["B", r[1]], ["C", 0.3125], ["D", 2], ["E", r[3] || "Attending"]] : []), ...(r[4] ? [["F", r[4]]] : []), ...listCells(4 + i)])),
@@ -1236,6 +1236,88 @@ test("which day a sheet is for: a stale date never skips a day or files one twic
   assert.equal(nextOrDay("2026-12-24"), "2026-12-28"); // Christmas on a Friday, then the weekend
 });
 
+test("a sheet with no date at the top still comes in, filed by its Egress tab or its rooms", async () => {
+  const { readXlsx } = await import("../lib/xlsx.js");
+  const { parseDailyWorkbook, isoDate } = await import("../lib/daily-sheet.js");
+  const sync = await import("../lib/daily-sync.js");
+  const rooms = [["1", "Smith", "", "M", "ResA"], ["2", "Jones", "", "M", "ResB"], ["3", "Lee", "", "M", "X"]];
+  // Blank top cell: read, not rejected, with the day left to the sync.
+  const p = parseDailyWorkbook(readXlsx(await fakeWorkbook("2026-03-11", rooms, { top: " ", egressDate: "2026-03-12", procs: [["RIM (0)", "", "", ""]] })));
+  assert.equal(p.date, "");
+  assert.equal(p.egressDate, "2026-03-12");
+  assert.equal(p.rooms.length, 3);
+  assert.ok(p.procedures.some((x) => x.name === "RIM" && x.count === "0")); // a procedure line, not a note
+  // Dates written out are read too; a word that only starts like a month isn't one.
+  const now = new Date("2026-11-24T20:00:00Z");
+  assert.equal(isoDate({ text: "Wednesday, November 25, 2026" }, now), "2026-11-25");
+  assert.equal(isoDate({ text: "Wed Nov 25" }, now), "2026-11-25");
+  assert.equal(isoDate({ text: "Fri Jan 8" }, now), "2027-01-08"); // no year: the nearest one
+  assert.equal(isoDate({ text: "11-25-26" }, now), "2026-11-25");
+  assert.equal(isoDate({ text: "Marquez 5" }, now), null);
+  assert.equal(isoDate({ text: "10-7" }, now), null); // a shift, not a date
+
+  // The whole pass: 3p on Tue Mar 10 with the top blank and the Egress tab on Wed Mar 11.
+  const st = openStore();
+  const person = (id) => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Test", cls: "CA-1", canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  const rows = { a: { rotation: "Basic Anesthesia", days: {} }, b: { rotation: "Basic Anesthesia", days: {} } };
+  await st.setJSON("dataset", { people: ["a", "b"].map(person), months: { "2026-03": { rows, days: 31 } }, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  await st.delete("daily-sync");
+  await st.delete("push/subs");
+  await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
+  const bytes = await fakeWorkbook("2026-03-10", rooms, { top: " ", egressDate: "2026-03-11" });
+  const state = await sync.syncDaily(st, { now: new Date("2026-03-10T19:00:00Z"), fetchBytes: async () => bytes });
+  assert.equal(state.error, null);
+  assert.equal(state.date, "2026-03-11");
+  assert.match(state.dateNote, /no date at the top.*egress list says/);
+  assert.ok(state.okAt);
+  const saved = (await st.getJSON("dataset")).daily["2026-03-11"];
+  assert.equal(saved.rooms.length, 3);
+  assert.equal(sync.publicStatus({ id: "x" }, state).okAt, state.okAt);
+  // Without an Egress date either: new rooms in the afternoon are the next OR day's.
+  const p2 = parseDailyWorkbook(readXlsx(await fakeWorkbook("2026-03-10", [["1", "New1", "", "M", "ResA"], ["2", "New2", "", "M", "ResB"], ["3", "New3", "", "M", "X"]], { top: " ", egressDate: "2026-03-10" })));
+  const day = sync.sheetDay(p2, { daily: { "2026-03-10": { rooms: [{ or: "1", surgeon: "Old" }] } } }, new Date("2026-03-10T19:00:00Z"));
+  assert.equal(day.date, "2026-03-11");
+  assert.match(day.note, /^There's no date at the top of the sheet\. The rooms are new/);
+});
+
+test("the sheet is read every 3 minutes while it's made, every 15 otherwise; admins hear when it can't be read", async (t) => {
+  const sync = await import("../lib/daily-sync.js");
+  // Detroit in March (EDT): 9:00a and 9:03a, 1:03p, 11:15p and 11:18p.
+  const at = (iso) => new Date(iso);
+  assert.equal(sync.scheduledReadDue(at("2026-03-10T13:00:00Z")), true);
+  assert.equal(sync.scheduledReadDue(at("2026-03-10T13:03:00Z")), false);
+  assert.equal(sync.scheduledReadDue(at("2026-03-10T17:03:00Z")), true);
+  assert.equal(sync.scheduledReadDue(at("2026-03-11T03:15:00Z")), true);
+  assert.equal(sync.scheduledReadDue(at("2026-03-11T03:18:00Z")), false);
+
+  const st = openStore();
+  await st.delete("daily-sync");
+  await sync.saveSource(st, "1SecretSheetIdForTheTestOnly_abc123");
+  const admin = await fakePhone(), resident = await fakePhone();
+  t.after(() => { admin.close(); resident.close(); });
+  await st.setJSON("push/subs", { c: { ...admin.sub, pid: null, admin: true, mode: "smart" }, r: { ...resident.sub, pid: "a" } });
+  const broken = async () => { throw new Error("The room table's columns have changed."); };
+  const run = (iso) => sync.syncDaily(st, { now: at(iso), fetchBytes: broken });
+  await run("2026-03-10T18:00:00Z"); // 2:00p: the first failure
+  await run("2026-03-10T18:21:00Z");
+  assert.equal(admin.received.length, 0); // could be a moment's hiccup
+  const s = await run("2026-03-10T18:30:00Z"); // half an hour of it
+  assert.equal(admin.received.length, 1);
+  assert.equal(resident.received.length, 0); // residents aren't told
+  const shown = admin.open(admin.received[0].body);
+  assert.equal(shown.title, "The OR sheet isn't coming in");
+  assert.match(shown.body, /columns have changed.*since 2p\. Upload the photo/);
+  assert.equal(shown.url, "/#/admin");
+  assert.equal(s.errorSince, "2026-03-10T18:00:00.000Z");
+  await run("2026-03-10T19:30:00Z");
+  assert.equal(admin.received.length, 1); // once, not every 3 minutes
+  // Late at night nothing buzzes, however long it's been.
+  await st.delete("daily-sync");
+  await run("2026-03-11T02:30:00Z");
+  await run("2026-03-11T03:30:00Z");
+  assert.equal(admin.received.length, 1);
+});
+
 // The monthly call schedule as the coordinator sends it: one sheet for the month.
 async function fakeCallWorkbook(sheetName, rows) {
   const { zipSync, strToU8 } = await import("fflate");
@@ -1494,6 +1576,10 @@ test("the Gmail script sends only the office's emails to the program, oldest fir
   const info = (await call("GET", "/api/mail-intake", undefined, admin)).body;
   const code = mailScript(info.address, info.senders);
   assert.ok(!code.includes("coordinator@"), "no address is written in the script");
+  // Apps Script's Run menu starts on the first function, and hides ones ending in "_".
+  const functions = [...code.matchAll(/^function (\w+)/gm)].map((m) => m[1]);
+  assert.equal(functions[0], "setup");
+  assert.deepEqual(functions.filter((f) => !f.endsWith("_")), ["setup", "sendProgramEmails"]);
 
   // A pretend Gmail and Apps Script, as Google provides them.
   const msg = (id, from, to, subject, mins, attachments = []) => ({

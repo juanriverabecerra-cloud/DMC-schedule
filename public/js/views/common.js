@@ -208,9 +208,45 @@ export function upcomingList(ctx, pid, from) {
       h("div", { style: { fontWeight: 700, fontSize: "13px" } }, diffDays(ctx.state.today, e.date) < 7 ? relDay(e.date, ctx.state.today) : DOW_SHORT[dow(e.date)]),
       h("div", { class: "tiny muted" }, fmtDate(e.date, "md"))),
     h("div", { class: "main" },
-      h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" || e.kind === "event" ? "info" : e.kind}` }, e.kind === "event" ? icon("event") : null, e.label)),
+      // An event's title is a name, not a status: it gets its own line and wraps (two lines at
+      // most) instead of a one-line chip that runs off the card.
+      e.kind === "event"
+        ? h("div", { class: "evt" }, icon("event"), h("span", null, e.label))
+        : h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" ? "info" : e.kind}` }, e.label)),
       e.end && e.end !== e.date ? h("div", { class: "sub" }, `${fmtDate(e.date)} – ${fmtDate(e.end)}`) : e.sub ? h("div", { class: "sub" }, e.sub) : null),
+    e.kind === "event" ? icon("right") : null,
   )));
+}
+
+// Who's running the board that day: the MDA from the Egress tab, the resident beside them, and
+// one tap to the board runner's phones. Shown on Today (on an OR or call day), the Board and
+// Tonight. Nothing when the day's sheet doesn't name them (a sheet read from a photo).
+export function runnerName(model, runner) {
+  if (!runner?.mda) return "";
+  return model.dir.staff(runner.mda.name)?.name || runner.mda.name;
+}
+export function runnerCard(ctx, date, { when, span = false } = {}) {
+  const { model, state } = ctx;
+  const runner = model.daily(date)?.runner;
+  if (!runner?.mda && !runner?.resident) return null;
+  const dir = model.dir;
+  const res = runner.resident;
+  const resName = res ? (res.id ? model.name(res.id) : res.name) : "";
+  const mdaPhone = dir.place(/^mda board runner/i);
+  const resPhone = dir.place(/^resident board runner/i);
+  const day = when ?? (date === state.today ? "today" : relDay(date, state.today).toLowerCase());
+  const pills = [
+    runner.mda && mdaPhone ? callChip(dir, "Board runner", mdaPhone.numbers) : null,
+    resName && resPhone ? callChip(dir, "Resident BR", resPhone.numbers) : null,
+  ].filter(Boolean);
+  return h("section", { class: `card runner${span ? " span-all" : ""}` },
+    h("div", { class: "runner-top" },
+      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("grid")),
+      h("div", { class: "main" },
+        h("div", { class: "eyebrow" }, `Board runner${day ? ` · ${day}` : ""}`),
+        h("div", { class: "runner-name" }, runner.mda ? runnerName(model, runner) : resName),
+        runner.mda && (resName || runner.mda.note) ? h("div", { class: "sub" }, [runner.mda.note, resName ? `Resident: ${resName}` : ""].filter(Boolean).join(" · ")) : null),
+      pills.length ? h("div", { class: "runner-calls" }, pills) : null));
 }
 
 // A moment as the app writes times (4:12p), with the day when it isn't today.

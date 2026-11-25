@@ -1,6 +1,7 @@
 import { h, personRow, emptyState, notice, append, numberButtons, callChip } from "../ui.js";
 import { fmtDate, addDays, dow } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
+import { runnerCard } from "./common.js";
 
 function group(ctx, title, timeLabel, cls, list, sub) {
   if (!list.length) return null;
@@ -17,7 +18,11 @@ export function renderTonight(ctx) {
   if (!model.hasCall(date)) return emptyState("moon", "No call sheet for this month", "Ask an admin to upload it.");
   const t = model.tonight(date);
   const root = h("div");
+  // Who's running the board first, named, with its phones; then the other numbers for the night.
+  const runner = runnerCard(ctx, date, { span: true });
+  if (runner) root.append(runner);
   const lines = [[/^resident board runner/i, "Resident BR"], [/^mda board runner/i, "MDA BR"], [/^harper or main desk/i, "OR desk"], [/^pacu harper/i, "PACU"], [/^mda ob$/i, "MDA OB"]]
+    .filter(([, label]) => !runner || !/BR$/.test(label))
     .map(([re, label]) => { const p = model.dir.place(re); return p ? callChip(model.dir, label, p.numbers) : null; }).filter(Boolean);
   if (lines.length) root.append(h("div", { class: "callchips span-all", style: { margin: "0 2px 12px" } }, lines));
   const where = (d) => [d.rotation || d.label, d.roles.length ? headline(d) : ""].filter(Boolean).join(" · ");

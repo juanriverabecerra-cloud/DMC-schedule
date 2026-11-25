@@ -1398,7 +1398,7 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
     people: [{ name: "ResA", where: "BA", call: "" }, { name: "ResC", where: "Cath lab", call: "" }, { name: "ResE", where: "NORA", call: "Late" }, { name: "ResD", where: "OB", call: "" }],
     egress: {
       attendings: [{ slot: "H1 (MOR call)", name: "Callmda- 8AM" }, { slot: "OB 14 (OB call)", name: "obcall" }, { slot: "Board Runner", name: "Runner" }, { slot: "H13 (MOR pre call)", name: "Premda" }, { slot: "H15 (MOR post call)", name: "Postmda" }],
-      residents: [{ name: "ResE", where: "ELECT-J", note: "" }, { name: "ResB", where: "Vacation", note: "" }],
+      residents: [{ name: "ResE", where: "ELECT-J", note: "" }, { name: "ResB", where: "Vacation", note: "" }, { name: "ResA", where: "BR", note: "" }],
     },
     notes: ["ResE to VA after lunch", "Room 9 closes at noon"],
   };
@@ -1419,10 +1419,14 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   assert.equal(m.day("b", date).roles.some((r) => r.kind === "where"), false); // "Vacation"
   assert.deepEqual(m.day("a", date).roles.map((r) => r.kind), ["room"]);
   assert.deepEqual(m.day("a", date).sheetNotes, []);
-  // Tonight: the attendings on call, then pre-call and the board runner. Post-call isn't tonight.
+  // Tonight: the attendings on call, then pre-call. Post-call isn't tonight. The board runner has
+  // its own place: the MDA, and the resident the Egress tab marks "BR" beside them.
   const t = m.tonight(date);
   assert.deepEqual(t.mdaCall.map((a) => [a.label, a.name, a.note, a.where]), [["Main OR call", "Callmda", "8AM", "Harper"], ["OB call", "Obcall", "", "Hutzel"]]);
-  assert.deepEqual(t.mdaOther.map((a) => [a.kind, a.name]), [["precall", "Premda"], ["runner", "Runner"]]);
+  assert.deepEqual(t.mdaOther.map((a) => [a.kind, a.name]), [["precall", "Premda"]]);
+  assert.equal(t.runner.mda.name, "Runner");
+  assert.deepEqual(t.runner.resident, { name: "ResA", id: "a" });
+  assert.equal(m.daily(date).runner, t.runner);
   // The board gets a Procedures group.
   assert.equal(m.boardGroup(c), "Procedures");
   // Saved by hand with a misspelling: written back in roster spelling, like the rooms.

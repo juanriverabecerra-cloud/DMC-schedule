@@ -2,7 +2,7 @@ import { h, icon, personRow, emptyState, segmented, openSheet, notice, splitColu
 import { BOARD_ORDER, headline } from "../../core/model.js";
 import { fmtDate } from "../../core/dates.js";
 import { local } from "../api.js";
-import { roomSummary, roomCallChips, draftNote } from "./common.js";
+import { roomSummary, roomCallChips, draftNote, runnerCard, runnerName } from "./common.js";
 
 const HIDE_BY_DEFAULT = new Set(["Off", "Vacation", "Post-call", "No schedule"]);
 
@@ -40,7 +40,9 @@ export function openDailySheet(ctx, date) {
       ].filter(Boolean).join(" · ")),
       roomCallChips(ctx, room, { residents: true })))))));
   const s = dl.sheet;
+  const res = dl.runner?.resident;
   const lines = [
+    dl.runner?.mda || res ? ["Board runner", [runnerName(model, dl.runner), res ? `resident ${res.id ? nm(res) : res.name}` : ""].filter(Boolean).join(" · ")] : null,
     s.opsc?.residents?.length || s.opsc?.mdas?.length ? ["OPSC", `${s.opsc.rooms ? `${s.opsc.rooms} rooms · ` : ""}MDAs ${s.opsc.mdas.join(", ")} · ${dl.opsc.map(nm).join(", ")}`] : null,
     s.procedures?.length ? ["Procedures", s.procedures.map((p) => `${p.name}${p.count ? ` (${p.count})` : ""}${p.mda ? ` ${p.mda}` : ""}${p.staff ? ` · ${p.staff}` : ""}`).join(", ")] : null,
     s.meyers?.mda ? ["Meyers lab", `${s.meyers.rooms ? `${s.meyers.rooms} rooms · ` : ""}${s.meyers.mda}`] : null,
@@ -59,6 +61,9 @@ export function renderBoard(ctx) {
   const root = h("div");
   const draft = draftNote(ctx, state.date);
   if (draft) root.append(draft);
+  // Who's running the board, before anyone goes looking for them in the list.
+  const runner = runnerCard(ctx, state.date, { span: true });
+  if (runner) root.append(runner);
   const prefs = local.get("boardPrefs", { cls: "all", showOff: false });
   const search = h("input", { class: "input", type: "search", placeholder: "Search name or place", "aria-label": "Search", value: state.boardQuery || "" });
   // On a wide screen the groups flow into two columns (again after each search or filter).

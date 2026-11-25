@@ -600,7 +600,7 @@ function liveSheetCard(ctx) {
       const go = h("button", { class: "btn primary", style: { marginTop: "8px" } }, icon("link"), "Connect");
       go.addEventListener("click", () => run(go, () => api("/api/daily-source", { method: "PUT", body: { url: input.value } }), "Connected"));
       append(body, [
-        h("p", { class: "small muted", style: { marginTop: 0 } }, "Connect the board runner's sheet once, and the app reads it every 3 minutes from about 5a to midnight. The link stays on the server: residents never see it, and it isn't in backups."),
+        h("p", { class: "small muted", style: { marginTop: 0 } }, "Connect the board runner's sheet once, and the app reads it every 3 minutes from noon to 10p (every 15 minutes in the morning and late evening), and whenever someone opens the app. The link stays on the server: residents never see it, and it isn't in backups."),
         input, go,
       ]);
       return;
@@ -611,19 +611,29 @@ function liveSheetCard(ctx) {
     alertBtn.addEventListener("click", () => { if (confirm("Tell everyone with alerts on that this sheet is ready?")) run(alertBtn, () => api("/api/daily-source/alert", { method: "POST" }), (r) => `Alert sent to ${r.alerted} ${r.alerted === 1 ? "phone" : "phones"}`); });
     const off = h("button", { class: "btn sm danger" }, "Disconnect");
     off.addEventListener("click", () => { if (confirm("Stop reading the sheet automatically?")) run(off, () => api("/api/daily-source", { method: "DELETE" }), "Disconnected"); });
+    // The newest sheet in the app, however it got there (this sheet, a photo, typed in), so the
+    // card never looks stuck on an old read when an admin has uploaded a newer day by hand.
+    const daily = ctx.model.ds.daily || {};
+    const newest = Object.keys(daily).filter((d) => d >= ctx.state.today).sort().pop();
+    const nw = newest ? daily[newest] : null;
+    const how = !nw ? "" : nw.source === "sheet" ? "read from this sheet" : nw.hasPhoto ? "from a photo" : "typed in";
     append(body, [
-      s.error ? notice("gap", "alert", h("b", null, "Can't read the sheet. "), `${s.error} The app keeps the last good version. The photo upload below still works.`) : null,
-      s.held ? notice("warn", "info", h("b", null, "Latest version not shown. "), s.held) : null,
-      s.dateNote && !s.held ? notice("", "info", h("b", null, `Filed under ${fmtDate(s.date)}. `), s.dateNote) : null,
+      s.error ? notice("gap", "alert", h("b", null, `Can't read the sheet${s.errorSince ? ` since ${stamp(s.errorSince)}` : ""}. `), `${s.error} The app keeps the last good version, and the photo upload below still works.`) : null,
+      s.held && !s.error ? notice("warn", "info", h("b", null, "Latest version not shown. "), s.held) : null,
+      s.dateNote && !s.held && !s.error ? notice("", "info", h("b", null, `Filed under ${fmtDate(s.date)}. `), s.dateNote) : null,
       h("dl", { class: "kv" },
-        h("dt", null, "Sheet date"), h("dd", null, s.date ? fmtDate(s.date) : "—"),
-        h("dt", null, "Rooms read"), h("dd", null, s.rooms == null ? "—" : `${s.rooms} with cases`),
-        h("dt", null, "Last checked"), h("dd", null, stamp(s.checkedAt)),
-        h("dt", null, "Last change"), h("dd", null, stamp(s.changedAt)),
-        h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles"),
-        s.alertedAt && s.reach ? [h("dt", null, "Reached"), h("dd", null, reachText(s.reach))] : null),
-      h("p", { class: "tiny muted" }, "Every change shows in the app within a few minutes, marked as still being finalized. Phones get one alert, after 2p, once the sheet has sat unchanged for 45 minutes with every room staffed. After that, only residents whose own assignment changed hear about it, once."),
-      h("div", { class: "btnrow" }, check, s.alertedAt ? null : alertBtn, off),
+        h("dt", null, "In the app"), h("dd", null, nw ? `${fmtDate(newest)} · ${how}, ${stamp(nw.editedAt || nw.savedAt)}` : "No sheet for today or later yet"),
+        h("dt", null, "Last checked"), h("dd", null, `${stamp(s.checkedAt)}${s.error ? " · couldn't read it" : ""}`),
+        s.error
+          ? [h("dt", null, "Last good read"), h("dd", null, s.okAt ? `${stamp(s.okAt)}${s.date ? ` (${fmtDate(s.date)})` : ""}` : s.date ? `The ${fmtDate(s.date)} sheet` : "—")]
+          : [
+            h("dt", null, "Filed under"), h("dd", null, s.date ? `${fmtDate(s.date)} · ${s.rooms ?? 0} rooms with cases` : "—"),
+            h("dt", null, "Last change"), h("dd", null, stamp(s.changedAt)),
+            h("dt", null, "Alert"), h("dd", null, s.alertedAt ? `Sent ${stamp(s.alertedAt)}` : "Waits until the sheet settles"),
+            s.alertedAt && s.reach ? [h("dt", null, "Reached"), h("dd", null, reachText(s.reach))] : null,
+          ]),
+      h("p", { class: "tiny muted" }, "Every change shows in the app within a few minutes, marked as still being finalized. Phones get one alert, after 2p, once the sheet has sat unchanged for 10 minutes with every room staffed. After that, only residents whose own assignment changed hear about it. If the sheet can't be read for 30 minutes between noon and 10p, admins' phones are told."),
+      h("div", { class: "btnrow" }, check, s.alertedAt || s.error ? null : alertBtn, off),
     ]);
   }
   api("/api/daily-source").then(draw).catch(() => body.replaceChildren(h("p", { class: "small muted", style: { margin: 0 } }, "Couldn't load the sheet's status.")));
@@ -637,7 +647,7 @@ function mailIntakeCard(ctx) {
     const steps = h("ol", { class: "small", style: { margin: "8px 0 10px", paddingLeft: "20px", lineHeight: 1.5 } },
       h("li", null, "On a computer, signed in to the Gmail that gets the program's emails, open ", h("a", { href: "https://script.google.com/home/projects/create", target: "_blank", rel: "noopener" }, "a new Apps Script project"), "."),
       h("li", null, "Delete what's there and paste the script (Copy the script, below). Press Save."),
-      h("li", null, "Pick ", h("b", null, "setup"), " in the toolbar and press Run. Google asks to let your own script read Gmail and reach the app: choose your account, then Advanced › Go to the project › Allow."));
+      h("li", null, "Choose ", h("b", null, "setup"), " in the menu next to Debug and press Run. Google asks to let your own script read Gmail and reach the app: choose your account, then Advanced › Go to the project › Allow."));
     const copy = h("button", { class: "btn primary", disabled: s.address ? null : true, onclick: () => copyText(mailScript(s.address, s.senders), "Script") }, icon("copy"), "Copy the script");
     body.replaceChildren();
     append(body, [

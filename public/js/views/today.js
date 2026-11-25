@@ -8,7 +8,7 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
-import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine } from "./common.js";
+import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine, runnerCard, runnerName } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { installCard, reminderCard } from "./reminders.js";
@@ -76,7 +76,7 @@ export function hoursCard(ctx, pid) {
   );
 }
 
-function tonightMini(ctx) {
+function tonightMini(ctx, { runner = true } = {}) {
   const t = ctx.model.tonight(ctx.state.date);
   const names = (list) => list.map((d) => ctx.model.person(d.pid)?.last || ctx.model.name(d.pid)).join(", ");
   const rows = [
@@ -87,6 +87,8 @@ function tonightMini(ctx) {
     ["call12", "12-hr call", t.call12],
     ["cardiac", "Cardiac call", t.cardiac],
   ].filter(([, , list]) => list.length).map(([cls, label, list]) => [cls, label, names(list)]);
+  // Who's running the board, unless Today already shows them in their own card.
+  if (runner && t.runner?.mda) rows.unshift(["info", "Board runner", runnerName(ctx.model, t.runner)]);
   // Attendings on call tonight, from the daily sheet's egress list.
   for (const a of t.mdaCall) rows.push(["info", `MDA ${a.label.replace(/ call$/, "")}`, a.name]);
   if (!rows.length) return null;
@@ -135,6 +137,7 @@ export function renderToday(ctx) {
   // shows when it has something.
   const tomorrow = addDays(state.today, 1);
   const mates = teammates(ctx, d);
+  let runnerShown = false;
   const sections = {
     day: () => {
       const site = SITES[d.site]?.name;
@@ -156,6 +159,14 @@ export function renderToday(ctx) {
         return h("p", { class: "disclaimer", style: { margin: "-4px 4px 12px" } }, "Tomorrow's room assignments usually come out this evening.");
       }
       return null;
+    },
+    // On a day at the main OR or OPSC, or on call: who's running the board, one tap to call.
+    // Not for night float, who starts at 6p, after the day's board runner.
+    runner: () => {
+      const relevant = d.status === "work" && d.call !== "NF" && (d.roles.length || ["harper", "opsc"].includes(d.site) || d.call || d.late);
+      const el = relevant ? runnerCard(ctx, state.date) : null;
+      runnerShown = !!el;
+      return el;
     },
     // After an OR day: the day's cases, already laid out from the sheet, one tap away.
     cases: () => [casesTodayCard(ctx), procedureShortcut(ctx)],
@@ -179,10 +190,10 @@ export function renderToday(ctx) {
     events: () => eventsTodayCard(ctx),
     team: () => (mates.length ? card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }) : null),
     quick: () => {
-      const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key)).slice(0, 5);
+      const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key) && !(runnerShown && /board runner/i.test(x.title))).slice(0, 5);
       return quick.length ? card("Quick call", h("ul", { class: "list" }, quick.map((x) => contactRow(ctx, x))), { pad: false, right: h("a", { href: "#/call" }, "All numbers ›") }) : null;
     },
-    tonight: () => tonightMini(ctx),
+    tonight: () => tonightMini(ctx, { runner: !runnerShown }),
     week: () => card("This week", weekStrip(ctx, pid), { pad: false }),
     gaps: () => {
       const gaps = dayGaps(model, state.date).filter((g) => g.level === "gap" && (g.people || []).length === 0);

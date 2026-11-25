@@ -107,6 +107,7 @@ const CODE_ALIASES = [
   [/^11\s*A?M?\s*(?:-|–|TO)\s*6\s*P?M?$|^6-NOV$/, "11-6"],
   [/^(SIM|ITE)[- ]H1$/, "H1"],
   [/^CALL$/, "H1"],
+  [/^BR$/, "BD"], // the Egress tab's resident board runner
   [/^(BA|BA-V|AP|OPSC|PACU|CP|VA|HC|TH|HN|ACC|BD|JA|NORA|VASC)1$/, null], // the rotation with a Friday 24-hr marker: "BA1"
   [/^11\s*A?M?\s*(?:-|–|TO)\s*9\s*P?M?$|^9-NOV$/, "11-9"],
   [/^10\s*A?M?\s*(?:-|–|TO)\s*7\s*P?M?$|^7-OCT$/, "10-7"],

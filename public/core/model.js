@@ -350,10 +350,18 @@ export function createModel(ds) {
       }
     }
 
+    // Who runs the board that day: the Egress tab's "Board Runner" MDA, and the resident beside
+    // them ("BR"), or the one the board runner's own list puts on the board.
+    const attendings = attendingsOf(sheet.egress?.attendings);
+    const brRow = [...(sheet.egress?.residents || []), ...(sheet.people || [])].find((x) => normCode(x.where) === "BD");
+    const runner = {
+      mda: attendings.find((a) => a.kind === "runner") || null,
+      resident: brRow ? { name: brRow.name, id: match(brRow.name, { prefer }) || null } : null,
+    };
+
     const out = {
       sheet, rooms, roles, unmatched: unmatched.filter((u) => !/resident|rotator|crna/i.test(u.name)), others: unmatched.filter((u) => /resident|rotator/i.test(u.name)),
-      opsc, pat, ob, night, procedures, notesFor, listCall,
-      attendings: attendingsOf(sheet.egress?.attendings),
+      opsc, pat, ob, night, procedures, notesFor, listCall, attendings, runner,
     };
     dailyCache.set(date, out);
     return out;
@@ -425,9 +433,11 @@ export function createModel(ds) {
       ja: r.filter((d) => d.status === "work" && (d.code === "JA" || d.roles.some((x) => x.kind === "ja"))),
       dailyNight: dl ? dl.night : [],
       obMda: dl?.sheet?.ob?.mda || "",
-      // Attendings from the Egress tab: on call tonight, pre-call, the board runner.
+      // Attendings from the Egress tab: on call tonight and pre-call. The board runner has its
+      // own place at the top of Tonight (common.js runnerCard).
       mdaCall: dl ? dl.attendings.filter((a) => a.kind === "call") : [],
-      mdaOther: dl ? dl.attendings.filter((a) => a.kind === "precall" || a.kind === "runner") : [],
+      mdaOther: dl ? dl.attendings.filter((a) => a.kind === "precall") : [],
+      runner: dl?.runner || null,
       daily: dl,
     };
   }

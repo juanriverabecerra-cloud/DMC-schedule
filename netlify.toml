@@ -1,6 +1,10 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
+  # Every production deploy costs Netlify credits (15 on the free plan's 300 a month), so a push
+  # that changes nothing the site runs (tests, the README, scripts) is skipped. If git can't tell,
+  # it builds.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- public netlify lib package.json package-lock.json netlify.toml"
 
 [build.environment]
   NODE_VERSION = "22"
