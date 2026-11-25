@@ -79,7 +79,7 @@ function absorb(pid, body) {
   const days = { ...(body.days || {}) };
   for (const d of L.dirtyDays) if (L.days[d]) days[d] = L.days[d];
   const naming = L.dirtyNaming ? L.naming : body.naming || null;
-  Object.assign(L, { owned: true, cases, days, naming, acgmeCount: body.acgmeCount || null, learned: body.learned || {}, helper: body.helper || "", helperSeenAt: body.helperSeenAt || "", devices: body.devices || 1, loadedAt: new Date().toISOString(), syncError: "" });
+  Object.assign(L, { owned: true, cases, days, naming, acgmeCount: body.acgmeCount || null, learned: body.learned || {}, supervisorList: Array.isArray(body.supervisors) && body.supervisors.length ? body.supervisors : L.supervisorList || [], helper: body.helper || "", helperSeenAt: body.helperSeenAt || "", devices: body.devices || 1, loadedAt: new Date().toISOString(), syncError: "" });
   persist();
 }
 

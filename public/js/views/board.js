@@ -2,7 +2,7 @@ import { h, icon, personRow, emptyState, segmented, openSheet, notice, splitColu
 import { BOARD_ORDER, headline } from "../../core/model.js";
 import { fmtDate } from "../../core/dates.js";
 import { local } from "../api.js";
-import { roomSummary, roomCallChips, draftNote, runnerCard, runnerName } from "./common.js";
+import { roomSummary, roomCallChips, draftNote, runnerCard, runnerName, mdasToday, mdaRow } from "./common.js";
 
 const HIDE_BY_DEFAULT = new Set(["Off", "Vacation", "Post-call", "No schedule"]);
 
@@ -68,10 +68,26 @@ export function renderBoard(ctx) {
   const search = h("input", { class: "input", type: "search", placeholder: "Search name or place", "aria-label": "Search", value: state.boardQuery || "" });
   // On a wide screen the groups flow into two columns (again after each search or filter).
   const listHolder = h("div", { class: "flow" });
+  const dl = model.daily(state.date);
+
+  // The day's attendings, the board runner first: a group of their own under All, the only one
+  // under MDA, and found by search ("Rook", "OR 12", "OPSC", "board runner").
+  const mdaGroup = (list) => [
+    h("div", { class: "section-title" }, "Attendings (MDA)", h("span", { class: "count" }, list.length)),
+    h("section", { class: "card" }, h("ul", { class: "list" }, list.map((m) => mdaRow(ctx, m)))),
+  ];
 
   function draw() {
     const q = search.value.trim().toLowerCase();
     state.boardQuery = search.value;
+    const mdas = mdasToday(model, dl).filter((m) => !q || [m.name, model.dir.staff(m.name)?.name || "", ...m.places, ...m.roles, m.runner ? "board runner" : ""].join(" ").toLowerCase().includes(q));
+    listHolder.replaceChildren();
+    if (prefs.cls === "mda") {
+      if (mdas.length) listHolder.append(...mdaGroup(mdas));
+      else listHolder.append(emptyState("search", q ? "No attending matches" : "No attendings yet", q ? "" : "They show up once this day's OR sheet is in."));
+      splitColumns(listHolder);
+      return;
+    }
     const roster = model.roster(state.date).filter((d) => {
       const p = model.person(d.pid);
       if (prefs.cls !== "all" && p.cls !== prefs.cls) return false;
@@ -84,8 +100,8 @@ export function renderBoard(ctx) {
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push(d);
     }
-    listHolder.replaceChildren();
-    if (!roster.length) { listHolder.append(emptyState("search", "No one matches", "")); return; }
+    const showMdas = prefs.cls === "all" && mdas.length;
+    if (!roster.length && !showMdas) { listHolder.append(emptyState("search", "No one matches", "")); return; }
     const hidden = [];
     for (const g of [...BOARD_ORDER, ...[...groups.keys()].filter((k) => !BOARD_ORDER.includes(k))]) {
       const list = groups.get(g);
@@ -97,6 +113,7 @@ export function renderBoard(ctx) {
         h("section", { class: "card" }, h("ul", { class: "list" }, list.map((d) => personRow(ctx, d)))),
       );
     }
+    if (showMdas) listHolder.append(...mdaGroup(mdas));
     if (hidden.length) {
       listHolder.append(h("button", { class: "btn block span-all", style: { marginTop: "4px" }, onclick: () => { prefs.showOff = true; local.set("boardPrefs", prefs); draw(); } },
         `Show ${hidden.map(([g, n]) => `${g.toLowerCase()} (${n})`).join(", ")}`));
@@ -108,7 +125,7 @@ export function renderBoard(ctx) {
   }
 
   search.addEventListener("input", draw);
-  const seg = () => segmented([["all", "All"], ["CA-3", "CA-3"], ["CA-2", "CA-2"], ["CA-1", "CA-1"], ["PGY-1", "PGY-1"]], prefs.cls, (v) => {
+  const seg = () => segmented([["all", "All"], ["CA-3", "CA-3"], ["CA-2", "CA-2"], ["CA-1", "CA-1"], ["PGY-1", "PGY-1"], ["mda", "MDA"]], prefs.cls, (v) => {
     prefs.cls = v;
     local.set("boardPrefs", prefs);
     segHolder.replaceChildren(seg());
@@ -117,7 +134,6 @@ export function renderBoard(ctx) {
   const segHolder = h("div", { class: "span-all", style: { marginBottom: "12px" } }, seg());
 
   if (!model.hasCall(state.date)) root.append(notice("warn", "info", "No call sheet for this month yet; showing planned rotations only."));
-  const dl = model.daily(state.date);
   root.append(
     h("div", { class: "toolbar" },
       h("div", { class: "search" }, icon("search"), search),

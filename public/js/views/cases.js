@@ -12,6 +12,7 @@ import {
   caseLog, casesOnDay, allCases, saveCase, removeCase, setDayNote, dayNote, setNaming, loadCaseLog, syncCaseLog, markCasesEntered, bookmarklet, hasUnsent,
 } from "../cases.js";
 import { openInSafari, opensInApp, isIos as onIphone } from "../install.js";
+import { sheetAttendingNames } from "../../core/attendings.js";
 import { local } from "../api.js";
 
 let lastLoad = 0;
@@ -372,7 +373,12 @@ function addCard(ctx, pid, day, cards) {
 function pickSupervisor(ctx, pid, { day, card, sheet = [], later = [] }) {
   const { model } = ctx;
   const L = caseLog(pid);
+  // Everyone who can be picked: ACGME's own Supervisor list (read by the Log cases button), the
+  // phone directory's attendings, and every attending named on a saved OR sheet.
+  const cap = (t) => String(t || "").replace(/(^|[\s'-])(\p{Ll})/gu, (m, a, b) => a + b.toUpperCase());
+  const acgme = (L.supervisorList || []).map((s) => ({ last: cap(s.last), first: cap(s.first) }));
   const staff = (model.dir?.raw?.staff || []).map((s) => ({ last: s.last, first: s.first || "" }));
+  const onSheets = sheetAttendingNames(model.ds.daily).map((last) => ({ last, first: "" }));
   const recent = recentSupervisors(L.learned);
   let alsoLater = false;
   const choose = (s) => {
@@ -396,7 +402,7 @@ function pickSupervisor(ctx, pid, { day, card, sheet = [], later = [] }) {
   // One row per person: the sheet's "Rook" and the directory's "Rook, Alex" are the same one.
   const same = (a, b) => a.last.toLowerCase() === b.last.toLowerCase() && (!a.first || !b.first || a.first.toLowerCase() === b.first.toLowerCase());
   const pool = [];
-  for (const [rows, tag] of [[sheet, "On the OR sheet"], [recent, "Recent"], [staff, ""]]) {
+  for (const [rows, tag] of [[sheet, "On the OR sheet"], [recent, "Recent"], [acgme, ""], [staff, ""], [onSheets, ""]]) {
     for (const r of rows) {
       const was = pool.find((x) => same(x, r));
       if (was) { if (!was.first && r.first) was.first = r.first; continue; }
@@ -407,7 +413,7 @@ function pickSupervisor(ctx, pid, { day, card, sheet = [], later = [] }) {
     const q = input.value.trim().toLowerCase();
     const rows = pool.filter((s) => !q || `${s.last} ${s.first}`.toLowerCase().includes(q))
       .sort((a, b) => (!!b.tag - !!a.tag) || (a.tag && b.tag ? 0 : a.last.localeCompare(b.last)))
-      .slice(0, 40);
+      .slice(0, 300); // everyone: a short list would hide whoever comes late in the alphabet
     const current = card?.supervisor;
     list.replaceChildren(...rows.map((s) => h("li", { class: "row tap", onclick: () => choose(s) },
       h("div", { class: "main" }, h("div", { class: "name" }, supName(s)), s.tag ? h("div", { class: "sub" }, s.tag) : null),

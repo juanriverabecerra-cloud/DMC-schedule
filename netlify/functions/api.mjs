@@ -20,7 +20,7 @@ import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
 import { cleanSubscription, phoneId, vapidKeys, sendToPhone, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
 import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
-import { caseKey, ownsLog, logView, mergeLog, markEntered, helperPayload } from "../../lib/caselog.js";
+import { caseKey, ownsLog, logView, mergeLog, markEntered, helperPayload, SUPERVISORS_KEY, cleanSupervisorList } from "../../lib/caselog.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -167,6 +167,12 @@ export default async function handler(req) {
         // ACGME's own "Cases Submitted" count, read off the page: a running-number style can start after it.
         const count = Number.isInteger(body.acgmeCount) && body.acgmeCount >= 0 && body.acgmeCount < 1e6 ? body.acgmeCount : null;
         let changed = 0;
+        // ACGME's Supervisor list, kept for everyone's case log when it changes.
+        const supervisors = cleanSupervisorList(body.supervisors);
+        if (supervisors) {
+          const was = await store.getJSON(SUPERVISORS_KEY);
+          if (JSON.stringify(was?.list) !== JSON.stringify(supervisors)) await store.setJSON(SUPERVISORS_KEY, { list: supervisors, at: new Date().toISOString() });
+        }
         if (ids.length || count !== null) {
           await store.update(key, (r) => {
             if (!r) return undefined;
@@ -456,10 +462,12 @@ export default async function handler(req) {
       if (!goodKey(key)) return fail(400, "Missing device key");
       const helperScript = env("CAL_SECRET") || env("ADMIN_KEY") ? `${origin(req)}/acgme.js?k=${feedAddress("acgme", pid)}` : "";
       const today = todayLocal();
+      // Every attending ACGME lists, once anyone's Log cases button has read them.
+      const supervisors = async () => (await st.getJSON(SUPERVISORS_KEY))?.list || [];
       if (method === "GET" && !caselog[2]) {
         const rec = await st.getJSON(caseKey(pid));
         if (rec && !ownsLog(rec, key)) return json({ owned: false, count: Object.keys(rec.cases || {}).length, devices: (rec.keys || []).length });
-        return json({ ...logView(rec, today), helper: helperScript });
+        return json({ ...logView(rec, today), helper: helperScript, supervisors: await supervisors() });
       }
       if (method === "PUT" && !caselog[2]) {
         const body = await req.json().catch(() => ({}));
@@ -467,7 +475,7 @@ export default async function handler(req) {
         await st.update(caseKey(pid), (saved) => { out = mergeLog(saved, { ...body, key }, today); return out.rec; });
         if (out.conflict) return json({ owned: false, error: "Your case log is kept on another device." }, 409);
         if (out.full) return fail(413, "The case log is full: enter some cases in ACGME first.");
-        return json({ ...logView(out.rec, today), helper: helperScript });
+        return json({ ...logView(out.rec, today), helper: helperScript, supervisors: await supervisors() });
       }
       if (method === "POST" && caselog[2]) {
         const body = await req.json().catch(() => ({}));

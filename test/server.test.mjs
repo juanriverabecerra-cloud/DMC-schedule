@@ -1104,6 +1104,18 @@ test("case log: only its own devices read it, ACGME's page gets ready cases, and
   assert.equal((await call("POST", "/api/cases/doe-jane/entered", { ids: ["case00001"] }, { ...viewer, "x-device-key": "stranger-key-0123456" })).status, 403);
   assert.deepEqual((await call("GET", "/api/cases/roe-max", undefined, phone)).body.cases, []);
   assert.equal((await call("GET", "/api/cases/doe-jane", undefined, viewer)).status, 400, "a device key is needed");
+
+  // The button also sends ACGME's Supervisor list: every resident's case log can then offer every
+  // attending ACGME has, not just the phone directory's. Junk and the "-- Select --" line are dropped.
+  await st.delete("acgme-supervisors");
+  const names = ["Aaa, Pat", "bbb, quinn", "Ccc, Rory", "Ccc, Rory", "-- Select --", "<script>", "Ddd, Sam"];
+  const sent = await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ acgmeCount: 12, supervisors: names }) }));
+  assert.equal(sent.status, 200);
+  r = await call("GET", "/api/cases/roe-max", undefined, other);
+  assert.deepEqual(r.body.supervisors.map((s) => `${s.last}, ${s.first}`), ["Aaa, Pat", "bbb, quinn", "Ccc, Rory", "Ddd, Sam"]);
+  // One stray name isn't a list, and doesn't replace the one kept.
+  await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ supervisors: ["Eee, Lee"] }) }));
+  assert.equal((await call("GET", "/api/cases/doe-jane", undefined, phone)).body.supervisors.length, 4);
 });
 
 test("case log nudges: after a case day with nothing logged, never twice, and weekly when cases wait", async () => {

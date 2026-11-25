@@ -221,6 +221,7 @@ function tabbar(r) {
   nav.replaceChildren(inner);
 }
 
+let lastScreen = ""; // the screen last drawn, so a redraw of the same one keeps its place
 export function render() {
   const r = route();
   const view = document.getElementById("view");
@@ -257,10 +258,27 @@ export function render() {
     console.error(err);
     content = h("div", { class: "empty-state" }, h("h3", null, "Something went wrong"), h("p", null, String(err.message || err)));
   }
+  // A redraw of the same screen (a tap on a case's box, a save arriving) keeps the page where it
+  // was. iPhone Safari can jump to the top when the screen is swapped out under the finger, so the
+  // page's height is held while it's redrawn and the position put back if the browser moved it.
+  const here = `${r.name}/${r.arg || ""}/${state.date}`;
+  const same = here === lastScreen;
+  lastScreen = here;
+  const keepY = window.scrollY;
+  if (same) {
+    view.style.minHeight = `${view.offsetHeight}px`;
+    if (view.contains(document.activeElement)) document.activeElement.blur();
+  }
   view.replaceChildren(content);
   const layout = state.model ? layoutFor(r) : "";
   if (layout) document.body.dataset.layout = layout; else delete document.body.dataset.layout;
   flowColumns();
+  if (same) {
+    view.style.minHeight = "";
+    if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY);
+    // Safari can also do it a moment later: put it back if it went to the top by itself.
+    requestAnimationFrame(() => { if (keepY > 40 && window.scrollY < 2) window.scrollTo(0, keepY); });
+  }
 }
 
 // On a wide screen card screens use two columns (splitColumns in ui.js).

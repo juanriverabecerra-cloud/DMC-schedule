@@ -1269,6 +1269,12 @@ test("case log: the form follows ACGME's page, and every attending in a room's M
   const day = A.dayCases(createModel(ds), "doe-jane", "2026-11-02");
   assert.deepEqual(day.sheetSupervisors.map((x) => x.last), ["Wrenn", "Teal"]);
   assert.equal(day.supervisor.last, "Wrenn");
+  // Every attending on any saved sheet can be picked, by the last name the sheet uses.
+  const { sheetAttendingNames } = await import("../public/core/attendings.js");
+  assert.deepEqual(sheetAttendingNames({
+    a: { rooms: [{ mda: "Wrenn / Teal" }, { mda: "X" }, { mda: "Dr. Moss" }], opsc: { mdas: ["Pell"] }, ob: { mda: "Quade" }, procedures: [{ mda: "Teal" }], egress: { attendings: [{ slot: "H4 (OPSC)", name: "Pell- 8AM" }, { slot: "Board Runner", name: "Rusk" }] } },
+    b: { rooms: [{ mda: "wrenn" }] },
+  }), ["Moss", "Pell", "Quade", "Rusk", "Teal", "Wrenn"]);
   // Each case carries its own supervisor to ACGME.
   const one = { ...A.blankCase({ date: "2026-11-02", surgeon: "Rook", seq: 1 }), supervisor: { last: "Wrenn", first: "" } };
   const two = { ...A.blankCase({ date: "2026-11-02", surgeon: "Rook", seq: 2 }), supervisor: { last: "Teal", first: "" } };

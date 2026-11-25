@@ -293,12 +293,19 @@
     return fetch(api, { method: "POST", body: JSON.stringify({ entered: ids }) }).catch(function () {});
   }
 
-  // ACGME's own count of submitted cases, for a resident whose Case IDs keep a running number.
+  // ACGME's own count of submitted cases, for a resident whose Case IDs keep a running number,
+  // and ACGME's Supervisor list, so the app's case log can offer every attending ACGME has.
   function reportCount() {
     var el = document.getElementById("ProcedureCaseCount") || document.querySelector("#caseEntryCount strong");
     var n = el ? parseInt(String(el.value || el.textContent).replace(/\D/g, ""), 10) : NaN;
-    if (!isFinite(n)) return;
-    fetch(api, { method: "POST", body: JSON.stringify({ acgmeCount: n }) }).catch(function () {});
+    var sel = document.getElementById("Attendings");
+    var names = [];
+    if (sel) for (var i = 0; i < sel.options.length && names.length < 400; i++) if (sel.options[i].value) names.push(sel.options[i].text);
+    var body = {};
+    if (isFinite(n)) body.acgmeCount = n;
+    if (names.length) body.supervisors = names;
+    if (!("acgmeCount" in body) && !names.length) return;
+    fetch(api, { method: "POST", body: JSON.stringify(body) }).catch(function () {});
   }
 
   // A case is called by its Case ID, or by its date when the resident leaves IDs blank.

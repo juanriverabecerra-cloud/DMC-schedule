@@ -32,3 +32,26 @@ export function attendingsOf(list) {
     .filter((a) => a.name)
     .sort((a, b) => ORDER[a.kind] - ORDER[b.kind]);
 }
+
+// Every attending named on the saved OR sheets (rooms, OPSC, OB, Meyers, procedures, the Egress
+// list), by last name as the sheets write them. The case log offers all of them as supervisors,
+// since the phone directory doesn't list every attending.
+export function sheetAttendingNames(daily) {
+  const seen = new Map();
+  const add = (raw) => {
+    for (const part of String(raw ?? "").replace(/\([^)]*\)/g, " ").split(/[/,&+]| and /i)) {
+      const { name } = cleanAttending(part.replace(/^\s*dr\.?\s+/i, ""));
+      if (!name || name.length < 2 || /^(x|crna|tbd|mda|none)$/i.test(name)) continue;
+      if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+    }
+  };
+  for (const s of Object.values(daily || {})) {
+    for (const r of s.rooms || []) add(r.mda);
+    for (const m of s.opsc?.mdas || []) add(m);
+    add(s.ob?.mda);
+    add(s.meyers?.mda);
+    for (const p of s.procedures || []) add(p.mda);
+    for (const a of s.egress?.attendings || []) add(a.name);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}

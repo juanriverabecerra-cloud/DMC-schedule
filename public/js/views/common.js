@@ -5,6 +5,7 @@ import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT,
 import { headline } from "../../core/model.js";
 import { openEventSheet } from "./events.js";
 import { SITES } from "../../core/codes.js";
+import { cleanAttending } from "../../core/attendings.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
 
@@ -247,6 +248,56 @@ export function runnerCard(ctx, date, { when, span = false } = {}) {
         h("div", { class: "runner-name" }, runner.mda ? runnerName(model, runner) : resName),
         runner.mda && (resName || runner.mda.note) ? h("div", { class: "sub" }, [runner.mda.note, resName ? `Resident: ${resName}` : ""].filter(Boolean).join(" · ")) : null),
       pills.length ? h("div", { class: "runner-calls" }, pills) : null));
+}
+
+// ---- the day's attendings (MDAs) ----
+// Every attending on the day's sheet and where they are: rooms, procedure areas, OPSC, Meyers, OB,
+// the Egress list's sites, and their call slot. The board runner comes first, marked; then the
+// rest by their first room, and post-call last.
+export function mdasToday(model, dl) {
+  if (!dl) return [];
+  const all = new Map();
+  const each = (raw, fn) => {
+    for (const part of String(raw ?? "").replace(/\([^)]*\)/g, " ").split("/")) {
+      const name = cleanAttending(part.replace(/^\s*dr\.?\s+/i, "")).name;
+      if (!name || name.length < 2 || /^(x|crna|tbd)$/i.test(name)) continue;
+      const k = name.toLowerCase();
+      if (!all.has(k)) all.set(k, { name, places: [], roles: [], rooms: [], runner: false, postcall: false });
+      fn(all.get(k));
+    }
+  };
+  const place = (m, w) => { if (w && !m.places.includes(w)) m.places.push(w); };
+  if (dl.runner?.mda) each(dl.runner.mda.name, (m) => { m.runner = true; });
+  for (const room of dl.rooms) each(room.mda, (m) => { place(m, `OR ${room.or}`); m.rooms.push(parseInt(room.or, 10) || 90); });
+  for (const p of dl.sheet.procedures || []) if (p.mda && p.count !== "0") each(p.mda, (m) => place(m, p.name));
+  each(dl.sheet.meyers?.mda, (m) => place(m, "Meyers lab"));
+  each(dl.sheet.ob?.mda, (m) => place(m, "OB"));
+  for (const x of dl.sheet.opsc?.mdas || []) each(x, (m) => place(m, "OPSC"));
+  for (const a of dl.attendings || []) {
+    if (a.kind === "runner") continue;
+    each(a.name, (m) => {
+      if (a.kind === "site") place(m, a.where);
+      else if (!m.roles.includes(a.label)) m.roles.push(a.label);
+      if (a.kind === "postcall") m.postcall = true;
+    });
+  }
+  const rank = (m) => (m.runner ? -1 : m.rooms.length ? Math.min(...m.rooms) : m.postcall && !m.places.length ? 999 : 100);
+  return [...all.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+// One attending: where they are today, with their numbers; the board runner with its phone too.
+export function mdaRow(ctx, m) {
+  const dir = ctx.model.dir;
+  const staff = dir.staff(m.name);
+  const runnerPhone = m.runner ? dir.place(/^mda board runner/i) : null;
+  const where = [m.roles.join(" · "), m.places.join(", ")].filter(Boolean).join(" · ");
+  const calls = [runnerPhone ? callChip(dir, "Board runner", runnerPhone.numbers) : null, ...(staff ? numberButtons(dir, staff.numbers) : [])].filter(Boolean);
+  return h("li", { class: `row contact${m.runner ? " runner" : ""}` },
+    h("div", { class: "avatar", style: m.runner ? { "--c": "var(--accent)" } : null }, m.runner ? icon("grid") : m.name.slice(0, 2).toUpperCase()),
+    h("div", { class: "main" },
+      h("div", { class: "name" }, h("span", { class: "n" }, staff?.name || m.name), m.runner ? h("span", { class: "pill", style: { "--c": "var(--accent)" } }, "Board runner") : null),
+      h("div", { class: "sub" }, m.runner ? ["Running the board", where].filter(Boolean).join(" · ") : where || "On the sheet"),
+      calls.length ? h("div", { class: "numrow" }, calls) : null));
 }
 
 // A moment as the app writes times (4:12p), with the day when it isn't today.

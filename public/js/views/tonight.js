@@ -1,7 +1,7 @@
 import { h, personRow, emptyState, notice, append, numberButtons, callChip } from "../ui.js";
 import { fmtDate, addDays, dow } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
-import { runnerCard } from "./common.js";
+import { runnerCard, mdasToday, mdaRow } from "./common.js";
 
 function group(ctx, title, timeLabel, cls, list, sub) {
   if (!list.length) return null;
@@ -45,7 +45,7 @@ export function renderTonight(ctx) {
   ]);
 
   // Attendings on call (from the board runner's egress list): who, and where.
-  const mdaRow = (a) => {
+  const callRow = (a) => {
     const staff = model.dir.staff(a.name);
     return h("li", { class: "row contact" },
       h("div", { class: "avatar" }, a.name.slice(0, 2).toUpperCase()),
@@ -58,37 +58,17 @@ export function renderTonight(ctx) {
     root.append(h("section", { class: "card" },
       h("div", { class: "card-pad", style: { paddingBottom: "4px" } },
         h("h3", { class: "card-title" }, h("span", { class: "chip call24" }, "Attendings on call"), h("span", { class: "right muted" }, "egress list"))),
-      h("ul", { class: "list" }, [...t.mdaCall, ...t.mdaOther].map(mdaRow))));
+      h("ul", { class: "list" }, [...t.mdaCall, ...t.mdaOther].map(callRow))));
   }
 
   const dl = t.daily;
   if (dl) {
-    const mdas = new Map();
-    const add = (name, where) => {
-      for (const part of String(name).split("/")) {
-        const key = part.replace(/\([^)]*\)/g, "").trim();
-        if (key) mdas.set(key, [...new Set([...(mdas.get(key) || []), where])]);
-      }
-    };
-    for (const room of dl.rooms) if (room.mda) add(room.mda, room.or);
-    for (const p of dl.sheet.procedures || []) if (p.mda && p.count !== "0") add(p.mda, p.name);
-    if (dl.sheet.meyers?.mda) add(dl.sheet.meyers.mda, "Meyers lab");
-    if (dl.sheet.ob?.mda) add(dl.sheet.ob.mda, "OB");
-    for (const m of dl.sheet.opsc?.mdas || []) add(m, "OPSC");
-    // Where the egress list puts the others ("H4 (OPSC)", "H5 (Meyers)"), and who's post-call.
-    for (const a of dl.attendings) if (a.kind === "site" || a.kind === "postcall") add(a.name, a.kind === "site" ? a.where : a.label);
-    if (mdas.size) {
+    // Every MDA and where they are, the board runner first.
+    const mdas = mdasToday(model, dl);
+    if (mdas.length) {
       root.append(h("section", { class: "card" },
-        h("div", { class: "card-pad", style: { paddingBottom: "4px" } }, h("h3", { class: "card-title" }, "Attendings (MDA) today", h("span", { class: "right muted" }, "daily sheet"))),
-        h("ul", { class: "list" }, [...mdas].map(([name, where]) => {
-          const staff = model.dir.staff(name);
-          return h("li", { class: "row contact" },
-            h("div", { class: "avatar" }, name.slice(0, 2).toUpperCase()),
-            h("div", { class: "main" },
-              h("div", { class: "name" }, staff?.name || name),
-              h("div", { class: "sub" }, where.map((w) => (/^\d+$/.test(w) ? `OR ${w}` : w)).join(", ")),
-              staff ? h("div", { class: "numrow" }, numberButtons(model.dir, staff.numbers)) : null));
-        }))));
+        h("div", { class: "card-pad", style: { paddingBottom: "4px" } }, h("h3", { class: "card-title" }, "Attendings (MDA) today", h("span", { class: "right muted" }, `${mdas.length} on the sheet`))),
+        h("ul", { class: "list" }, mdas.map((m) => mdaRow(ctx, m)))));
     }
   } else if (date === addDays(state.today, 1)) {
     root.append(h("p", { class: "disclaimer" }, "Tomorrow's room assignments usually come out this evening; attendings show up here once they're posted."));
