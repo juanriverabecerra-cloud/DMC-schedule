@@ -21,6 +21,8 @@ import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
 import { cleanSubscription, phoneId, vapidKeys, sendToPhone, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
 import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
 import { caseKey, ownsLog, logView, mergeLog, markEntered, helperPayload, SUPERVISORS_KEY, cleanSupervisorList } from "../../lib/caselog.js";
+import { devicesKey, isLinked, withDevice, elsewhere } from "../../lib/devices.js";
+import { minimumsFromFile } from "../../lib/acgme-report.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -80,12 +82,26 @@ const cleanText = (v, n) => String(v ?? "").replace(/[\u0000-\u001f]/g, " ").tri
 
 // Swap requests between residents. Each request and offer remembers the device that made it,
 // so only that device can change it; what goes out never includes those keys.
-function publicSwap(r, mine) {
+// `linkedPid` is the resident this device is linked to (lib/devices.js), whose requests and offers
+// are this device's too, whichever device made them.
+function publicSwap(r, mine, linkedPid = null) {
   const { keyHash: k, offers, ...rest } = r;
-  return { ...rest, mine: !!mine && k === mine, offers: offers.map(({ keyHash: ok, ...o }) => ({ ...o, mine: !!mine && ok === mine })) };
+  const ours = (hash, pid) => (!!mine && hash === mine) || (!!linkedPid && pid === linkedPid);
+  return { ...rest, mine: ours(k, r.pid), offers: offers.map(({ keyHash: ok, ...o }) => ({ ...o, mine: ours(ok, o.pid) })) };
 }
 const pruneSwaps = (list, today) => list.filter((r) => r.end >= addDays(today, -7) && !(r.status === "cancelled" && r.end < today));
 const SWAP_CLASSES = ["CA-1", "CA-2", "CA-3"];
+// ACGME's own count toward the graduation minimums, from its report (lib/acgme-report.js).
+const minimumsKey = (pid) => `acgme-minimums/${pid}`;
+
+// When a calendar app last read someone's feed, so the app stops offering to subscribe. Written at
+// most twice a day: calendar apps re-read a feed every hour or so.
+async function markCalendarSeen(st, pid) {
+  const key = `calseen/${pid}`;
+  const was = await st.getJSON(key);
+  if (was?.at && Date.now() - Date.parse(was.at) < 12 * 3600e3) return;
+  await st.setJSON(key, { at: new Date().toISOString() });
+}
 
 export default async function handler(req) {
   const url = new URL(req.url);
@@ -101,6 +117,9 @@ export default async function handler(req) {
     return pid ? { ds, pid } : null;
   };
   const feedAddress = (kind, pid) => `${demo ? "demo-" : ""}${feedToken(demo ? `${kind}-demo` : kind, pid)}`;
+  // Whether this device is linked to a resident (lib/devices.js), and linking it.
+  const linkedTo = async (pid, key) => !!pid && goodKey(key) && isLinked(await st.getJSON(devicesKey(pid)), key);
+  const linkDevice = (pid, key) => (pid && goodKey(key) ? st.update(devicesKey(pid), (rec) => withDevice(rec, key)) : null);
 
   try {
     // ---- calendar feed (token in the URL, no passcode) ----
@@ -111,6 +130,8 @@ export default async function handler(req) {
       const { ds, pid } = owner;
       const model = createModel(ds);
       const ics = buildIcs(model, pid, { ...feedRange(model, todayLocal()), appUrl: `${origin(req)}/`, didactics: url.searchParams.get("d") !== "0" });
+      // A demo feed's stamp goes with the demo program's records, apart from the real ones.
+      await markCalendarSeen(cal[1].startsWith("demo-") ? demoStore(openStore()) : st, pid).catch(() => {});
       return new Response(ics, { headers: { "content-type": "text/calendar; charset=utf-8", "cache-control": "public, max-age=900", "content-disposition": "inline; filename=dmc-schedule.ics" } });
     }
 
@@ -158,7 +179,9 @@ export default async function handler(req) {
           rec = await store.update(key, (r) => (r ? { ...r, helperSeenAt: new Date().toISOString() } : undefined));
         }
         const p = owner.ds.people.find((x) => x.id === owner.pid);
-        return json(helperPayload(rec, p?.preferred || p?.first || ""), 200, cors);
+        // When ACGME last counted their minimums: the button fetches the report again when it's old.
+        const minimumsAt = (await store.getJSON(minimumsKey(owner.pid)))?.at || null;
+        return json({ ...helperPayload(rec, p?.preferred || p?.first || ""), minimumsAt }, 200, cors);
       }
       if (method === "POST") {
         // Sent as plain text so the browser needn't ask first.
@@ -173,6 +196,9 @@ export default async function handler(req) {
           const was = await store.getJSON(SUPERVISORS_KEY);
           if (JSON.stringify(was?.list) !== JSON.stringify(supervisors)) await store.setJSON(SUPERVISORS_KEY, { list: supervisors, at: new Date().toISOString() });
         }
+        // ACGME's Anesthesiology Minimum report, as the file ACGME made: only the numbers are kept.
+        const minimums = body.minimums ? minimumsFromFile(body.minimums) : null;
+        if (minimums) await store.setJSON(minimumsKey(owner.pid), { ...minimums, at: new Date().toISOString() });
         if (ids.length || count !== null) {
           await store.update(key, (r) => {
             if (!r) return undefined;
@@ -183,7 +209,7 @@ export default async function handler(req) {
             return changed || newCount ? next : undefined;
           });
         }
-        return json({ ok: true, changed }, 200, cors);
+        return json({ ok: true, changed, ...(body.minimums ? { minimums: !!minimums } : {}) }, 200, cors);
       }
       return json({ error: "Not found" }, 404, cors);
     }
@@ -213,6 +239,39 @@ export default async function handler(req) {
       if (!env("CAL_SECRET") && !env("ADMIN_KEY")) return fail(503, "Calendar feeds need ADMIN_KEY or CAL_SECRET on the server.");
       const url2 = `${origin(req)}/cal/${feedAddress("cal", tok[1])}.ics`;
       return json({ url: url2, webcal: url2.replace(/^https?:/, "webcal:") });
+    }
+
+    // ---- this device and the resident using it (lib/devices.js) ----
+    // GET: is this device theirs, what of theirs is on other devices, and whether their calendar
+    // has subscribed. POST …/link: one tap and their case log and swap requests work here too.
+    const meRoute = path.match(/^\/api\/me\/([\w-]+)(\/link)?$/);
+    if (meRoute) {
+      const pid = meRoute[1];
+      const linking = !!meRoute[2];
+      if (linking ? method !== "POST" : method !== "GET") return fail(405, "Not allowed");
+      const ds = await loadDataset(st);
+      if (!ds.people.some((p) => p.id === pid)) return fail(404, "No such resident");
+      const key = linking ? (await req.json().catch(() => ({}))).key : req.headers.get("x-device-key") || "";
+      if (!goodKey(key)) return fail(400, "Missing device key");
+      const today = todayLocal();
+      const [devices, caseRec, swapData, hoursRec, calSeen] = await Promise.all([
+        st.getJSON(devicesKey(pid)), st.getJSON(caseKey(pid)), st.getJSON("swaps"), st.getJSON(`hours/${pid}`), st.getJSON(`calseen/${pid}`),
+      ]);
+      const swaps = (swapData?.list || []).filter((r) => r.end >= addDays(today, -1) && r.status !== "cancelled");
+      let linked = isLinked(devices, key);
+      if (linking) {
+        await linkDevice(pid, key);
+        if (caseRec && !ownsLog(caseRec, key)) await st.update(caseKey(pid), (saved) => (saved && !ownsLog(saved, key) ? mergeLog(saved, { key, join: true }, today).rec : undefined));
+        linked = true;
+      } else if (!linked) {
+        // A device that already holds something of theirs, from before devices were linked, is theirs.
+        const mine = keyHash(key);
+        const holds = ownsLog(caseRec, key) || hoursRec?.keyHash === mine
+          || swaps.some((r) => (r.pid === pid && r.keyHash === mine) || r.offers.some((o) => o.pid === pid && o.keyHash === mine));
+        if (holds) { await linkDevice(pid, key); linked = true; }
+      }
+      const now = linked ? await st.getJSON(devicesKey(pid)) : devices;
+      return json({ linked, devices: (now?.keys || []).length, elsewhere: linked ? null : elsewhere({ caseRec, swaps, hoursRec, pid }), calendarAt: calSeen?.at || null });
     }
 
     const wtok = path.match(/^\/api\/widgettoken\/([\w-]+)$/);
@@ -310,9 +369,13 @@ export default async function handler(req) {
     // ---- swap requests ----
     if (path === "/api/swaps" && method === "GET") {
       const today = todayLocal();
-      const mine = req.headers.get("x-device-key") ? keyHash(req.headers.get("x-device-key")) : null;
+      const raw = req.headers.get("x-device-key");
+      const mine = raw ? keyHash(raw) : null;
+      // The resident this device belongs to: their requests and offers are its own, from any device.
+      const me = req.headers.get("x-me") || "";
+      const linkedPid = me && (await linkedTo(me, raw)) ? me : null;
       const list = ((await st.getJSON("swaps"))?.list || []).filter((r) => r.end >= addDays(today, -1) && r.status !== "cancelled");
-      return json({ swaps: list.map((r) => publicSwap(r, mine)) });
+      return json({ swaps: list.map((r) => publicSwap(r, mine, linkedPid)) });
     }
     if (path === "/api/swaps" && method === "POST") {
       const body = await req.json();
@@ -332,6 +395,7 @@ export default async function handler(req) {
         data.list.push(r);
         return data;
       });
+      await linkDevice(p.id, body.key);
       return json({ ok: true, swap: publicSwap(r, r.keyHash) });
     }
     const swap = path.match(/^\/api\/swaps\/([a-z0-9]{6,40})$/);
@@ -341,6 +405,11 @@ export default async function handler(req) {
       const key = goodKey(body.key) ? keyHash(body.key) : null;
       const admin = isAdmin(req);
       const model = body.action === "offer" ? createModel(await loadDataset(st)) : null;
+      // A request or offer is this device's if it made it, or if the device is linked to whoever did.
+      const before = ((await st.getJSON("swaps"))?.list || []).find((x) => x.id === swap[1]);
+      const linkedPids = new Set();
+      for (const pid of new Set([before?.pid, body.pid, before?.agreed?.pid].filter(Boolean))) if (await linkedTo(pid, body.key)) linkedPids.add(pid);
+      const ours = (hash, pid) => (!!key && hash === key) || linkedPids.has(pid);
       // What to tell the chiefs' inbox, once the swap itself is safely saved.
       let inboxUpdate = null, result = null;
       await st.update("swaps", (saved) => {
@@ -349,7 +418,7 @@ export default async function handler(req) {
         const now = new Date().toISOString();
         const r = data.list.find((x) => x.id === swap[1]);
         if (!r || r.status === "cancelled") throw new HttpError(404, "That request is gone.");
-        const owner = key && key === r.keyHash;
+        const owner = ours(r.keyHash, r.pid);
         const undone = () => { inboxUpdate = () => swapUndone(st, r.id); };
         if (body.action === "offer") {
           if (r.status !== "open") throw new HttpError(409, "That shift already has a taker.");
@@ -358,7 +427,7 @@ export default async function handler(req) {
           if (!p || p.id === r.pid) throw new HttpError(400, "Pick yourself first.");
           if (p.cls !== r.cls) throw new HttpError(400, `Swaps stay within the class (${r.cls}).`);
           const earlier = r.offers.find((o) => o.pid === p.id);
-          if (earlier && earlier.keyHash !== key) throw new HttpError(403, "Only the device that made this offer can change it.");
+          if (earlier && !ours(earlier.keyHash, earlier.pid)) throw new HttpError(403, "Only the device that made this offer can change it.");
           let trade = null;
           if (body.date) {
             trade = DATE.test(body.date) && body.date >= today ? shiftBlock(model, p.id, body.date) : null;
@@ -368,7 +437,7 @@ export default async function handler(req) {
           r.offers.push({ pid: p.id, keyHash: key, ...(trade ? { date: trade.date, end: trade.end, label: trade.label } : {}), note: cleanText(body.note, 200), at: now });
         } else if (body.action === "withdraw") {
           const o = r.offers.find((x) => x.pid === body.pid);
-          if (!o || o.keyHash !== key) throw new HttpError(403, "Only the device that made this offer can take it back.");
+          if (!o || !ours(o.keyHash, o.pid)) throw new HttpError(403, "Only the device that made this offer can take it back.");
           if (r.agreed?.pid === o.pid) { r.status = "open"; r.agreed = null; undone(); }
           r.offers = r.offers.filter((x) => x !== o);
         } else if (body.action === "accept") {
@@ -390,14 +459,16 @@ export default async function handler(req) {
           r.status = "cancelled";
         } else if (body.action === "emailed") {
           const taker = r.offers.find((x) => x.pid === r.agreed?.pid);
-          if (!owner && !(taker && taker.keyHash === key)) throw new HttpError(403, "Not your swap.");
+          if (!owner && !(taker && ours(taker.keyHash, taker.pid))) throw new HttpError(403, "Not your swap.");
           r.emailedAt = now;
         } else throw new HttpError(400, "Unknown action");
         result = r;
         return data;
       });
       await inboxUpdate?.();
-      return json({ ok: true, swap: publicSwap(result, key) });
+      if (body.action === "offer") await linkDevice(body.pid, body.key);
+      const linkedPid = [result.pid, body.pid].find((x) => x && linkedPids.has(x)) || null;
+      return json({ ok: true, swap: publicSwap(result, key, linkedPid) });
     }
 
     // ---- a sick call or a no-call list, logged for the admins' inbox ----
@@ -433,7 +504,7 @@ export default async function handler(req) {
       const ds = await loadDataset(st);
       if (!ds.people.some((p) => p.id === pid)) return fail(404, "No such resident");
       const saved = await st.getJSON(`hours/${pid}`);
-      const mine = saved && body.key && saved.keyHash === keyHash(body.key);
+      const mine = !!saved && goodKey(body.key) && (saved.keyHash === keyHash(body.key) || (await linkedTo(pid, body.key)));
       if (method === "DELETE") {
         if (saved && !mine && !isAdmin(req)) return fail(403, "Only the device that added these hours, or an admin, can remove them.");
         await st.delete(`hours/${pid}`);
@@ -449,6 +520,7 @@ export default async function handler(req) {
       const now = new Date().toISOString();
       const moves = [...(saved?.moves || []), ...(takeover ? [now] : [])].slice(-5);
       await st.setJSON(`hours/${pid}`, { keyHash: keyHash(body.key), entries, sharedAt: saved?.sharedAt || now, updatedAt: now, moves });
+      await linkDevice(pid, body.key);
       return json({ ok: true, entries: entries.length, updatedAt: now });
     }
 
@@ -464,24 +536,32 @@ export default async function handler(req) {
       const today = todayLocal();
       // Every attending ACGME lists, once anyone's Log cases button has read them.
       const supervisors = async () => (await st.getJSON(SUPERVISORS_KEY))?.list || [];
+      // A device linked to the resident (lib/devices.js) joins their log without being asked.
+      const linked = await linkedTo(pid, key);
       if (method === "GET" && !caselog[2]) {
-        const rec = await st.getJSON(caseKey(pid));
+        let rec = await st.getJSON(caseKey(pid));
+        if (rec && !ownsLog(rec, key) && linked) rec = await st.update(caseKey(pid), (saved) => (saved && !ownsLog(saved, key) ? mergeLog(saved, { key, join: true }, today).rec : undefined));
         if (rec && !ownsLog(rec, key)) return json({ owned: false, count: Object.keys(rec.cases || {}).length, devices: (rec.keys || []).length });
-        return json({ ...logView(rec, today), helper: helperScript, supervisors: await supervisors() });
+        return json({ ...logView(rec, today), helper: helperScript, supervisors: await supervisors(), minimums: await st.getJSON(minimumsKey(pid)) });
       }
       if (method === "PUT" && !caselog[2]) {
         const body = await req.json().catch(() => ({}));
-        let out = {};
-        await st.update(caseKey(pid), (saved) => { out = mergeLog(saved, { ...body, key }, today); return out.rec; });
+        let out = {}, joined = false;
+        await st.update(caseKey(pid), (saved) => {
+          joined = !ownsLog(saved, key);
+          out = mergeLog(saved, { ...body, key, join: body.join === true || linked }, today);
+          return out.rec;
+        });
         if (out.conflict) return json({ owned: false, error: "Your case log is kept on another device." }, 409);
         if (out.full) return fail(413, "The case log is full: enter some cases in ACGME first.");
+        if (joined) await linkDevice(pid, key); // the first device to keep it, or one that joined
         return json({ ...logView(out.rec, today), helper: helperScript, supervisors: await supervisors() });
       }
       if (method === "POST" && caselog[2]) {
         const body = await req.json().catch(() => ({}));
         let allowed = true;
         const rec = await st.update(caseKey(pid), (saved) => {
-          allowed = ownsLog(saved, key);
+          allowed = ownsLog(saved, key) || linked;
           if (!allowed) return undefined;
           const next = { ...saved, cases: Object.fromEntries(Object.entries(saved.cases || {}).map(([id, c]) => [id, { ...c }])) };
           return markEntered(next, Array.isArray(body.ids) ? body.ids.slice(0, 200) : [], body.on !== false) ? next : undefined;

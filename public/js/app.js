@@ -31,7 +31,9 @@ import { syncWidget, reloadWidgets, onWidgetOpen, onAlertTap, onScreenRegions } 
 import { watchInstall } from "./install.js";
 import { retryUpload } from "./logged.js";
 import { loadInbox, inboxCounts } from "./views/inbox.js";
-import { onCaseLogChange, hasUnsent, syncCaseLog } from "./cases.js";
+import { onCaseLogChange, hasUnsent, syncCaseLog, loadCaseLog } from "./cases.js";
+import { onMeChange } from "./me.js";
+import { loadSwaps } from "./views/requests.js";
 
 const state = {
   ds: local.get("ds"),
@@ -150,13 +152,21 @@ function howFar(date, today) {
   return n > 0 ? `In ${n} days` : `${-n} days ago`;
 }
 
+let hintCounted = false;
 function topbar(r) {
   const bar = document.getElementById("topbar");
   // The sign-in screen has its own big title: its bar just keeps the space at the top.
   bar.classList.toggle("plain", r.name === "setup");
   const inner = h("div", { class: "topbar-inner" });
   const me = state.me && state.model?.person(state.me);
-  const meBtn = me ? h("button", { class: "avatarbtn", "aria-label": "My schedule", onclick: () => go(`p/${state.me}`) }, avatar(state.model, state.me, "sm")) : null;
+  const meBtn = me ? h("button", { class: "avatarbtn", "aria-label": "My schedule", onclick: () => { local.set("meHint", true); go(`p/${state.me}`); } }, avatar(state.model, state.me, "sm")) : null;
+  // Once, on Today: nothing else says the initials at the top are their own schedule. It goes for
+  // good with "Got it" or a tap on the initials, and stops by itself after a few days of opening.
+  const hint = meBtn && r.name === "today" && !local.get("meHint") && local.get("meHintShown", 0) < 5 && innerWidth > 350
+    ? h("div", { class: "me-hint", role: "note" },
+      h("span", null, "Your month, rotations and calendar link: tap your initials."),
+      h("button", { class: "btn sm", onclick: () => { local.set("meHint", true); render(); } }, "Got it"))
+    : null;
   // Calling is one tap from every screen, without taking a tab.
   const callBtn = state.model && !["setup", "pick", "call"].includes(r.name)
     ? h("a", { class: "numbtn icononly", href: "#/call", "aria-label": "Call", title: "Call" }, icon("phone")) : null;
@@ -176,7 +186,9 @@ function topbar(r) {
       state.date !== state.today ? h("button", { class: "todaybtn", onclick: () => setDate(state.today) }, "Today") : null,
       callBtn,
       meBtn,
+      hint,
     ]);
+    if (hint && !hintCounted) { hintCounted = true; local.set("meHintShown", local.get("meHintShown", 0) + 1); }
   } else {
     const titles = { call: "Call", rate: "Rate the shifts", swaps: "Swaps", nocall: "No-call days", off: "Days off", exams: "Exams", hours: "Duty hours", gaps: "Coverage gaps", didactics: "Didactics", more: "More", admin: "Admin", p: "Schedule", setup: "DMC Schedule", pick: "Who are you?", layout: "Arrange", cases: "Case log", events: "Events" };
     const back = underMore(r.name) || r.name === "p";
@@ -312,6 +324,18 @@ onCaseLogChange(() => {
   const typing = document.activeElement?.matches?.("input, textarea, select");
   if (!typing && ["cases", "today", "more"].includes(route().name)) render();
 });
+// This device was just linked to the resident, or the server told something new (their calendar
+// subscribed): their case log and swaps come again, and the screen catches up.
+onMeChange((was, now) => {
+  if (was && !was.linked && now?.linked && state.me && state.model) {
+    loadCaseLog(state.me);
+    loadSwaps(ctx(), { force: true });
+  }
+  const typing = document.activeElement?.matches?.("input, textarea, select");
+  if (!typing) render();
+});
+// Scrolled down: the top bar's one-time note steps aside instead of covering cards.
+window.addEventListener("scroll", () => document.documentElement.classList.toggle("scrolled", window.scrollY > 40), { passive: true });
 // Turning or unfolding the phone changes which part of the screen it keeps.
 screenShape();
 let resizeTimer = null;

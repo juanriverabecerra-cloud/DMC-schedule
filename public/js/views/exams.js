@@ -3,7 +3,7 @@
 import { h, card, emptyState, segmented, append } from "../ui.js";
 import { local } from "../api.js";
 import { syncWidget } from "../native.js";
-import { addDays, diffDays, fmtDate, range } from "../../core/dates.js";
+import { diffDays, fmtDate, range } from "../../core/dates.js";
 import { EXAMS, TRACKS, examsFor, expectedSession, openSessions } from "../../core/exams.js";
 import { goldenSummary } from "../../core/daysoff.js";
 import { inDays, weekendLabel } from "./daysoff.js";
@@ -56,19 +56,15 @@ export function renderExams(ctx) {
   return root;
 }
 
-// On Today: the next exam and the next golden weekend, one line each.
-export function aheadCard(ctx, pid) {
+// For Today's Coming up: the next exam and the next golden weekend, with how far off each is.
+export function aheadItems(ctx, pid) {
   const { model, state } = ctx;
   const exam = examsNow(ctx).exams[0];
   const eligible = ["CA-1", "CA-2", "CA-3"].includes(model.person(pid)?.cls);
   const golden = eligible ? goldenSummary(model, pid, state.today).next : null;
-  // The next program events (from the office's emails), within three months.
-  const events = model.events(addDays(state.today, 1), addDays(state.today, 92), pid).slice(0, 2);
-  if (!exam && !golden && !events.length) return null;
-  const line = (text, value, to) => h("li", { class: "row tap", style: { minHeight: "44px" }, onclick: () => ctx.go(to) },
-    h("div", { class: "main small" }, text), h("b", { class: "small" }, value));
-  return card("Looking ahead", h("ul", { class: "list flush" },
-    exam ? line(exam.long, countdownWord(exam), "exams") : null,
-    golden ? line(`Golden weekend, ${weekendLabel(golden)}`, inDays(diffDays(state.today, golden.sat)), "off") : null,
-    events.map((e) => line(e.title, inDays(diffDays(state.today, e.date)), "events"))));
+  return [
+    golden ? { date: golden.sat, kind: "golden", label: "Golden weekend", sub: weekendLabel(golden), countdown: inDays(diffDays(state.today, golden.sat)), to: "off" } : null,
+    // An exam the program hasn't dated yet sits at the start of its window.
+    exam ? { date: exam.day || exam.from, kind: "exam", label: exam.long, sub: exam.day ? "" : `Sometime ${exam.window}`, countdown: countdownWord(exam), to: "exams" } : null,
+  ].filter(Boolean);
 }

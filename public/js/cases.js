@@ -79,7 +79,9 @@ function absorb(pid, body) {
   const days = { ...(body.days || {}) };
   for (const d of L.dirtyDays) if (L.days[d]) days[d] = L.days[d];
   const naming = L.dirtyNaming ? L.naming : body.naming || null;
-  Object.assign(L, { owned: true, cases, days, naming, acgmeCount: body.acgmeCount || null, learned: body.learned || {}, supervisorList: Array.isArray(body.supervisors) && body.supervisors.length ? body.supervisors : L.supervisorList || [], helper: body.helper || "", helperSeenAt: body.helperSeenAt || "", devices: body.devices || 1, loadedAt: new Date().toISOString(), syncError: "" });
+  // ACGME's count toward the minimums comes with a read of the log, not with each save.
+  const minimums = body.minimums !== undefined ? body.minimums : L.minimums || null;
+  Object.assign(L, { owned: true, cases, days, naming, minimums, acgmeCount: body.acgmeCount || null, learned: body.learned || {}, supervisorList: Array.isArray(body.supervisors) && body.supervisors.length ? body.supervisors : L.supervisorList || [], helper: body.helper || "", helperSeenAt: body.helperSeenAt || "", devices: body.devices || 1, loadedAt: new Date().toISOString(), syncError: "" });
   persist();
 }
 

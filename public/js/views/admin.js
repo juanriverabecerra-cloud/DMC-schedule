@@ -689,6 +689,18 @@ function backupSection(ctx) {
       }))));
 }
 
+// What's loaded: the call sheets by month, what this month's sheet says about itself, the last
+// sync and how many daily sheets are kept. (It used to sit under More, for everyone.)
+function dataCard(model) {
+  const month = todayLocal().slice(0, 7);
+  const m = model.ds.months?.[month];
+  return card("Data", h("dl", { class: "kv" },
+    h("dt", null, "Call sheets"), h("dd", null, model.months.map((x) => `${fmtMonth(x)}${model.ds.months[x]?.draft ? " (draft)" : ""}`).join(", ") || "None"),
+    m?.lastUpdated ? [h("dt", null, "Sheet says"), h("dd", null, `Last updated ${m.lastUpdated}`)] : null,
+    h("dt", null, "Synced"), h("dd", null, model.ds.updatedAt ? new Date(model.ds.updatedAt).toLocaleString() : "—"),
+    h("dt", null, "Daily sheets"), h("dd", null, String(Object.keys(model.ds.daily || {}).length))));
+}
+
 export function renderAdmin(ctx, arg) {
   const root = h("div");
   if (!local.get("adminKey")) { root.append(adminLogin(ctx)); return root; }
@@ -724,6 +736,7 @@ export function renderAdmin(ctx, arg) {
     peopleSection(ctx),
     settingsSection(ctx),
     backupSection(ctx),
+    dataCard(ctx.model),
     h("button", { class: "btn block sm", onclick: () => { local.del("adminKey"); ctx.state.admin = false; ctx.render(); } }, "Lock admin on this device"),
   );
   return root;

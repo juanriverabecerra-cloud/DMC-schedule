@@ -1,6 +1,7 @@
 // Runs on ACGME's Add Case page when a resident taps their "Log cases" bookmark. It fills the
 // next case from their DMC Schedule case log and stops: they check it and press ACGME's Submit.
-// It never submits. When Submit is pressed (or, on a computer, when the case shows in ACGME's
+// It never submits. It also brings ACGME's own count toward the graduation minimums back to the
+// app (sendMinimums below). When Submit is pressed (or, on a computer, when the case shows in ACGME's
 // "Last 5 Cases"), the app marks it entered, and the next tap fills the one after.
 //
 // ACGME has two Add Case pages: the computer one (CaseEntry), and the one phones are sent to
@@ -308,6 +309,29 @@
     fetch(api, { method: "POST", body: JSON.stringify(body) }).catch(function () {});
   }
 
+  // ACGME's own count toward the graduation minimums: its "Anesthesiology Minimum" report, run in
+  // the background on ACGME's site (the resident is already signed in) and sent to the app as the
+  // file ACGME makes. The app keeps only the categories and numbers. Quiet: nothing on the page
+  // changes, and if ACGME says no it simply waits for the next tap.
+  var MINIMUMS = "/ads/CaseLogs/Reports/GetReportInput?reportName=ResMinimums040&hasParameters=True&isArchiveReport=False";
+  function sendMinimums() {
+    return fetch(MINIMUMS, { credentials: "same-origin" }).then(function (res) { return res.ok ? res.text() : ""; }).then(function (html) {
+      var f = html && new DOMParser().parseFromString(html, "text/html").querySelector("form[action*='RunCaselogsReport']");
+      if (!f) return null;
+      var fd = new FormData(f);
+      fd.set("ReportFormat", "EXCEL");
+      return fetch(new URL(f.getAttribute("action"), location.origin).href, { method: "POST", body: fd, credentials: "same-origin" });
+    }).then(function (res) {
+      return res && res.ok && /excel/i.test(res.headers.get("content-type") || "") ? res.arrayBuffer() : null;
+    }).then(function (buf) {
+      if (!buf || buf.byteLength > 3e6) return;
+      var bytes = new Uint8Array(buf), bin = "";
+      for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      // Plain text, so the browser sends it without asking first.
+      return fetch(api, { method: "POST", body: JSON.stringify({ minimums: btoa(bin) }) });
+    }).catch(function () {});
+  }
+
   // A case is called by its Case ID, or by its date when the resident leaves IDs blank.
   function nameOf(c, midSentence) { return c.caseId || (midSentence ? "the " : "The ") + c.date + " case"; }
 
@@ -360,7 +384,11 @@
       if (!res.ok) throw new Error(body && body.error ? body.error : "Couldn't reach DMC Schedule.");
       return body;
     });
-  }).then(function (data) { run(data); }, function (err) {
+  }).then(function (data) {
+    run(data);
+    // Twice a day at most: ACGME's count only moves as cases go in.
+    if (!data.minimumsAt || Date.now() - Date.parse(data.minimumsAt) > 12 * 3600 * 1000) sendMinimums();
+  }, function (err) {
     bar({ title: "Couldn't get your cases", lines: [err.message || "Check your connection and tap Log cases again."] });
   });
 })();

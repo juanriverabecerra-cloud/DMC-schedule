@@ -8,13 +8,14 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
-import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine, runnerCard, runnerName } from "./common.js";
+import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine, runnerCard, runnerName, tomorrowActions } from "./common.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { installCard, reminderCard } from "./reminders.js";
 import { swapsTodayCard } from "./requests.js";
 import { inboxTodayCard } from "./inbox.js";
-import { aheadCard } from "./exams.js";
+import { aheadItems } from "./exams.js";
+import { calendarSubscribed } from "../me.js";
 import { casesTodayCard, procedureShortcut } from "./cases.js";
 
 function shortCode(d) {
@@ -135,6 +136,7 @@ export function renderToday(ctx) {
 
   // Everything else is in the order the resident chose (Arrange, under More); each piece only
   // shows when it has something.
+  const { order, hidden } = todayLayout(local.get("todayLayout"));
   const tomorrow = addDays(state.today, 1);
   const mates = teammates(ctx, d);
   let runnerShown = false;
@@ -182,6 +184,7 @@ export function renderToday(ctx) {
         h("h2", { style: { fontSize: "20px" } }, headline(t)),
         room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.mda ? `MDA ${room.mda}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ")) : null,
         h("div", { class: "chips" }, dayChips(t, { withTime: false })),
+        tomorrowActions(ctx, pid, tomorrow, first),
         // Whether tomorrow's sheet is out yet, and since when.
         model.ds.daily[tomorrow]?.draft ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "Still being finalized: rooms can change.")
           : postedLine(ctx, tomorrow, "Posted") ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, ...postedLine(ctx, tomorrow, "Posted")) : null);
@@ -200,8 +203,12 @@ export function renderToday(ctx) {
       return gaps.length && p.cls !== "PGY-1" ? notice("gap", "alert", h("b", null, "Coverage gap: "), gaps.map((g) => g.title).join("; "), " ", h("a", { href: "#/gaps" }, "Details")) : null;
     },
     hours: () => hoursCard(ctx, pid),
-    coming: () => card("Coming up", upcomingList(ctx, pid, state.date), { pad: false }),
-    exams: () => (state.date === state.today ? aheadCard(ctx, pid) : null),
+    // Shifts, events, the next golden weekend and exam: one list. The week strip already shows
+    // this week's shifts, so the list picks up after it when the strip is on.
+    coming: () => card("Coming up", upcomingList(ctx, pid, state.date, {
+      extra: state.date === state.today ? aheadItems(ctx, pid) : [],
+      after: hidden.includes("week") ? "" : addDays(startOfWeek(state.date), 6),
+    }), { pad: false }),
     next: () => {
       const next = addMonths(monthKey(state.date), 1);
       const nextRot = model.rotationFor(pid, next);
@@ -211,9 +218,9 @@ export function renderToday(ctx) {
           h("span", { class: "dotc", vars: { "--c": model.day(pid, `${next}-15`).color } }),
           h("b", null, nextRot))) : null;
     },
-    calendar: () => subscribeCard(ctx, pid),
+    // Until their calendar app has read the feed once; after that it's under More and My schedule.
+    calendar: () => (calendarSubscribed(pid) ? null : subscribeCard(ctx, pid)),
   };
-  const { order, hidden } = todayLayout(local.get("todayLayout"));
   for (const key of order) {
     if (hidden.includes(key)) continue;
     for (const el of [sections[key]?.()].flat()) if (el) root.append(el);

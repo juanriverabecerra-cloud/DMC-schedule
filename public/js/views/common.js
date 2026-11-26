@@ -1,13 +1,15 @@
 // Pieces shared by several screens: OR assignment details, the day sheet, upcoming events,
 // and the calendar subscription card.
-import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons } from "../ui.js";
+import { h, icon, card, dayChips, personRow, openSheet, copyText, toast, notice, callChip, numberButtons, smsHref } from "../ui.js";
 import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT, fmtTime, nowMinutesLocal, todayLocal } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { openEventSheet } from "./events.js";
 import { SITES } from "../../core/codes.js";
 import { cleanAttending } from "../../core/attendings.js";
+import { isMobile } from "../../core/directory.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
+import { meStatus } from "../me.js";
 
 // Techs change rooms every day, so no tech belongs to an OR: any room reaches the whole list.
 // The one you called today stays on top, since they're likely covering your area.
@@ -145,6 +147,33 @@ export function mdaChips(ctx, names) {
   return chips.length ? h("div", { class: "callchips" }, chips) : null;
 }
 
+// The evening before: text or call your attending (residents usually check in about the plan),
+// and the room's full details. A text comes already started; nothing is sent until they send it.
+export function tomorrowActions(ctx, pid, date, role) {
+  const { model } = ctx;
+  const dir = model.dir;
+  const room = role?.room || role?.rooms?.[0];
+  if (!room) return null;
+  const me = model.person(pid);
+  const first = me?.preferred || me?.first || "";
+  const pills = [];
+  if (role.kind === "room") {
+    for (const part of String(room.mda || "").split("/")) {
+      const s = dir.staff(part);
+      if (!s) continue;
+      const last = s.last || s.name;
+      const mobile = (s.numbers || []).find(isMobile);
+      const dial = mobile ? dir.dial(mobile) : null;
+      const message = `Hi Dr. ${last}, it's ${first}. I'm your resident in OR ${room.or} tomorrow${room.time ? ` (${room.time} start)` : ""}.`;
+      if (dial) pills.push(h("a", { class: "numbtn", href: smsHref(dial, message), onclick: (e) => e.stopPropagation() }, icon("message"), `Text ${last}`));
+      const call = callChip(dir, `Call ${last}`, s.numbers);
+      if (call) pills.push(call);
+    }
+  }
+  pills.push(h("button", { class: "numbtn", type: "button", onclick: (e) => { e.stopPropagation(); openDaySheet(ctx, pid, date); } }, icon("info"), `OR ${room.or} details`));
+  return h("div", { class: "callchips", style: { marginTop: "10px" } }, pills);
+}
+
 // Residents this person works with today, from the daily sheet.
 export function teammates(ctx, d) {
   const ids = new Map();
@@ -201,21 +230,29 @@ export function upcoming(model, pid, from, days = 45, max = 7) {
   return [...out, ...events].sort((a, b) => a.date.localeCompare(b.date)).slice(0, max);
 }
 
-export function upcomingList(ctx, pid, from) {
-  const items = upcoming(ctx.model, pid, from);
+// Today's "Coming up": shifts, rotation changes and program events, plus (from `extra`) the next
+// golden weekend and exam, each once, in date order. `after` leaves out shifts through that day
+// (the week strip above already shows them); events always show, since the strip doesn't.
+export function upcomingList(ctx, pid, from, { extra = [], after = "" } = {}) {
+  const { today } = ctx.state;
+  // The extras always make the list, however far off: an exam months away is still worth a line.
+  const near = upcoming(ctx.model, pid, from, 45, 10).filter((e) => e.kind === "event" || e.kind === "rot" || !after || e.date > after).slice(0, 7);
+  const items = [...near, ...extra].sort((a, b) => a.date.localeCompare(b.date));
   if (!items.length) return h("p", { class: "muted small", style: { margin: "0 16px 14px" } }, "Nothing notable in the next few weeks of uploaded schedules.");
-  return h("ul", { class: "list" }, items.map((e) => h("li", { class: "row tap", onclick: () => (e.event ? openEventSheet(ctx, e.event) : ctx.setDate(e.date)) },
+  const open = (e) => (e.event ? openEventSheet(ctx, e.event) : e.to ? ctx.go(e.to) : ctx.setDate(e.date));
+  return h("ul", { class: "list" }, items.map((e) => h("li", { class: "row tap", onclick: () => open(e) },
     h("div", { style: { width: "64px", flex: "none" } },
-      h("div", { style: { fontWeight: 700, fontSize: "13px" } }, diffDays(ctx.state.today, e.date) < 7 ? relDay(e.date, ctx.state.today) : DOW_SHORT[dow(e.date)]),
+      h("div", { style: { fontWeight: 700, fontSize: "13px" } }, diffDays(today, e.date) < 7 ? relDay(e.date, today) : DOW_SHORT[dow(e.date)]),
       h("div", { class: "tiny muted" }, fmtDate(e.date, "md"))),
     h("div", { class: "main" },
       // An event's title is a name, not a status: it gets its own line and wraps (two lines at
       // most) instead of a one-line chip that runs off the card.
       e.kind === "event"
         ? h("div", { class: "evt" }, icon("event"), h("span", null, e.label))
-        : h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" ? "info" : e.kind}` }, e.label)),
+        : h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" || e.kind === "exam" ? "info" : e.kind}` }, e.label)),
       e.end && e.end !== e.date ? h("div", { class: "sub" }, `${fmtDate(e.date)} – ${fmtDate(e.end)}`) : e.sub ? h("div", { class: "sub" }, e.sub) : null),
-    e.kind === "event" ? icon("right") : null,
+    // How far off, for the things people count down to.
+    e.countdown ? h("b", { class: "small countdown" }, e.countdown) : e.kind === "event" || e.to ? icon("right") : null,
   )));
 }
 
@@ -373,7 +410,10 @@ export function openDaySheet(ctx, pid, date) {
   openSheet(fmtDate(date, "long"), body);
 }
 
-export function subscribeCard(ctx, pid) {
+export const subscribeCard = (ctx, pid) => card("Calendar", subscribeBody(ctx, pid));
+
+// The calendar feed: subscribe, or, once their calendar app has read it, when it last did.
+export function subscribeBody(ctx, pid) {
   const holder = h("div");
   let feed = null;
   const withDid = () => local.get("calDidactics", true);
@@ -403,8 +443,10 @@ export function subscribeCard(ctx, pid) {
   const toggle = ctx.model.didactics?.has ? h("label", { class: "checkline" },
     h("input", { type: "checkbox", checked: withDid(), onchange: (e) => { local.set("calDidactics", e.target.checked); if (feed) showLinks(); } }),
     h("span", null, "Include didactics: conferences, board review, and your own presentations and mock orals (with Zoom links). Changing this after subscribing needs a new subscription.")) : null;
-  return card("Calendar", h("div", null,
-    h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "Subscribe once and every shift, OR assignment and who's on tonight shows up in your phone's calendar."),
+  const seen = pid === ctx.state.me ? meStatus(pid)?.calendarAt : null;
+  return h("div", null,
+    seen ? h("p", { class: "small cal-on" }, icon("check"), h("span", null, `Your calendar is subscribed. It last checked ${clockAt(seen, ctx.state.today)}. Add it to another calendar below.`))
+      : h("p", { class: "small muted", style: { margin: "0 0 10px" } }, "Subscribe once and every shift, OR assignment and who's on tonight shows up in your phone's calendar."),
     toggle,
-    holder));
+    holder);
 }

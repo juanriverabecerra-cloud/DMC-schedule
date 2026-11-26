@@ -14,6 +14,7 @@ import {
 import { openInSafari, opensInApp, isIos as onIphone } from "../install.js";
 import { sheetAttendingNames } from "../../core/attendings.js";
 import { local } from "../api.js";
+import { linkButton } from "../me.js";
 
 let lastLoad = 0;
 
@@ -110,10 +111,41 @@ export function renderCases(ctx, arg) {
   cards.forEach((c, i) => root.append(caseCard(ctx, pid, day, c, i, { open: formKey(c) === openKey, next: cards.slice(i + 1).find((x) => !x.enteredAt) })));
   if (date <= state.today && (day.kind || cards.length)) root.append(addCard(ctx, pid, day, cards));
   root.append(acgmeCard(ctx, pid, L));
+  const minimums = minimumsCard(ctx, pid, L);
+  if (minimums) root.append(minimums);
   return root;
 }
 
 const isIntern = (model, pid) => model.person(pid)?.cls === "PGY-1";
+const minimumsMet = (m) => m.lines.filter((l) => l.total >= l.minimum).length;
+
+// ACGME's own count toward the graduation minimums (lib/acgme-report.js), which the Log cases
+// button brings back from ACGME's report. Real numbers only: until the first one comes, a line
+// on how to get it.
+function minimumsCard(ctx, pid, L) {
+  if (isIntern(ctx.model, pid) || !L.owned) return null;
+  const m = L.minimums;
+  if (!m?.lines?.length) {
+    return h("section", { class: "card card-pad" },
+      h("h3", { class: "card-title" }, "Graduation minimums"),
+      h("p", { class: "small muted", style: { margin: 0 } }, "Tap Log cases once on ACGME's page and ACGME's own count toward your minimums shows here, category by category. It catches up whenever you use the button."));
+  }
+  const rows = m.lines.map((l) => {
+    const done = l.total >= l.minimum;
+    return h("li", { class: "row minimum" },
+      h("div", { class: "main" },
+        h("div", { class: "name" }, h("span", { class: "n" }, l.name), done ? h("span", { class: "pill", style: { "--c": "var(--late)" } }, "Met") : null),
+        l.parts ? h("div", { class: "tiny muted" }, l.parts.map((x) => `${x.name} ${x.total}`).join(" · ")) : null,
+        h("div", { class: "meter" }, h("i", { style: { width: `${Math.min(100, (l.total / l.minimum) * 100)}%`, background: done ? "var(--late)" : "var(--accent)" } }))),
+      h("b", { class: "small count" }, `${l.total} of ${l.minimum}`));
+  });
+  return h("section", { class: "card" }, h("details", { class: "minimums" },
+    h("summary", null,
+      h("span", { class: "card-title" }, "Graduation minimums"),
+      h("span", { class: "small muted" }, `${minimumsMet(m)} of ${m.lines.length} met · ACGME's count${m.asOf ? ` on ${fmtDate(m.asOf)}` : ""}`)),
+    h("ul", { class: "list" }, rows),
+    h("p", { class: "disclaimer", style: { margin: "0 16px 12px" } }, "From ACGME's Anesthesiology Minimum report, read each time you use Log cases (twice a day at most). Cases still waiting in this app aren't in it yet.")));
+}
 
 // Adds a procedure-only case: the supervisor from one logged in the last week (lines on an ICU
 // month are usually the same attending's), the site set for the day or last used for these.
@@ -141,11 +173,13 @@ function procedureCard(ctx, pid, date, day) {
     h("div", { class: "taps" }, PROCEDURES.map((key) => h("button", { class: "tap preset", onclick: () => { addProcedure(ctx, pid, date, key); ctx.render(); } }, icon("add"), PRESETS[key].label))));
 }
 
+// One tap links this device to the resident (public/js/me.js): the case log, and their swap
+// requests too, work here from then on; app.js loads the log again.
 function elsewhereCard(ctx, pid, L) {
   return h("section", { class: "card card-pad" },
     h("h3", { class: "card-title" }, "Your case log is on another device"),
-    h("p", { class: "small muted" }, `It has ${plural(L.otherCount || 0, "case")}, kept from the phone or browser you started it on (the Home Screen app and Safari count as different ones). Use it here too, and both stay in step.`),
-    h("div", { class: "btnrow" }, h("button", { class: "btn sm primary", onclick: safely(async () => { await syncCaseLog(pid, { join: true }); await loadCaseLog(pid); ctx.render(); toast("Your case log is on this device too"); }) }, "Use it here too")));
+    h("p", { class: "small muted" }, `It has ${plural(L.otherCount || 0, "case")}, kept from the phone or browser you started it on (the Home Screen app and Safari count as two). One tap and it works here too, with your swap requests, all staying in step.`),
+    h("div", { class: "btnrow" }, linkButton(pid)));
 }
 
 function dayHeader(ctx, pid, date, day, cards) {
@@ -839,8 +873,10 @@ export function caseLogLine(ctx) {
   const pid = ctx.state.me;
   if (!pid) return "Pick yourself to start";
   const { ready, notReady } = waitingOf(pid);
-  if (notReady.length) return `${plural(notReady.length, "case")} need details`;
+  if (notReady.length) return `${plural(notReady.length, "case")} ${notReady.length === 1 ? "needs" : "need"} details`;
   if (ready.length) return `${plural(ready.length, "case")} ready for ACGME`;
+  const m = caseLog(pid).minimums;
+  if (m?.lines?.length && !isIntern(ctx.model, pid)) return `${minimumsMet(m)} of ${m.lines.length} ACGME minimums met`;
   return isIntern(ctx.model, pid) ? "Log a line or intubation in two taps" : "Log cases from your OR sheet, then into ACGME";
 }
 

@@ -7,6 +7,19 @@ import { actualFor } from "../logged.js";
 import { openDaySheet, subscribeCard } from "./common.js";
 import { didacticsPersonCard } from "./didactics.js";
 
+// The call sheet's colors, under the month: where the colors are.
+const LEGEND = [
+  ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
+  ["call24", "24-hr call", "Friday (blue) and Saturday (H1) only. 6a to 6a, so it covers that night."],
+  ["call12", "12-hr call", "H2. Saturday and Sunday only, 6a to 6p."],
+  ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights. Friday and Saturday nights belong to the 24."],
+  ["senior", "CA-3 10a–7p", "\"10-7\" on the call sheet."],
+  ["ob", "11 to 9", "CA-1 OB rotation at Hutzel. Monday to Friday, 11a to 9p (\"11-9\" on the call sheet)."],
+  ["cardiac", "Cardiac call", "Magenta week on the call sheet."],
+  ["vac", "Vacation", "Vac, or the peach block around it."],
+  ["pc", "Post-call", "PC: post-call day off."],
+];
+
 function cellCode(d) {
   if (d.call === "NF") return "NF";
   if (d.call === "10-7") return "10–7";
@@ -118,7 +131,10 @@ export function renderPerson(ctx, pid) {
     gridHolder,
     h("div", { class: "chips", style: { padding: "0 12px 12px" } },
       h("span", { class: "chip late" }, "Late"), h("span", { class: "chip call24" }, "24h"), h("span", { class: "chip call12" }, "12h"),
-      h("span", { class: "chip night" }, "NF"), h("span", { class: "chip senior" }, "10–7"), h("span", { class: "chip cardiac" }, "Cardiac"))));
+      h("span", { class: "chip night" }, "NF"), h("span", { class: "chip senior" }, "10–7"), h("span", { class: "chip cardiac" }, "Cardiac")),
+    h("details", { class: "legend" }, h("summary", null, "What the colors mean"),
+      h("ul", { class: "list" }, LEGEND.map(([cls, label, text]) =>
+        h("li", { class: "row", style: { minHeight: "48px" } }, h("span", { class: `chip ${cls}`, style: { minWidth: "112px", justifyContent: "center" } }, label), h("div", { class: "main small muted" }, text)))))));
   root.append(hoursHolder);
   drawMonth();
 

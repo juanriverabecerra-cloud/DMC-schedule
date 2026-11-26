@@ -15,8 +15,7 @@ export const TODAY_SECTIONS = [
   { key: "week", label: "This week", sub: "Your next seven days" },
   { key: "gaps", label: "Coverage gaps", sub: "When a shift has no one" },
   { key: "hours", label: "Duty hours", sub: "Your 4-week average" },
-  { key: "coming", label: "Coming up", sub: "Calls, vacations and days off ahead" },
-  { key: "exams", label: "Exams ahead", sub: "Countdowns, as they get close" },
+  { key: "coming", label: "Coming up", sub: "Calls, events, golden weekends and exams ahead" },
   { key: "next", label: "Next month", sub: "Your next rotation" },
   { key: "calendar", label: "Calendar", sub: "Your schedule in your phone's calendar" },
 ];

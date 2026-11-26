@@ -1,8 +1,9 @@
-import { h, icon, card, avatar, classPill, segmented } from "../ui.js";
+import { h, icon, card, avatar, classPill, segmented, openSheet } from "../ui.js";
 import { local } from "../api.js";
 import { monthKey, fmtMonth, fmtDate } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
-import { subscribeCard } from "./common.js";
+import { subscribeBody } from "./common.js";
+import { calendarSubscribed } from "../me.js";
 import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus, turnOffAlerts } from "../push.js";
@@ -11,18 +12,6 @@ import { requestsCard } from "./requests.js";
 import { inboxCounts } from "./inbox.js";
 import { examsNow, countdownWord } from "./exams.js";
 import { caseLogLine } from "./cases.js";
-
-const LEGEND = [
-  ["late", "Late resident", "Green on the call sheet. Finish at your site, then help at Harper until 6p."],
-  ["call24", "24-hr call", "Friday (blue) and Saturday (H1) only. 6a to 6a, so it covers that night."],
-  ["call12", "12-hr call", "H2. Saturday and Sunday only, 6a to 6p."],
-  ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights. Friday and Saturday nights belong to the 24."],
-  ["senior", "CA-3 10a–7p", "\"10-7\" on the call sheet."],
-  ["ob", "11 to 9", "CA-1 OB rotation at Hutzel. Monday to Friday, 11a to 9p (\"11-9\" on the call sheet)."],
-  ["cardiac", "Cardiac call", "Magenta week on the call sheet."],
-  ["vac", "Vacation", "Vac, or the peach block around it."],
-  ["pc", "Post-call", "PC: post-call day off."],
-];
 
 function applyTheme(t) {
   if (t === "system") document.documentElement.removeAttribute("data-theme");
@@ -47,75 +36,45 @@ export function renderMore(ctx) {
 
   const pending = remindersFor(model, state);
   const todo = (key) => (pending.includes(key) ? h("span", { class: "pill todo" }, "To do") : null);
+  // One row: an icon, a name (with "To do" when it's waiting on them), a line under it.
+  const row = (ic, color, name, sub, onclick, todoKey) => h("li", { class: "row tap", onclick },
+    h("div", { class: "avatar", style: { "--c": color } }, icon(ic)),
+    h("div", { class: "main" }, h("div", { class: "name" }, name, todoKey ? todo(todoKey) : null), h("div", { class: "sub" }, sub)),
+    icon("right"));
+  const group = (title, rows) => (rows.some(Boolean) ? card(title, h("ul", { class: "list" }, rows), { pad: false }) : null);
   const month = monthKey(state.today);
   const gaps = model.months.includes(month) ? monthGaps(model, month).filter((g) => g.date >= state.today && g.level === "gap") : [];
-  const dirCount = model.dir.all().length;
-  root.append(h("section", { class: "card" }, h("ul", { class: "list" },
-    h("li", { class: "row tap", onclick: () => ctx.go("call") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("phone")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Call"), h("div", { class: "sub" }, dirCount ? `${dirCount} people, rooms and units` : "Phone directory")),
-      icon("right")),
-    (() => {
-      const status = alertStatus();
-      return h("li", { class: "row tap", onclick: () => openAlerts(ctx) },
-        h("div", { class: "avatar", style: { "--c": status === "on" ? "var(--late)" : "var(--accent)" } }, icon("bell")),
-        h("div", { class: "main" }, h("div", { class: "name" }, "Alerts", todo("alerts")), h("div", { class: "sub" }, ALERT_SUB[status])),
-        icon("right"));
-    })(),
-    h("li", { class: "row tap", onclick: () => ctx.go("gaps") },
-      h("div", { class: "avatar", style: { "--c": gaps.length ? "var(--gap)" : "var(--late)" } }, icon(gaps.length ? "alert" : "check")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Coverage gaps"), h("div", { class: "sub" }, gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month")),
-      icon("right")),
-    me ? h("li", { class: "row tap", onclick: () => ctx.go("cases") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("check")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Case log"), h("div", { class: "sub" }, caseLogLine(ctx))),
-      icon("right")) : null,
-    h("li", { class: "row tap", onclick: () => ctx.go("hours") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("clock")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Duty hours", todo("hours")), h("div", { class: "sub" }, "Your real hours, and estimates for everyone")),
-      icon("right")),
-    me ? h("li", { class: "row tap", onclick: () => ctx.go("off") },
-      h("div", { class: "avatar", style: { "--c": "var(--late)" } }, icon("calendar")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Days off"), h("div", { class: "sub" }, "Golden weekends, and days you're off with friends")),
-      icon("right")) : null,
-    me ? (() => {
-      const exam = examsNow(ctx).exams[0];
-      return h("li", { class: "row tap", onclick: () => ctx.go("exams") },
-        h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("book")),
-        h("div", { class: "main" }, h("div", { class: "name" }, "Exams"), h("div", { class: "sub" }, exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns")),
-        icon("right"));
-    })() : null,
-    (() => {
-      const next = ctx.model.events(ctx.state.today, undefined, ctx.state.me)[0];
-      return h("li", { class: "row tap", onclick: () => ctx.go("events") },
-        h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("event")),
-        h("div", { class: "main" }, h("div", { class: "name" }, "Events"), h("div", { class: "sub" }, next ? `Next: ${next.title}, ${fmtDate(next.date)}` : "Parties, lectures and conferences from the program office")),
-        icon("right"));
-    })(),
-    h("li", { class: "row tap", onclick: () => ctx.go("layout") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("arrange")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Arrange"), h("div", { class: "sub" }, "Your tabs, and what Today shows first")),
-      icon("right")),
-    h("li", { class: "row tap", onclick: () => ctx.go("rate") },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("sparkle")),
-      h("div", { class: "main" }, h("div", { class: "name" }, "Rate the shifts", todo("rate")), h("div", { class: "sub" }, local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?")),
-      icon("right")),
-  )));
+  const exam = me ? examsNow(ctx).exams[0] : null;
+  const next = model.events(state.today, undefined, state.me)[0];
 
-  if (me && me.cls !== "PGY-1") root.append(subscribeCard(ctx, state.me));
-
-  root.append(card("What the colors mean", h("ul", { class: "list" }, LEGEND.map(([cls, label, text]) =>
-    h("li", { class: "row", style: { minHeight: "48px" } }, h("span", { class: `chip ${cls}`, style: { minWidth: "112px", justifyContent: "center" } }, label), h("div", { class: "main small muted" }, text)))), { pad: false }));
-
-  const m = model.ds.months?.[month];
-  root.append(card("Data", h("dl", { class: "kv" },
-    h("dt", null, "Call sheets"), h("dd", null, model.months.map((x) => `${fmtMonth(x)}${model.ds.months[x]?.draft ? " (draft)" : ""}`).join(", ") || "None"),
-    m?.lastUpdated ? [h("dt", null, "Sheet says"), h("dd", null, `Last updated ${m.lastUpdated}`)] : null,
-    h("dt", null, "Synced"), h("dd", null, model.ds.updatedAt ? new Date(model.ds.updatedAt).toLocaleString() : "—"),
-    h("dt", null, "Daily sheets"), h("dd", null, String(Object.keys(model.ds.daily || {}).length)),
-  )));
-
-  root.append(card("Appearance", segmented([["system", "System"], ["light", "Light"], ["dark", "Dark"]], local.get("theme", "system"), (v) => { local.set("theme", v); applyTheme(v); ctx.render(); })));
+  // Calling isn't here: the phone button at the top of every screen does it.
+  root.append(...[
+    group("Your work", [
+      me ? row("check", "var(--accent)", "Case log", caseLogLine(ctx), () => ctx.go("cases")) : null,
+      row("clock", "var(--accent)", "Duty hours", "Your real hours, and estimates for everyone", () => ctx.go("hours"), "hours"),
+      me ? row("calendar", "var(--late)", "Days off", "Golden weekends, and days you're off with friends", () => ctx.go("off")) : null,
+      me ? row("book", "var(--accent)", "Exams", exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns", () => ctx.go("exams")) : null,
+      row("event", "var(--accent)", "Events", next ? `Next: ${next.title}, ${fmtDate(next.date)}` : "Parties, lectures and conferences from the program office", () => ctx.go("events")),
+    ]),
+    group("Program", [
+      row(gaps.length ? "alert" : "check", gaps.length ? "var(--gap)" : "var(--late)", "Coverage gaps", gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month", () => ctx.go("gaps")),
+      row("sparkle", "var(--accent)", "Rate the shifts", local.get("shiftRatings")?.sentAt ? "Thanks for rating. You can change your answers" : "One minute: how heavy does each shift really feel?", () => ctx.go("rate"), "rate"),
+    ]),
+    group("Settings", [
+      (() => {
+        const status = alertStatus();
+        return row("bell", status === "on" ? "var(--late)" : "var(--accent)", "Alerts", ALERT_SUB[status], () => openAlerts(ctx), "alerts");
+      })(),
+      row("arrange", "var(--accent)", "Arrange", "Your tabs, and what Today shows first", () => ctx.go("layout")),
+      me && me.cls !== "PGY-1" ? row("calendar", calendarSubscribed(state.me) ? "var(--late)" : "var(--accent)", "Calendar",
+        calendarSubscribed(state.me) ? "Subscribed: your shifts are in your phone's calendar" : "Your shifts in your phone's calendar",
+        () => openSheet("Calendar", h("div", { class: "card-pad" }, subscribeBody(ctx, state.me)))) : null,
+      h("li", { class: "row" },
+        h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("moon")),
+        h("div", { class: "main" }, h("div", { class: "name" }, "Appearance"),
+          segmented([["system", "System"], ["light", "Light"], ["dark", "Dark"]], local.get("theme", "system"), (v) => { local.set("theme", v); applyTheme(v); ctx.render(); }))),
+    ]),
+  ].filter(Boolean));
 
   root.append(h("div", { class: "btnrow", style: { marginTop: "12px" } },
     (() => {
@@ -132,5 +91,7 @@ export function renderMore(ctx) {
       location.hash = "#/setup";
       location.reload();
     } }, "Sign out")));
+  // How current the schedule on this phone is. The rest of what used to be "Data" is in Admin.
+  if (model.ds.updatedAt) root.append(h("p", { class: "disclaimer" }, `Schedule synced ${new Date(model.ds.updatedAt).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}.`));
   return root;
 }

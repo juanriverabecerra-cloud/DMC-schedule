@@ -8,6 +8,7 @@ import {
   NO_CALL_REASONS, noCallMonth, weekendsOf, noCallEmail, shiftName, lc,
 } from "../../core/requests.js";
 import { swapCandidates } from "../../core/swap.js";
+import { linkButton } from "../me.js";
 
 const CLASSES = ["CA-1", "CA-2", "CA-3"];
 const firstName = (model, pid) => model.person(pid)?.preferred || model.person(pid)?.first || model.name(pid);
@@ -109,7 +110,8 @@ let swaps = { list: null, at: 0, loading: false, key: "" };
 export function loadSwaps(ctx, { force = false } = {}) {
   if (swaps.loading || (!force && swaps.list && Date.now() - swaps.at < 30 * 1000)) return;
   swaps.loading = true;
-  api("/api/swaps", { headers: { "x-device-key": deviceKey() } }).then((res) => {
+  // Saying who's asking lets the server count a linked device's requests as its own (lib/devices.js).
+  api("/api/swaps", { headers: { "x-device-key": deviceKey(), ...(ctx.state.me ? { "x-me": ctx.state.me } : {}) } }).then((res) => {
     const key = JSON.stringify(res.swaps);
     const changed = key !== swaps.key;
     swaps = { list: res.swaps, at: Date.now(), loading: false, key };
@@ -164,7 +166,10 @@ function myRequestCard(ctx, r) {
     r.mine ? h("div", { class: "btnrow", style: { marginTop: "10px" } },
       r.status === "agreed" ? h("button", { class: "btn sm", onclick: () => { if (confirm("Undo the agreement and reopen the request?")) act(ctx, r.id, { action: "reopen" }, "Reopened"); } }, "Undo agreement") : null,
       h("button", { class: "btn sm danger", onclick: () => { if (confirm("Cancel this swap request?")) act(ctx, r.id, { action: "cancel" }, "Cancelled"); } }, "Cancel request"))
-      : h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, "Posted from another device: accept or cancel it there."),
+      : r.pid === state.me ? h("div", { class: "elsewhere-line" },
+        h("p", { class: "tiny muted", style: { margin: 0 } }, "Posted from another device. One tap to accept or cancel it from this one too:"),
+        linkButton(state.me))
+        : null,
     h("p", { class: "tiny muted", style: { margin: "8px 0 0" } }, `Asked ${fmtDate(todayLocal(new Date(r.createdAt)))}${state.me === r.pid ? "" : ` by ${model.name(r.pid)}`}.`)));
 }
 

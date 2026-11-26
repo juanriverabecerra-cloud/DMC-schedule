@@ -2,6 +2,7 @@
 // Other residents never see them.
 import { api, local, deviceKey } from "./api.js";
 import { actualHours } from "../core/logged.js";
+import { linkHere } from "./me.js";
 
 const KEY = "loggedHours";
 
@@ -27,21 +28,22 @@ export function hoursBasis(actual, week) {
 }
 
 // ---- a copy in the app ----
-// Saved hours also go to the app's server, for the admin pages. Only the device that first sent
-// a resident's hours can update or remove them.
+// Saved hours also go to the app's server, for the admin pages. Only the resident's own devices
+// (lib/devices.js) can update or remove them.
 
-const send = (pid, entries, replace) => api(`/api/hours/${pid}`, { method: "PUT", body: { key: deviceKey(), entries, replace } });
+const send = (pid, entries) => api(`/api/hours/${pid}`, { method: "PUT", body: { key: deviceKey(), entries } });
 
-// `quiet` is the retry when the app opens: it never asks anything.
-export async function uploadLogged(pid, entries, { quiet = false } = {}) {
+// Never asks anything, so the retry when the app opens can use it too.
+export async function uploadLogged(pid, entries) {
   local.set("hoursSync", { pid, pending: true });
   try {
-    await send(pid, entries, false);
+    await send(pid, entries);
   } catch (err) {
     if (err.status !== 409) throw err;
-    local.set("hoursSync", { pid, pending: false });
-    if (quiet || !confirm("Your hours were first added from another device, maybe Safari before you added the app to your Home Screen. Use the hours on this device from now on?")) return false;
-    await send(pid, entries, true);
+    // Added from another of their devices (Safari before the Home Screen app, say): whoever has
+    // their New Innovations export is them, so this device becomes theirs too and the hours add up.
+    await linkHere(pid);
+    await send(pid, entries);
   }
   local.set("hoursSync", { pid, pending: false, at: new Date().toISOString() });
   return true;
@@ -51,7 +53,7 @@ export async function uploadLogged(pid, entries, { quiet = false } = {}) {
 export function retryUpload(pid) {
   const sync = local.get("hoursSync");
   const saved = loggedFor(pid);
-  if (sync?.pending && sync.pid === pid && saved) uploadLogged(pid, saved.entries, { quiet: true }).catch(() => {});
+  if (sync?.pending && sync.pid === pid && saved) uploadLogged(pid, saved.entries).catch(() => {});
 }
 
 export async function removeUploaded(pid) {

@@ -213,6 +213,62 @@ test("swap requests: post, offer within the class, accept only by the asker, the
   assert.deepEqual((await call("GET", "/api/swaps", undefined, viewer)).body.swaps, []);
 });
 
+test("devices: one tap and a resident's swap requests, case log and hours work on another of their devices", async () => {
+  const st = openStore();
+  const today = todayLocal();
+  const day = (n) => addDays(today, n);
+  const months = {};
+  const put = (pid, date, t) => {
+    const m = (months[date.slice(0, 7)] ||= { rows: { a: { rotation: "Basic Anesthesia", days: {} }, b: { rotation: "Basic Anesthesia", days: {} } }, days: 31 });
+    m.rows[pid].days[Number(date.slice(8))] = { t };
+  };
+  put("a", day(3), "H1");
+  const person = (id) => ({ id, last: `Res${id.toUpperCase()}`, first: "Test", preferred: "Test", cls: "CA-1", canonical: `Res${id.toUpperCase()}, Test`, aliases: [] });
+  await st.setJSON("dataset", { people: [person("a"), person("b")], months, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] } });
+  for (const k of ["swaps", "devices/a", "cases/a", "hours/a", "calseen/a"]) await st.delete(k);
+  const safari = "s".repeat(40), homeApp = "h".repeat(40), classmate = "x".repeat(40);
+  const as = (key) => ({ ...viewer, "x-device-key": key });
+
+  // Safari asks for a swap and starts the case log: that device is theirs.
+  const id = (await call("POST", "/api/swaps", { pid: "a", date: day(3), key: safari }, viewer)).body.swap.id;
+  await call("PUT", "/api/cases/a", { cases: [], days: { [day(-1)]: { none: true } } }, as(safari));
+  assert.equal((await call("GET", "/api/me/a", undefined, as(safari))).body.linked, true);
+
+  // The Home Screen app is a stranger: it hears what's kept elsewhere and can't change any of it.
+  let me = await call("GET", "/api/me/a", undefined, as(homeApp));
+  assert.deepEqual([me.body.linked, me.body.elsewhere.requests, me.body.elsewhere.any], [false, 1, true]);
+  assert.equal((await call("GET", "/api/swaps", undefined, { ...as(homeApp), "x-me": "a" })).body.swaps[0].mine, false);
+  assert.equal((await call("POST", `/api/swaps/${id}`, { action: "cancel", key: homeApp }, viewer)).status, 403);
+  assert.equal((await call("GET", "/api/cases/a", undefined, as(homeApp))).body.owned, false);
+
+  // One tap, and all of it works there too.
+  me = await call("POST", "/api/me/a/link", { key: homeApp }, viewer);
+  assert.deepEqual([me.body.linked, me.body.devices, me.body.elsewhere], [true, 2, null]);
+  assert.equal((await call("GET", "/api/swaps", undefined, { ...as(homeApp), "x-me": "a" })).body.swaps[0].mine, true);
+  const log = await call("GET", "/api/cases/a", undefined, as(homeApp));
+  assert.equal(log.body.owned, true);
+  assert.deepEqual(Object.keys(log.body.days), [day(-1)]);
+  // Saying you're them isn't enough: a classmate's phone still can't change their request.
+  assert.equal((await call("GET", "/api/swaps", undefined, { ...as(classmate), "x-me": "a" })).body.swaps[0].mine, false);
+  assert.equal((await call("POST", `/api/swaps/${id}`, { action: "cancel", key: classmate }, viewer)).status, 403);
+
+  // Hours from either of their devices add up, with no "replace" question.
+  const entry = (date) => ({ date, start: 360, endDate: date, end: 1080, hours: 12, type: "Duty Hours", rotation: "TEST ROTATION" });
+  assert.equal((await call("PUT", "/api/hours/a", { key: safari, entries: [entry("2026-10-01")] }, viewer)).status, 200);
+  assert.equal((await call("PUT", "/api/hours/a", { key: homeApp, entries: [entry("2026-10-02")] }, viewer)).body.entries, 2);
+  assert.equal((await call("PUT", "/api/hours/a", { key: classmate, entries: [entry("2026-10-03")] }, viewer)).status, 409);
+
+  // Once a calendar app reads their feed, the app knows not to offer subscribing again.
+  assert.equal((await call("GET", "/api/me/a", undefined, as(homeApp))).body.calendarAt, null);
+  const feed = new URL((await call("GET", "/api/caltoken/a", undefined, viewer)).body.url);
+  const ics = await api(new Request(`http://localhost${feed.pathname}`));
+  assert.equal(ics.status, 200);
+  assert.ok((await call("GET", "/api/me/a", undefined, as(homeApp))).body.calendarAt);
+
+  // And the request can be cancelled from the Home Screen app now.
+  assert.equal((await call("POST", `/api/swaps/${id}`, { action: "cancel", key: homeApp }, viewer)).body.swap.status, "cancelled");
+});
+
 test("the chiefs' inbox: sick calls alert admins once, swaps and no-call lists wait for one evening summary", async () => {
   const st = openStore();
   const { sendDigest } = await import("../lib/reqlog.js");
@@ -1116,7 +1172,69 @@ test("case log: only its own devices read it, ACGME's page gets ready cases, and
   // One stray name isn't a list, and doesn't replace the one kept.
   await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ supervisors: ["Eee, Lee"] }) }));
   assert.equal((await call("GET", "/api/cases/doe-jane", undefined, phone)).body.supervisors.length, 4);
+
+  // ACGME's own count toward the minimums: the button sends ACGME's report file, the app keeps the
+  // numbers (not the file or the name in it), the resident's devices see them, and the button
+  // knows when it last did.
+  await st.delete("acgme-minimums/doe-jane");
+  assert.equal((await (await api(new Request(`http://localhost/api/acgme/${helper}`))).json()).minimumsAt, null);
+  const file = Buffer.from(minimumsReport()).toString("base64");
+  const report = await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ minimums: file }) }));
+  assert.equal((await report.json()).minimums, true);
+  r = await call("GET", "/api/cases/doe-jane", undefined, phone);
+  assert.equal(r.body.minimums.asOf, "2026-11-20");
+  assert.deepEqual(r.body.minimums.lines.map((l) => [l.name, l.total, l.minimum]), [["Cardiac with CPB", 3, 10], ["Cardiac", 4, 20], ["a. < 3 months", 0, 5]]);
+  assert.deepEqual(r.body.minimums.lines[1].parts.map((p) => p.total), [3, 1]);
+  assert.ok(!JSON.stringify(await st.getJSON("acgme-minimums/doe-jane")).includes("Resident:"), "only the numbers are kept");
+  assert.ok((await (await api(new Request(`http://localhost/api/acgme/${helper}`))).json()).minimumsAt);
+  // Anything else sent as the report is ignored.
+  const junk = await api(new Request(`http://localhost/api/acgme/${helper}`, { method: "POST", body: JSON.stringify({ minimums: "bm90IGFuIHhscw==" }) }));
+  assert.equal((await junk.json()).minimums, false);
+  assert.equal((await call("GET", "/api/cases/doe-jane", undefined, phone)).body.minimums.lines.length, 3);
 });
+
+// A made-up "Anesthesiology Minimum" report as ACGME's site hands it out: an old-style .xls (BIFF8
+// in an OLE2 compound file). Its shared strings run on into a CONTINUE record in the middle of a
+// string, as long reports do. Synthetic: no real resident or numbers.
+function minimumsReport() {
+  const le = (n, size) => { const b = Buffer.alloc(size); if (size === 2) b.writeUInt16LE(n); else b.writeUInt32LE(n >>> 0); return b; };
+  const rec = (type, data) => Buffer.concat([le(type, 2), le(data.length, 2), data]);
+  const strings = ["Anesthesiology Minimum", "Resident: Test Person", "As of 11/20/2026", "Category", "Minimum", "Total", "Cardiac",
+    "    Cardiac with CPB", "    Cardiac without CPB", "Total Cardiac", "Patients less than 12 yrs. old", "    a. < 3 months"];
+  const sst = Buffer.concat([le(strings.length, 4), le(strings.length, 4), ...strings.map((s) => Buffer.concat([le(s.length, 2), Buffer.from([0]), Buffer.from(s, "latin1")]))]);
+  const cut = sst.indexOf("without") + 3; // mid-string: the rest comes in a CONTINUE with its own flags byte
+  const label = (r, c, i) => rec(0x00fd, Buffer.concat([le(r, 2), le(c, 2), le(0, 2), le(i, 4)]));
+  const number = (r, c, v) => { const d = Buffer.alloc(14); d.writeUInt16LE(r); d.writeUInt16LE(c, 2); d.writeDoubleLE(v, 6); return rec(0x0203, d); };
+  const rk = (r, c, v) => rec(0x027e, Buffer.concat([le(r, 2), le(c, 2), le(0, 2), le((v << 2) | 2, 4)]));
+  const bof = (kind) => rec(0x0809, Buffer.concat([le(0x0600, 2), le(kind, 2), Buffer.alloc(12)]));
+  const book = Buffer.concat([
+    bof(0x0005), rec(0x00fc, sst.subarray(0, cut)), rec(0x003c, Buffer.concat([Buffer.from([0]), sst.subarray(cut)])), rec(0x000a, Buffer.alloc(0)),
+    bof(0x0010),
+    label(2, 2, 0), label(3, 2, 1), label(4, 2, 2), label(5, 0, 3), label(5, 3, 4), label(5, 4, 5),
+    label(6, 0, 6), label(7, 0, 7), rk(7, 3, 10), number(7, 4, 3), label(8, 0, 8), rk(8, 4, 1),
+    label(9, 0, 9), number(9, 3, 20), rk(9, 4, 4), label(10, 1, 10), label(11, 1, 11), rk(11, 3, 5), number(11, 4, 0),
+    rec(0x000a, Buffer.alloc(0)),
+  ]);
+  const stream = Buffer.concat([book, Buffer.alloc(Math.max(4096, Math.ceil(book.length / 512) * 512) - book.length)]);
+  const n = stream.length / 512;
+  const header = Buffer.alloc(512, 0);
+  Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]).copy(header);
+  header.writeUInt16LE(0x3e, 0x18); header.writeUInt16LE(3, 0x1a); header.writeUInt16LE(0xfffe, 0x1c);
+  header.writeUInt16LE(9, 0x1e); header.writeUInt16LE(6, 0x20); header.writeUInt32LE(1, 0x2c); header.writeUInt32LE(1, 0x30);
+  header.writeUInt32LE(4096, 0x38); header.writeUInt32LE(0xfffffffe, 0x3c); header.writeUInt32LE(0xfffffffe, 0x44);
+  for (let i = 0; i < 109; i++) header.writeUInt32LE(i === 0 ? 0 : 0xffffffff, 0x4c + i * 4);
+  const fat = Buffer.alloc(512, 0xff); // sector 0 the FAT, 1 the directory, 2… the workbook
+  fat.writeUInt32LE(0xfffffffd, 0); fat.writeUInt32LE(0xfffffffe, 4);
+  for (let i = 0; i < n; i++) fat.writeUInt32LE(i === n - 1 ? 0xfffffffe : 3 + i, (2 + i) * 4);
+  const dir = Buffer.alloc(512, 0);
+  const entry = (at, name, type, start, size) => {
+    Buffer.from(name, "utf16le").copy(dir, at); dir.writeUInt16LE((name.length + 1) * 2, at + 0x40);
+    dir[at + 0x42] = type; dir.writeUInt32LE(start, at + 0x74); dir.writeUInt32LE(size, at + 0x78);
+  };
+  entry(0, "Root Entry", 5, 0xfffffffe, 0);
+  entry(128, "Workbook", 2, 2, stream.length);
+  return Buffer.concat([header, fat, dir, stream]);
+}
 
 test("case log nudges: after a case day with nothing logged, never twice, and weekly when cases wait", async () => {
   const { sendCaseNudges, nudgesFor } = await import("../lib/caselog-nudges.js");
