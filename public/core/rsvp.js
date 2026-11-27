@@ -4,11 +4,14 @@
 import { addDays, diffDays, fmtDate } from "./dates.js";
 
 const ASKS = /\b(rsvp|r\.s\.v\.p|register|registration|sign[- ]?up|reply by|let us know if you)\b/i;
+// A lecture's or meeting's link is usually just to join or register for the stream, not a reply
+// someone's counting: those need a deadline or the email asking for one.
+const WORK = new Set(["lecture", "didactic", "conference", "meeting", "deadline"]);
 
 // { by, implied, left (days), passed, link } for an event that wants a reply, else null.
 export function rsvpFor(e, today) {
   if (!e || e.cancelled || e.date < today) return null;
-  if (!(e.rsvpBy || e.rsvpLink || e.rsvpNeeded || ASKS.test(`${e.title || ""} ${e.note || ""}`))) return null;
+  if (!(e.rsvpBy || e.rsvpNeeded || ASKS.test(`${e.title || ""} ${e.note || ""}`) || (e.rsvpLink && !WORK.has(e.kind)))) return null;
   let by = e.rsvpBy && e.rsvpBy <= e.date ? e.rsvpBy : "";
   const implied = !by;
   if (implied) by = addDays(e.date, -7) >= today ? addDays(e.date, -7) : addDays(e.date, -1) >= today ? addDays(e.date, -1) : e.date;

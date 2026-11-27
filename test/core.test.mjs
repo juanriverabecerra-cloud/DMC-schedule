@@ -1112,6 +1112,8 @@ test("RSVPs: the deadline an email gives, a sensible one when it gives none, and
   assert.equal(rsvpFor(ev("b", { rsvpNeeded: true }), today).by, "2026-12-05", "a week before the event");
   assert.equal(rsvpFor(ev("c", { date: "2026-11-30", note: "Please RSVP to the chiefs" }), today).by, "2026-11-29", "the day before, when a week is gone");
   assert.equal(rsvpFor(ev("d", { title: "Grand Rounds", kind: "lecture" }), today), null, "nothing asked");
+  assert.equal(rsvpFor(ev("g", { title: "City-Wide Grand Rounds", kind: "lecture", rsvpLink: "https://example.com/register" }), today), null, "a lecture's sign-in link isn't an RSVP");
+  assert.equal(rsvpFor(ev("h", { title: "Spring Social", rsvpLink: "https://example.com/rsvp" }), today).implied, true, "a party's link is");
   assert.equal(rsvpFor(ev("e", { rsvpBy: "2026-11-20" }), today).passed, true);
   assert.equal(rsvpFor(ev("f", { rsvpBy: "2026-11-29", cancelled: true }), today), null);
   const list = [ev("late", { rsvpBy: "2026-12-02" }), ev("soon", { rsvpBy: "2026-11-27" }), ev("far", { rsvpBy: "2026-12-20", date: "2026-12-30" }), ev("done", { rsvpBy: "2026-11-28" })];
