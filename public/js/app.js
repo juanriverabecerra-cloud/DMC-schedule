@@ -33,6 +33,7 @@ import { retryUpload } from "./logged.js";
 import { loadInbox, inboxCounts } from "./views/inbox.js";
 import { onCaseLogChange, hasUnsent, syncCaseLog, loadCaseLog } from "./cases.js";
 import { onMeChange } from "./me.js";
+import { checkMilestones, loadingLine } from "./delight.js";
 import { loadSwaps } from "./views/requests.js";
 
 const state = {
@@ -246,7 +247,12 @@ export function render() {
   let content;
   try {
     if (r.name === "setup") content = renderSetup(ctx());
-    else if (!state.model) content = h("div", { class: "empty-state" }, h("div", { class: "spinner", style: { margin: "40px auto" } }), "Loading the schedule…");
+    else if (!state.model) {
+      // A slow start gets a line from the OR instead.
+      const line = h("span", null, "Loading the schedule…");
+      setTimeout(() => { if (line.isConnected) line.textContent = loadingLine(); }, 1500);
+      content = h("div", { class: "empty-state" }, h("div", { class: "spinner", style: { margin: "40px auto" } }), line);
+    }
     else if (r.name === "pick") content = renderPickMe(ctx());
     else if (r.name === "tonight") content = renderTonight(ctx());
     else if (r.name === "board") content = renderBoard(ctx());
@@ -321,6 +327,7 @@ window.addEventListener("online", () => {
 // The case log arrives from the server after a screen is drawn: redraw the screens that show it,
 // but never while someone is typing.
 onCaseLogChange(() => {
+  checkMilestones(state.me); // ACGME's numbers may have just crossed one
   const typing = document.activeElement?.matches?.("input, textarea, select");
   if (!typing && ["cases", "today", "more"].includes(route().name)) render();
 });

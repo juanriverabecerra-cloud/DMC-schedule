@@ -16,6 +16,7 @@
   --senior: #0e7490;
   --cardiac: #c026d3;
   --vac: #c2410c;
+  --gold: #c9971c; --gold-ink: #8a6510;
   --ob: #be185d;
   --pc: #64748b;
   --gap: #dc2626;
@@ -56,6 +57,7 @@
     --senior: #67e8f9;
     --cardiac: #f0abfc;
     --vac: #fdba74;
+    --gold: #f2c14e; --gold-ink: #f7d47a;
     --ob: #f9a8d4;
     --pc: #a3b1c2;
     --gap: #f87171;
@@ -72,7 +74,7 @@
 :root[data-theme="dark"] {
   --bg: #0b0f14; --surface: #131a22; --surface-2: #1b2430; --text: #e6edf3; --muted: #9aa7b4; --faint: #6f7c89;
   --border: #263241; --accent: #6ea0ff; --accent-ink: #0b0f14; --late: #4ade80; --call24: #7aa7ff; --call12: #34d399;
-  --night: #a5b4fc; --senior: #67e8f9; --cardiac: #f0abfc; --vac: #fdba74; --ob: #f9a8d4; --pc: #a3b1c2; --gap: #f87171; --warn: #fbbf24;
+  --night: #a5b4fc; --senior: #67e8f9; --cardiac: #f0abfc; --vac: #fdba74; --gold: #f2c14e; --gold-ink: #f7d47a; --ob: #f9a8d4; --pc: #a3b1c2; --gap: #f87171; --warn: #fbbf24;
   --info: #7aa7ff; --ca1: #7aa7ff; --ca2: #34d399; --ca3: #c4b5fd; --pgy1: #fbbf24; --shadow: none;
 }
 
@@ -830,3 +832,27 @@ details.minimums[open] > summary { border-bottom: 1px solid var(--border); }
 .row.minimum { align-items: center; }
 .row.minimum .meter { margin-top: 6px; height: 6px; }
 .row.minimum .count { flex: none; white-space: nowrap; }
+
+/* Golden weekends: a gold edge with a slow light passing across, on the calendars, Coming up and
+   Days off (the look picked 2026-11-26). Still for anyone who asks for less motion. */
+.golden.mcell, .golden.wday { opacity: 1; }
+.golden .d, .golden-next { color: var(--gold-ink); }
+.chip.golden { --c: var(--gold-ink); }
+.golden.mcell, .golden.wday, .chip.golden, .hero.golden-fri {
+  background: linear-gradient(110deg, var(--surface-2) 35%, color-mix(in srgb, var(--gold) 30%, var(--surface-2)) 50%, var(--surface-2) 65%);
+  background-size: 300% 100%; animation: gold-sheen 3.5s ease-in-out infinite;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--gold) 75%, transparent);
+}
+.hero.golden-fri { background-color: var(--surface); background-image: linear-gradient(110deg, transparent 35%, color-mix(in srgb, var(--gold) 22%, transparent) 50%, transparent 65%); animation-iteration-count: 2; }
+@keyframes gold-sheen { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .golden, .golden-fri { animation: none !important; } }
+
+/* Little celebrations (delight.js): confetti over everything, never in the way of a tap; the
+   day card's one line for an occasion; the About card's sign-off. */
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 90; }
+.hero .touch { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: var(--accent); }
+.hero .touch svg { width: 15px; height: 15px; flex: none; }
+.hero .touch.gold { color: var(--gold-ink); }
+.about-sign { margin: 18px 0 0; text-align: center; font-size: 12.5px; color: var(--muted); }
+.bday { display: flex; gap: 8px; margin-top: 8px; }
+.bday select { flex: 1; min-width: 0; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; padding: 0 8px; }

@@ -3,6 +3,7 @@
 
 export const TODAY_SECTIONS = [
   { key: "day", label: "Your day", sub: "Where you are and your hours", fixed: true },
+  { key: "review", label: "Year in review", sub: "Late June: your year in numbers" },
   { key: "or", label: "OR sheet", sub: "Your room, start time and cases" },
   { key: "runner", label: "Board runner", sub: "Who's running the board, on an OR or call day" },
   { key: "cases", label: "Case log", sub: "After a case day; line shortcuts for interns" },

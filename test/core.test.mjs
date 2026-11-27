@@ -1008,6 +1008,75 @@ test("off together: everyone free, whole weekends marked, and who's the one hold
   assert.deepEqual(three.almost.find((x) => x.date === "2026-11-22"), { date: "2026-11-22", pid: "a", why: "12-hr call" });
 });
 
+// A made-up year for the occasion rules: "a" is a CA-3, "b" a CA-1, "c" a CA-2.
+function yearData() {
+  const month = (days, rows) => ({ days, rows });
+  const row = (rotation, days = {}) => ({ rotation, days });
+  const span = (from, to, t) => Object.fromEntries(Array.from({ length: to - from + 1 }, (_, i) => [from + i, { t }]));
+  return {
+    people: [["a", "CA-3"], ["b", "CA-1"], ["c", "CA-2"]].map(([id, cls]) => ({ id, last: id.toUpperCase(), first: "Tess", preferred: "Tess", cls })),
+    months: {
+      // Saturday the 31st is the night the clocks go back (Sunday November 1, 2026).
+      "2026-10": month(31, { a: row("Cardiac", { 31: { t: "H1" } }), b: row("Cardiac"), c: row("Vascular", span(1, 25, "H2")) }),
+      // b: a first 24 on the 14th, vacation Wednesday 18th to Friday 20th. a: nights 15th to 19th.
+      "2026-11": month(30, { a: row("Basic Anesthesia", { 7: { t: "H1" }, ...span(15, 19, "NF") }), b: row("Basic Anesthesia", { 14: { t: "H1" }, ...span(18, 20, "Vac") }), c: row("Vascular") }),
+      "2027-01": month(31, { a: row("Pain", { 1: { t: "H1" } }), b: row("Pain"), c: row("Pain") }),
+      "2027-06": month(30, { a: row("Pain", { 12: { t: "H2" } }), b: row("Pain"), c: row("Pain") }),
+    },
+    daily: {}, settings: {}, directory: { people: {}, places: [] },
+  };
+}
+
+test("occasions: one line for the day, the most important one", async () => {
+  const { occasion, dstSunday, graduationDay } = await import("../public/core/occasions.js");
+  const model = createModel(yearData());
+  const say = (pid, date, opts) => occasion(model, pid, date, opts)?.text ?? null;
+  assert.equal(dstSunday(2026, "fall"), "2026-11-01");
+  assert.equal(dstSunday(2027, "spring"), "2027-03-14");
+  assert.equal(graduationDay("CA-1", "2026-11-26"), "2029-06-30");
+  assert.equal(say("a", "2026-10-31"), "Clocks go back tonight: this call is 25 hours.");
+  assert.equal(say("b", "2026-11-14"), "First 24 of the year tonight. You've got this.");
+  assert.equal(say("a", "2026-11-07"), null, "not the first 24 any more");
+  assert.equal(say("b", "2026-11-17"), "Last day before vacation. Enjoy it.");
+  assert.equal(say("b", "2026-11-23"), "Welcome back.");
+  assert.equal(say("a", "2026-11-20"), "Nights done. Your golden weekend starts now.");
+  assert.equal(say("b", "2026-11-02"), "First day of Basic Anesthesia.");
+  assert.equal(say("b", "2026-10-16"), "Happy Ether Day: 180 years of anesthesia.");
+  assert.equal(say("b", "2026-11-10", { birthday: "11-10" }), "Happy birthday, Tess.");
+  assert.equal(say("a", "2027-01-01"), "Happy New Year. Someone has to keep them asleep.");
+  assert.equal(say("a", "2027-03-22"), "100 days to graduation.");
+  assert.equal(say("a", "2027-06-12"), "Last call of residency.");
+  const last = occasion(model, "a", "2027-06-30");
+  assert.equal(last.text, "Last day of residency. Congratulations, Dr. A.");
+  assert.ok(last.confetti);
+  assert.equal(say("a", "2026-07-01"), "Final year. Make it count.");
+  assert.equal(say("b", "2026-07-01"), "One year down. Welcome to anesthesia.");
+  const ite = [{ name: "ITE", day: "2027-02-06", days: 0 }];
+  assert.equal(say("b", "2027-02-06", { exams: ite, now: 8 * 60 }), "Good luck on the ITE today.");
+  assert.equal(say("b", "2027-02-06", { exams: ite, now: 14 * 60 }), "ITE done. Go celebrate.");
+  assert.equal(say("b", "2026-11-11", { exams: [{ name: "ITE", day: null, days: 100 }] }), "100 days to the ITE.");
+  assert.equal(say("c", "2026-11-11"), null, "an ordinary Wednesday");
+});
+
+test("milestones: the 5th golden weekend, the 25th call, and ACGME's numbers moving", async () => {
+  const { dayMilestones, acgmeNews, acgmeSnapshot } = await import("../public/core/occasions.js");
+  const model = createModel(yearData());
+  assert.deepEqual(dayMilestones(model, "b", "2026-10-31").map((m) => m.text), ["Your 5th golden weekend this year."]);
+  assert.deepEqual(dayMilestones(model, "c", "2026-10-25").map((m) => m.text), ["Call number 25 this year."]);
+  assert.deepEqual(dayMilestones(model, "c", "2026-10-24"), []);
+
+  const lines = [{ name: "Spinal", minimum: 40, total: 41 }, { name: "Epidural", minimum: 40, total: 1 }, { name: "Cardiac", minimum: 20, total: 10 }];
+  assert.equal(acgmeNews(null, { lines, totals: {}, count: 101, waiting: 0 }), null, "the first look is only a starting line");
+  const seen = { totals: { Spinal: 39, Epidural: 0, Cardiac: 9, "Cesarean Section": 0 }, count: 95, peak: 12 };
+  const now = { ...acgmeSnapshot({ lines }, 101, 0, seen), lines, waiting: 0 };
+  const news = acgmeNews(seen, now);
+  assert.deepEqual(news.said, ["Spinal minimum met · 41 of 40", "First Epidural in ACGME", "Halfway to the Cardiac minimum · 10 of 20", "100 cases in ACGME", "All caught up with ACGME"]);
+  assert.equal(news.quiet, false);
+  const halfOnly = acgmeNews({ totals: { Cardiac: 9 }, count: 101, peak: 0 }, { lines: [lines[2]], totals: { Cardiac: 10 }, count: 101, waiting: 3 });
+  assert.deepEqual([halfOnly.said, halfOnly.quiet], [["Halfway to the Cardiac minimum · 10 of 20"], true]);
+  assert.equal(acgmeNews(now, now), null, "nothing new, nothing said");
+});
+
 test("exams: ITE for everyone, the rest by resident, and the call sheet's own day wins", async () => {
   const { examsFor, sheetMarks, windowLabel } = await import("../public/core/exams.js");
   const today = "2026-11-08";

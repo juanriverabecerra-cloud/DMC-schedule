@@ -15,7 +15,7 @@ function goldenCard(ctx, s) {
   const next = s.next;
   return card("Golden weekends", h("div", null,
     next
-      ? h("div", { class: "bignum" }, weekendLabel(next), h("small", null, inDays(diffDays(state.today, next.sat))))
+      ? h("div", { class: "bignum golden-next" }, weekendLabel(next), h("small", null, inDays(diffDays(state.today, next.sat))))
       : h("p", { class: "small", style: { marginTop: 0 } }, `No golden weekend on the call sheets through ${fmtDate(s.through)}.`),
     h("div", { class: "stats" },
       h("div", { class: "stat" }, h("b", null, s.past), h("span", null, "so far this year")),
@@ -24,7 +24,7 @@ function goldenCard(ctx, s) {
       h("div", { class: "main" },
         h("div", { class: "name small" }, h("span", { class: "n" }, weekendLabel(w))),
         w.why.length ? h("div", { class: "sub" }, w.why.join(" · ")) : null),
-      w.golden ? h("span", { class: "chip late" }, w.vacation ? "Vacation" : w.long ? "Long weekend" : "Golden") : null))) : null,
+      w.golden ? h("span", { class: `chip ${w.vacation ? "late" : "golden"}` }, w.vacation ? "Vacation" : w.long ? "Long weekend" : "Golden") : null))) : null,
     h("p", { class: "tiny muted", style: { margin: "10px 0 0" } }, `Saturday and Sunday both free: no call, not post-call, no night float, no cardiac home call. Through ${fmtMonth(monthKey(s.through))}, the latest call sheet.`)));
 }
 

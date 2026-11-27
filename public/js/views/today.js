@@ -16,6 +16,8 @@ import { swapsTodayCard } from "./requests.js";
 import { inboxTodayCard } from "./inbox.js";
 import { aheadItems } from "./exams.js";
 import { calendarSubscribed } from "../me.js";
+import { goldenDays } from "../../core/daysoff.js";
+import { dayTouch, celebrate, yearReviewCard, todayMilestones } from "../delight.js";
 import { casesTodayCard, procedureShortcut } from "./cases.js";
 
 function shortCode(d) {
@@ -44,11 +46,12 @@ function markColor(d) {
 export function weekStrip(ctx, pid) {
   const { model, state } = ctx;
   const ws = startOfWeek(state.date);
+  const golden = goldenDays(model, pid, addDays(ws, -1), addDays(ws, 6)); // Sunday belongs to the weekend before
   return h("div", { class: "week" }, Array.from({ length: 7 }, (_, i) => {
     const date = addDays(ws, i);
     const d = model.day(pid, date);
     return h("button", {
-      class: `wday${date === state.date ? " sel" : ""}${date === state.today ? " today" : ""}`,
+      class: `wday${date === state.date ? " sel" : ""}${date === state.today ? " today" : ""}${golden.has(date) ? " golden" : ""}`,
       vars: { "--c": markColor(d) },
       "aria-label": `${fmtDate(date, "long")}: ${headline(d)}`,
       onclick: () => ctx.setDate(date),
@@ -137,6 +140,8 @@ export function renderToday(ctx) {
   // Everything else is in the order the resident chose (Arrange, under More); each piece only
   // shows when it has something.
   const { order, hidden } = todayLayout(local.get("todayLayout"));
+  // The 5th golden weekend, the 25th call: confetti once, the day it happens (delight.js).
+  setTimeout(() => todayMilestones(ctx, pid), 600);
   const tomorrow = addDays(state.today, 1);
   const mates = teammates(ctx, d);
   let runnerShown = false;
@@ -144,7 +149,12 @@ export function renderToday(ctx) {
     day: () => {
       const site = SITES[d.site]?.name;
       const sub = [d.roles.length ? d.rotation || d.label : (d.rotation && d.rotation !== d.label ? d.rotation : ""), site].filter(Boolean).join(" · ");
-      return h("section", { class: "card hero", vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
+      // A real occasion gets one line (delight.js); the gold light passes once per golden Friday.
+      const touch = dayTouch(ctx, pid, state.date);
+      const shine = touch?.gold && local.get("goldFriday") !== state.date;
+      if (shine) local.set("goldFriday", state.date);
+      if (touch?.confetti) setTimeout(() => celebrate(touch.confetti, null, { gold: touch.gold }), 400);
+      return h("section", { class: `card hero${shine ? " golden-fri" : ""}`, vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
         h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`),
         h("h2", null, headline(d)),
         sub ? h("div", { class: "subtitle" }, sub) : null,
@@ -152,8 +162,10 @@ export function renderToday(ctx) {
         d.late ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "You're the late resident: finish at your site, then help at Harper until 6p.") : null,
         d.call === "24" ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "24-hour call tonight (6a–6a), same as H1.") : null,
         d.code === "11-9" && !d.call ? h("p", { class: "small muted", style: { margin: "10px 0 0" } }, "11 to 9 rotation: OB at Hutzel, Monday to Friday, 11a–9p.") : null,
+        touch ? h("p", { class: `touch${touch.gold ? " gold" : ""}` }, icon(touch.icon), h("span", null, touch.text)) : null,
       );
     },
+    review: () => yearReviewCard(ctx, pid),
     or: () => {
       const rooms = assignmentList(ctx, d);
       if (rooms.length) return card(state.date === tomorrow ? "Tomorrow's OR sheet" : "OR sheet", h("ul", { class: "list" }, rooms), { pad: false });

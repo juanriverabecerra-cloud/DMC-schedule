@@ -33,6 +33,13 @@ export function weekendsFor(model, pid, from, to) {
   return out;
 }
 
+// The Saturdays and Sundays of someone's golden weekends between two dates (not ones spent on
+// vacation, which look like vacation already), for the calendars to mark. Residents only.
+export function goldenDays(model, pid, from, to) {
+  if (!["CA-1", "CA-2", "CA-3"].includes(model.person(pid)?.cls)) return new Set();
+  return new Set(weekendsFor(model, pid, from, to).filter((w) => w.golden && !w.vacation).flatMap((w) => [w.sat, w.sun]));
+}
+
 const lastSheetDay = (model) => {
   const month = model.months[model.months.length - 1];
   return month ? monthDates(month).pop() : null;

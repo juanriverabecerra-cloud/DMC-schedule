@@ -6,6 +6,7 @@ import { hoursReport } from "../../core/hours.js";
 import { actualFor } from "../logged.js";
 import { openDaySheet, subscribeCard } from "./common.js";
 import { didacticsPersonCard } from "./didactics.js";
+import { goldenDays } from "../../core/daysoff.js";
 
 // The call sheet's colors, under the month: where the colors are.
 const LEGEND = [
@@ -49,6 +50,7 @@ export function monthGrid(ctx, pid, month, onPick) {
   const { model, state } = ctx;
   const dates = monthDates(month);
   const lead = dow(dates[0]);
+  const golden = goldenDays(model, pid, dates[0], dates[dates.length - 1]);
   return h("div", { class: "month" },
     DOW_LETTER.map((l) => h("div", { class: "hd" }, l)),
     Array.from({ length: lead }, () => h("div", { class: "mcell empty" })),
@@ -56,7 +58,7 @@ export function monthGrid(ctx, pid, month, onPick) {
       const d = model.day(pid, date);
       const off = ["off", "holiday", "postcall"].includes(d.status);
       return h("button", {
-        class: `mcell${date === state.today ? " today" : ""}${date === state.date ? " sel" : ""}${off ? " off" : ""}${d.status === "vacation" ? " vac" : ""}`,
+        class: `mcell${date === state.today ? " today" : ""}${date === state.date ? " sel" : ""}${off ? " off" : ""}${d.status === "vacation" ? " vac" : ""}${golden.has(date) ? " golden" : ""}`,
         vars: { "--c": d.status === "work" ? d.color : "transparent" },
         "aria-label": `${date}: ${headline(d)}`,
         onclick: () => onPick(date),
