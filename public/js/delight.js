@@ -4,7 +4,7 @@
 // themselves. The rules are in core/occasions.js; this file shows them.
 import { h, toast, openSheet } from "./ui.js";
 import { local } from "./api.js";
-import { academicYearOf, addDays, diffDays, fmtDate, nowMinutesLocal, parts, range, startOfWeek, MONTH_NAMES } from "../core/dates.js";
+import { academicYearOf, addDays, diffDays, fmtDate, nowMinutesLocal, parts, range, startOfWeek } from "../core/dates.js";
 import { goldenSummary } from "../core/daysoff.js";
 import { weekHours } from "../core/hours.js";
 import { examsFor } from "../core/exams.js";
@@ -13,50 +13,159 @@ import { caseLog, allCases } from "./cases.js";
 
 // Motion is still skipped for anyone whose phone asks for less of it; the words stay.
 const calm = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+// A birthday line was offered for a day and taken out: forget any birthday a phone kept.
+if (typeof localStorage !== "undefined") local.del("birthday");
 
-// ---- confetti: a short burst, drawn on a canvas that's gone after two seconds ----
-export function confetti({ gold = false } = {}) {
-  if (calm()) return;
+// ---- confetti: full screen, and plenty of it ----
+// Paper that flips as it falls, dots, curled streamers and stars, on one canvas over the whole
+// screen (tab bar and sheets included) that goes away with the last piece. Five ways to throw it
+// (STYLES); taps go straight through.
+const PALETTE = ["#6ea0ff", "#4ade80", "#f2c14e", "#f0abfc", "#67e8f9", "#fdba74", "#f87171", "#ffffff"];
+const GOLD = ["#f2c14e", "#e0a82e", "#fbe3a1", "#c9971c", "#fff4d0", "#b8860b"];
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+function piece(x, y, vx, vy, colors, o = {}) {
+  return {
+    x, y, vx, vy, delay: o.delay || 0, life: o.life || 0, sway: o.sway || 0,
+    rot: rand(0, 6.28), vr: rand(-0.3, 0.3), tilt: rand(0, 6.28), vt: rand(0.06, 0.2), phase: rand(0, 6.28),
+    size: rand(7, 13) * (o.scale || 1), color: pick(colors), shape: pick(o.shapes || ["rect", "rect", "rect", "rect", "circle", "streamer", "star"]),
+    twinkle: !!o.twinkle,
+    // Every piece its own weight and top speed, so a falling cloud never moves as one flat edge.
+    weight: rand(0.65, 1.35), term: rand(0.45, 1.4),
+  };
+}
+
+// Each style: where the pieces start and how they move (gravity, air, how fast they can fall).
+export const STYLES = {
+  // Two cannons in the bottom corners, two volleys each, sprayed wide and high across the screen.
+  cannons: (w, ht, colors) => {
+    const reach = Math.sqrt(ht / 800);
+    const pieces = [0, 1].flatMap((side) => [0, 0.45].flatMap((at) => Array.from({ length: 250 }, () => {
+      const a = rand(0.04, 0.85), v = rand(19, 40) * reach;
+      return piece(side ? w + 10 : -10, ht + rand(0, 30), (side ? -1 : 1) * Math.sin(a) * v, -Math.cos(a) * v, colors, { delay: at + rand(0, 0.25), sway: 0.7, scale: 1.15 });
+    })));
+    return { pieces, gravity: 0.42, drag: 0.982, terminal: 5.5 };
+  },
+  // A downpour over the whole screen at once: pieces start stacked above it and keep coming.
+  rain: (w, ht, colors) => ({
+    pieces: Array.from({ length: 680 }, () => piece(rand(-20, w + 20), rand(-ht * 1.3, -10), rand(-1, 1), rand(4, 7), colors, { sway: 1.4 })),
+    gravity: 0.08, drag: 0.995, terminal: 7,
+  }),
+  // Six bursts across the screen, one after another, sparks that twinkle and fade as they fall.
+  fireworks: (w, ht, colors) => ({
+    pieces: Array.from({ length: 6 }, (_, i) => {
+      const cx = rand(0.12, 0.88) * w, cy = rand(0.1, 0.55) * ht, at = i * 0.32;
+      return Array.from({ length: 150 }, () => {
+        const a = rand(0, 6.28), v = rand(4, 13) * rand(0.85, 1);
+        return piece(cx, cy, Math.cos(a) * v, Math.sin(a) * v, colors, { delay: at, life: rand(1.6, 2.4), shapes: ["circle", "star", "star", "rect"], scale: 1, twinkle: true });
+      });
+    }).flat(),
+    gravity: 0.1, drag: 0.972, terminal: 4.5,
+  }),
+  // One big burst from the middle that fills the screen, then drifts down.
+  bang: (w, ht, colors) => {
+    const reach = Math.sqrt((w * w + ht * ht) / (390 * 390 + 844 * 844));
+    return {
+      // Not a perfect circle: each piece's lift and speed vary, so no ring or line shows.
+      pieces: Array.from({ length: 520 }, () => {
+        const a = rand(0, 6.28), v = rand(6, 27) * reach;
+        return piece(w / 2 + rand(-24, 24), ht * 0.42 + rand(-24, 24), Math.cos(a) * v * rand(0.7, 1.1), Math.sin(a) * v * rand(0.6, 1.1) - rand(2, 9), colors, { sway: 0.8 });
+      }),
+      gravity: 0.3, drag: 0.968, terminal: 4.5,
+    };
+  },
+  // Gold everywhere: gold paper, streamers and twinkling stars over the whole screen, and a burst
+  // from the top that reaches the corners.
+  gold: (w, ht) => ({
+    pieces: [
+      ...Array.from({ length: 600 }, () => piece(rand(-20, w + 20), rand(-ht * 1.3, -10), rand(-1.2, 1.2), rand(4, 6.5), GOLD, { sway: 1.6, twinkle: true, shapes: ["rect", "rect", "star", "star", "streamer", "circle"] })),
+      ...Array.from({ length: 160 }, () => { const a = rand(0.25, 2.9), v = rand(6, 18); return piece(w / 2 + rand(-30, 30), rand(-30, 0), Math.cos(a) * v * rand(0.7, 1.1), Math.sin(a) * v * rand(0.4, 1.2) + rand(0, 3), GOLD, { twinkle: true, shapes: ["star", "circle", "rect"] }); }),
+    ],
+    gravity: 0.09, drag: 0.99, terminal: 6.5,
+  }),
+};
+
+function draw(g, p, t) {
+  g.save();
+  g.translate(p.x, p.y);
+  g.rotate(p.rot);
+  let alpha = p.life ? Math.min(1, Math.max(0, (p.life - t) / 0.6)) : 1;
+  if (p.twinkle) alpha *= 0.55 + 0.45 * Math.sin(t * 14 + p.phase);
+  g.globalAlpha = alpha;
+  g.fillStyle = p.color;
+  g.strokeStyle = p.color;
+  const s = p.size;
+  if (p.shape === "rect") {
+    g.scale(1, Math.cos(p.tilt)); // paper turning over as it falls
+    g.fillRect(-s / 2, -s * 0.3, s, s * 0.6);
+  } else if (p.shape === "circle") {
+    g.beginPath(); g.arc(0, 0, s * 0.32, 0, 6.28); g.fill();
+  } else if (p.shape === "streamer") {
+    g.lineWidth = 2.4; g.lineCap = "round";
+    g.beginPath(); g.moveTo(-s, 0); g.quadraticCurveTo(0, Math.sin(p.tilt) * s, s, 0); g.stroke();
+  } else {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? s * 0.22 : s * 0.55, a = (i * Math.PI) / 5;
+      g.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    g.closePath(); g.fill();
+  }
+  g.restore();
+}
+
+export function confetti({ style = "bang", gold = false } = {}) {
+  if (calm() || typeof document === "undefined") return;
   const canvas = h("canvas", { class: "confetti", "aria-hidden": "true" });
   document.body.append(canvas);
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = innerWidth, ht = innerHeight;
   canvas.width = w * dpr;
   canvas.height = ht * dpr;
   const g = canvas.getContext("2d");
   g.scale(dpr, dpr);
-  const colors = gold ? ["#f2c14e", "#e0a82e", "#fbe3a1", "#c9971c"] : ["#6ea0ff", "#4ade80", "#f2c14e", "#f0abfc", "#67e8f9", "#fdba74"];
-  const bits = Array.from({ length: 120 }, (_, i) => ({
-    x: w / 2 + (Math.random() - 0.5) * w * 0.4, y: ht * 0.3, vx: (Math.random() - 0.5) * 10, vy: -4 - Math.random() * 9,
-    r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.3, bw: 6 + Math.random() * 5, bh: 3 + Math.random() * 4, c: colors[i % colors.length],
-  }));
+  const { pieces, gravity, drag, terminal } = (STYLES[style] || STYLES.bang)(w, ht, gold ? GOLD : PALETTE);
   const start = performance.now();
+  let last = start;
   const step = (now) => {
     const t = (now - start) / 1000;
+    const dt = Math.min(2, Math.max(0.5, (now - last) / 16.7));
+    last = now;
     g.clearRect(0, 0, w, ht);
-    for (const b of bits) {
-      b.vy += 0.32; b.x += b.vx; b.y += b.vy; b.vx *= 0.99; b.r += b.vr;
-      g.save();
-      g.globalAlpha = Math.max(0, 1 - t / 2.2);
-      g.translate(b.x, b.y);
-      g.rotate(b.r);
-      g.fillStyle = b.c;
-      g.fillRect(-b.bw / 2, -b.bh / 2, b.bw, b.bh);
-      g.restore();
+    let alive = 0;
+    for (const p of pieces) {
+      if (t < p.delay) { alive++; continue; }
+      const age = t - p.delay;
+      if (p.life && age > p.life) continue;
+      // Paper falls slower while it's flat to the air than edge-on: the flutter of real confetti.
+      const flat = p.shape === "rect" ? 0.55 + 0.45 * Math.abs(Math.sin(p.tilt)) : 1;
+      const top = terminal * p.term * flat;
+      p.vy += gravity * p.weight * dt;
+      if (p.vy > top) p.vy += (top - p.vy) * 0.2;
+      p.vx *= drag ** dt;
+      if (p.vy < 0) p.vy *= drag ** dt;
+      p.x += (p.vx + Math.sin(age * 3 + p.phase) * p.sway) * dt;
+      p.y += p.vy * dt;
+      p.rot += p.vr * dt;
+      p.tilt += p.vt * dt;
+      if (p.y > ht + 40 || p.x < -80 || p.x > w + 80) { if (p.vy > 0 || p.y > ht + 40) continue; }
+      alive++;
+      draw(g, p, age);
     }
-    if (t < 2.2) requestAnimationFrame(step); else canvas.remove();
+    if (alive && t < 9) requestAnimationFrame(step); else canvas.remove();
   };
   requestAnimationFrame(step);
 }
 
 // Once ever per key, on this device: a toast (if there's something to say) and, unless it's a
 // quiet one, confetti.
-export function celebrate(key, text, { gold = false, quiet = false } = {}) {
+export function celebrate(key, text, { gold = false, quiet = false, style = "bang" } = {}) {
   const done = local.get("celebrated", []);
   if (done.includes(key)) return false;
   local.set("celebrated", [...done, key].slice(-300));
   if (text) toast(text);
-  if (!quiet) confetti({ gold });
+  if (!quiet) confetti({ style, gold });
   return true;
 }
 
@@ -71,42 +180,22 @@ export function checkMilestones(pid) {
   const seen = saved?.pid === pid ? saved : null;
   const news = acgmeNews(seen, now);
   local.set("acgmeSeen", { pid, ...acgmeSnapshot(L.minimums, L.acgmeCount?.n ?? null, waiting, seen) });
-  if (news) celebrate(`acgme:${pid}:${news.key}`, news.said.join(", and "), { gold: news.gold, quiet: news.quiet });
+  if (news) celebrate(`acgme:${pid}:${news.key}`, news.said.join(", and "), { gold: news.gold, quiet: news.quiet, style: news.style });
 }
 
 // ---- Today: the day's line, and milestones from the schedule ----
-// The birthday is kept on this phone only (More › Settings), as "MM-DD".
-export const birthday = () => local.get("birthday", null);
-
 export function dayTouch(ctx, pid, date) {
   const { model, state } = ctx;
   if (date !== state.today) return null;
   const exams = examsFor(model, pid, local.get("examPlan"), date).exams;
-  return occasion(model, pid, date, { now: nowMinutesLocal(), birthday: birthday(), exams });
+  return occasion(model, pid, date, { now: nowMinutesLocal(), exams });
 }
 
 // Called when Today is drawn for today: a schedule milestone gets its confetti once.
 export function todayMilestones(ctx, pid) {
   const { model, state } = ctx;
   if (state.date !== state.today) return;
-  for (const m of dayMilestones(model, pid, state.today)) if (celebrate(m.key, m.text, { gold: m.gold })) break;
-}
-
-// A birthday picker for More › Settings: month and day, kept on this phone.
-export function birthdayPicker(onChange) {
-  const [mm, dd] = (birthday() || "-").split("-");
-  const month = h("select", { "aria-label": "Birthday month" }, h("option", { value: "" }, "Month"),
-    MONTH_NAMES.map((name, i) => h("option", { value: String(i + 1).padStart(2, "0"), selected: mm === String(i + 1).padStart(2, "0") }, name)));
-  const day = h("select", { "aria-label": "Birthday day" }, h("option", { value: "" }, "Day"),
-    Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, "0")).map((v) => h("option", { value: v, selected: dd === v }, String(Number(v)))));
-  const save = () => {
-    if (month.value && day.value) local.set("birthday", `${month.value}-${day.value}`);
-    else if (!month.value && !day.value) local.del("birthday");
-    onChange?.();
-  };
-  month.addEventListener("change", save);
-  day.addEventListener("change", save);
-  return h("div", { class: "bday" }, month, day);
+  for (const m of dayMilestones(model, pid, state.today)) if (celebrate(m.key, m.text, { gold: m.gold, style: m.style })) break;
 }
 
 // ---- your year: from July 1 up to a day ----

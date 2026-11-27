@@ -153,7 +153,7 @@ export function renderToday(ctx) {
       const touch = dayTouch(ctx, pid, state.date);
       const shine = touch?.gold && local.get("goldFriday") !== state.date;
       if (shine) local.set("goldFriday", state.date);
-      if (touch?.confetti) setTimeout(() => celebrate(touch.confetti, null, { gold: touch.gold }), 400);
+      if (touch?.confetti) setTimeout(() => celebrate(touch.confetti, null, { gold: touch.gold, style: touch.style }), 400);
       return h("section", { class: `card hero${shine ? " golden-fri" : ""}`, vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
         h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`),
         h("h2", null, headline(d)),

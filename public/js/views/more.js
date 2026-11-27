@@ -4,7 +4,7 @@ import { monthKey, fmtMonth, fmtDate } from "../../core/dates.js";
 import { monthGaps } from "../../core/gaps.js";
 import { subscribeBody } from "./common.js";
 import { calendarSubscribed } from "../me.js";
-import { aboutTaps, birthdayPicker } from "../delight.js";
+import { aboutTaps } from "../delight.js";
 import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus, turnOffAlerts } from "../push.js";
@@ -70,10 +70,6 @@ export function renderMore(ctx) {
       me && me.cls !== "PGY-1" ? row("calendar", calendarSubscribed(state.me) ? "var(--late)" : "var(--accent)", "Calendar",
         calendarSubscribed(state.me) ? "Subscribed: your shifts are in your phone's calendar" : "Your shifts in your phone's calendar",
         () => openSheet("Calendar", h("div", { class: "card-pad" }, subscribeBody(ctx, state.me)))) : null,
-      me ? h("li", { class: "row" },
-        h("div", { class: "avatar", style: { "--c": "var(--gold)" } }, icon("sparkle")),
-        h("div", { class: "main" }, h("div", { class: "name" }, "Your birthday"), h("div", { class: "sub" }, "Optional. Only this phone knows it: a line on Today that morning."),
-          birthdayPicker())) : null,
       h("li", { class: "row" },
         h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("moon")),
         h("div", { class: "main" }, h("div", { class: "name" }, "Appearance"),

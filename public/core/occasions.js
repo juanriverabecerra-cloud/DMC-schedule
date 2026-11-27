@@ -30,10 +30,10 @@ const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st
 // The class someone is in on a date: the month's call sheet says, after a July changeover.
 export const classOn = (model, pid, date) => model.classAt?.(pid, monthKey(date)) || model.person(pid)?.cls;
 
-// Today's line, if anything: { text, icon, gold?, confetti? (a key: confetti once) }. One line,
-// the most important. `birthday` is "MM-DD" (kept on the phone only), `exams` from core/exams.js,
-// `now` minutes after midnight.
-export function occasion(model, pid, date, { now = 0, birthday = null, exams = [] } = {}) {
+// Today's line, if anything: { text, icon, gold?, confetti? (a key: confetti once), style? (which
+// confetti, see STYLES in public/js/delight.js) }. One line, the most important. `exams` from
+// core/exams.js, `now` minutes after midnight.
+export function occasion(model, pid, date, { now = 0, exams = [] } = {}) {
   const p = model.person(pid);
   if (!p) return null;
   const d = model.day(pid, date);
@@ -41,16 +41,14 @@ export function occasion(model, pid, date, { now = 0, birthday = null, exams = [
   const { y, m, d: dd } = parts(date);
   const ay = academicYearOf(date);
   const cls = classOn(model, pid, date);
-  const first = p.preferred || p.first || "";
   const line = (text, icon = "sparkle", extra = {}) => ({ text, icon, ...extra });
 
-  if (cls === "CA-3" && m === 6 && dd === 30) return line(`Last day of residency. Congratulations, Dr. ${p.last}.`, "sparkle", { gold: true, confetti: `grad:${pid}:${y}` });
-  if (birthday && birthday === date.slice(5)) return line(`Happy birthday${first ? `, ${first}` : ""}.`, "sparkle", { confetti: `birthday:${pid}:${y}` });
+  if (cls === "CA-3" && m === 6 && dd === 30) return line(`Last day of residency. Congratulations, Dr. ${p.last}.`, "sparkle", { gold: true, confetti: `grad:${pid}:${y}`, style: "gold" });
   const exam = exams.find((e) => e.day === date);
   if (exam) return now < 12 * 60 + 30 ? line(`Good luck on the ${exam.name} today.`, "book") : line(`${exam.name} done. Go celebrate.`);
   if (m === 7 && dd === 1) {
-    if (cls === "CA-1") return line("One year down. Welcome to anesthesia.", "sparkle", { confetti: `year1:${pid}:${y}` });
-    if (cls === "CA-2") return line("Halfway through residency.", "sparkle", { confetti: `half:${pid}:${y}` });
+    if (cls === "CA-1") return line("One year down. Welcome to anesthesia.", "sparkle", { confetti: `year1:${pid}:${y}`, style: "fireworks" });
+    if (cls === "CA-2") return line("Halfway through residency.", "sparkle", { confetti: `half:${pid}:${y}`, style: "fireworks" });
     if (cls === "CA-3") return line("Final year. Make it count.");
     if (cls === "PGY-1") return line("Welcome to residency.");
     return line("Happy new academic year.");
@@ -62,7 +60,7 @@ export function occasion(model, pid, date, { now = 0, birthday = null, exams = [
   }
   if (is24(d) && !range(`${ay}-07-01`, addDays(date, -1)).some((x) => is24(model.day(pid, x)))) return line("First 24 of the year tonight. You've got this.");
   if (cls === "CA-3" && anyShift(d) && sheetsToJune(model, date) && !range(addDays(date, 1), yearEnd(date)).some((x) => anyShift(model.day(pid, x)))) {
-    return line("Last call of residency.", "sparkle", { confetti: `lastcall:${pid}:${y}` });
+    return line("Last call of residency.", "sparkle", { confetti: `lastcall:${pid}:${y}`, style: "fireworks" });
   }
   if (d.status === "holiday" || (isFixedHoliday(date) && d.status === "off")) return line("Enjoy the day. The CRNAs have it.");
   if (m === 3 && dd === 30) return line("Happy Doctors' Day.");
@@ -71,7 +69,7 @@ export function occasion(model, pid, date, { now = 0, birthday = null, exams = [
     const again = goldenDays(model, pid, addDays(date, -6), addDays(date, -5)).has(addDays(date, -6));
     const text = yesterday.call === "NF" ? "Nights done. Your golden weekend starts now."
       : again ? "Second golden weekend in a row. Enjoy it." : d.status === "work" ? "Golden weekend starts after work." : "Your golden weekend starts now.";
-    return line(text, "sparkle", { gold: true });
+    return line(text, "sparkle", { gold: true, confetti: `goldfriday:${pid}:${date}`, style: "gold" });
   }
   if (d.status === "work") {
     // The next (or last) day that isn't a plain day off, within a long weekend's reach.
@@ -85,7 +83,7 @@ export function occasion(model, pid, date, { now = 0, birthday = null, exams = [
   }
   if (yesterday.call === "NF" && d.call !== "NF") {
     const lastOfYear = sheetsToJune(model, date) && !range(date, yearEnd(date)).some((x) => model.day(pid, x).call === "NF");
-    return lastOfYear ? line("Last nights of the year done. Sleep well.", "moon", { confetti: `lastnights:${pid}:${ay}` }) : line("Nights done. Sleep well.", "moon");
+    return lastOfYear ? line("Last nights of the year done. Sleep well.", "moon", { confetti: `lastnights:${pid}:${ay}`, style: "fireworks" }) : line("Nights done. Sleep well.", "moon");
   }
   const soon = exams.find((e) => e.days === 100);
   if (soon) return line(`100 days to the ${soon.name}.`, "book");
@@ -93,13 +91,13 @@ export function occasion(model, pid, date, { now = 0, birthday = null, exams = [
     const left = diffDays(date, yearEnd(date));
     if (left === 100) return line("100 days to graduation.");
     if (left === 30) return line("30 days to graduation.");
-    if (left === 7) return line("One week to graduation.", "sparkle", { confetti: `grad7:${pid}:${y}` });
+    if (left === 7) return line("One week to graduation.", "sparkle", { confetti: `grad7:${pid}:${y}`, style: "fireworks" });
   }
   if (d.status === "postcall") return line("Post-call: go home and sleep.", "moon");
   return null;
 }
 
-// Milestones from the schedule on a date: { key, text, gold? }. The app celebrates each key once.
+// Milestones from the schedule on a date: { key, text, gold?, style }. The app celebrates each key once.
 export function dayMilestones(model, pid, date) {
   const out = [];
   const ay = academicYearOf(date);
@@ -108,11 +106,11 @@ export function dayMilestones(model, pid, date) {
     const golden = weekendsFor(model, pid, from, date).filter((w) => w.golden && w.sat <= date);
     const n = golden.length;
     const w = golden[n - 1];
-    if ((n === 5 || n === 10) && (w.sat === date || w.sun === date)) out.push({ key: `golden${n}:${pid}:${ay}`, text: `Your ${ordinal(n)} golden weekend this year.`, gold: true });
+    if ((n === 5 || n === 10) && (w.sat === date || w.sun === date)) out.push({ key: `golden${n}:${pid}:${ay}`, text: `Your ${ordinal(n)} golden weekend this year.`, gold: true, style: "gold" });
   }
   if (isCall(model.day(pid, date))) {
     const n = range(from, date).filter((x) => isCall(model.day(pid, x))).length;
-    if (n === 25 || n === 50) out.push({ key: `calls${n}:${pid}:${ay}`, text: `Call number ${n} this year.` });
+    if (n === 25 || n === 50) out.push({ key: `calls${n}:${pid}:${ay}`, text: `Call number ${n} this year.`, style: "cannons" });
   }
   return out;
 }
@@ -120,7 +118,7 @@ export function dayMilestones(model, pid, date) {
 // ---- ACGME's numbers (the Log cases button brings them back) ----
 // What's new since the last look: `seen` and `now` are { totals: {name: n}, lines: [{ name,
 // minimum, total }], count, waiting }. The first look is only a starting line, so nothing reached
-// before is celebrated after the fact. Returns { said: [texts], quiet, gold, key } or null.
+// before is celebrated after the fact. Returns { said: [texts], quiet, gold, style, key } or null.
 const CASE_COUNTS = [100, 250, 500, 750, 1000, 1250, 1500, 2000];
 const caseWord = (name) => {
   const age = name.match(/^[a-c]\.\s*<\s*(.+)$/i);
@@ -155,7 +153,11 @@ export function acgmeNews(seen, now) {
   // Caught up after falling behind (ten or more waiting at some point).
   if (now.waiting === 0 && (seen.peak || 0) >= 10) { said.push("All caught up with ACGME"); loud = true; keys.push(`caughtup:${seen.peak}`); }
   if (!said.length) return null;
-  return { said, quiet: !loud, gold: lines.length > 0 && fresh.length > 0 && lines.every(met), key: keys.join("|") };
+  // The biggest news picks the confetti: every minimum met, then a minimum or a first, then a
+  // round case count, then catching up.
+  const all = lines.length > 0 && fresh.length > 0 && lines.every(met);
+  const style = all ? "gold" : fresh.length || firsts.length ? "bang" : crossed.length ? "cannons" : "rain";
+  return { said, quiet: !loud, gold: all, style, key: keys.join("|") };
 }
 
 // What to remember for next time: every count by name (lines and the codes under them).

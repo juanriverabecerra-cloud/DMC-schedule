@@ -1040,9 +1040,9 @@ test("occasions: one line for the day, the most important one", async () => {
   assert.equal(say("b", "2026-11-17"), "Last day before vacation. Enjoy it.");
   assert.equal(say("b", "2026-11-23"), "Welcome back.");
   assert.equal(say("a", "2026-11-20"), "Nights done. Your golden weekend starts now.");
+  assert.equal(occasion(model, "a", "2026-11-20").style, "gold", "a golden Friday showers gold");
   assert.equal(say("b", "2026-11-02"), "First day of Basic Anesthesia.");
   assert.equal(say("b", "2026-10-16"), "Happy Ether Day: 180 years of anesthesia.");
-  assert.equal(say("b", "2026-11-10", { birthday: "11-10" }), "Happy birthday, Tess.");
   assert.equal(say("a", "2027-01-01"), "Happy New Year. Someone has to keep them asleep.");
   assert.equal(say("a", "2027-03-22"), "100 days to graduation.");
   assert.equal(say("a", "2027-06-12"), "Last call of residency.");
@@ -1062,7 +1062,7 @@ test("milestones: the 5th golden weekend, the 25th call, and ACGME's numbers mov
   const { dayMilestones, acgmeNews, acgmeSnapshot } = await import("../public/core/occasions.js");
   const model = createModel(yearData());
   assert.deepEqual(dayMilestones(model, "b", "2026-10-31").map((m) => m.text), ["Your 5th golden weekend this year."]);
-  assert.deepEqual(dayMilestones(model, "c", "2026-10-25").map((m) => m.text), ["Call number 25 this year."]);
+  assert.deepEqual(dayMilestones(model, "c", "2026-10-25").map((m) => [m.text, m.style]), [["Call number 25 this year.", "cannons"]]);
   assert.deepEqual(dayMilestones(model, "c", "2026-10-24"), []);
 
   const lines = [{ name: "Spinal", minimum: 40, total: 41 }, { name: "Epidural", minimum: 40, total: 1 }, { name: "Cardiac", minimum: 20, total: 10 }];
@@ -1072,6 +1072,7 @@ test("milestones: the 5th golden weekend, the 25th call, and ACGME's numbers mov
   const news = acgmeNews(seen, now);
   assert.deepEqual(news.said, ["Spinal minimum met · 41 of 40", "First Epidural in ACGME", "Halfway to the Cardiac minimum · 10 of 20", "100 cases in ACGME", "All caught up with ACGME"]);
   assert.equal(news.quiet, false);
+  assert.equal(news.style, "bang", "a minimum met is the big bang");
   const halfOnly = acgmeNews({ totals: { Cardiac: 9 }, count: 101, peak: 0 }, { lines: [lines[2]], totals: { Cardiac: 10 }, count: 101, waiting: 3 });
   assert.deepEqual([halfOnly.said, halfOnly.quiet], [["Halfway to the Cardiac minimum · 10 of 20"], true]);
   assert.equal(acgmeNews(now, now), null, "nothing new, nothing said");
