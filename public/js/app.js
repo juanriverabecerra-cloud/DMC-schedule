@@ -15,7 +15,7 @@ import { renderCall } from "./views/call.js";
 import { renderGaps } from "./views/gaps.js";
 import { renderMore } from "./views/more.js";
 import { renderLayout, savedTabs } from "./views/layout.js";
-import { renderEvents } from "./views/events.js";
+import { renderEvents, rsvpsSoon } from "./views/events.js";
 import { TAB_PAGES } from "../core/layout.js";
 import { renderRate } from "./views/rate.js";
 import { renderSwaps, renderNoCall } from "./views/requests.js";
@@ -219,7 +219,7 @@ function tabbar(r) {
   nav.hidden = false;
   const gapsSoon = state.model ? [0, 1, 2].some((i) => dayGaps(state.model, addDays(state.today, i)).some((g) => g.level === "gap")) : false;
   const didToday = sessionsToday();
-  const toDo = remindersFor(state.model, state).length > 0;
+  const toDo = remindersFor(state.model, state).length > 0 || rsvpsSoon(ctx()).length > 0;
   // Admins: red for a sick call today or tomorrow, blue for anything else waiting in Requests.
   const inbox = state.admin ? inboxCounts(state.today) : { open: 0, urgent: 0 };
   const red = gapsSoon || inbox.urgent > 0;
@@ -263,7 +263,7 @@ export function render() {
     else if (r.name === "cases") content = renderCases(ctx(), r.arg);
     else if (r.name === "more") content = renderMore(ctx());
     else if (r.name === "layout") content = renderLayout(ctx());
-    else if (r.name === "events") content = renderEvents(ctx());
+    else if (r.name === "events") content = renderEvents(ctx(), r.arg);
     else if (r.name === "rate") content = renderRate(ctx());
     else if (r.name === "swaps") content = renderSwaps(ctx(), r.arg);
     else if (r.name === "nocall") content = renderNoCall(ctx());

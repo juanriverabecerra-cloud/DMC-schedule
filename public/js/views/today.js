@@ -1,7 +1,7 @@
 import { h, icon, card, dayChips, personRow, notice, emptyState } from "../ui.js";
 import { local } from "../api.js";
 import { todayLayout } from "../../core/layout.js";
-import { eventsTodayCard } from "./events.js";
+import { eventsTodayCard, rsvpTodayCard } from "./events.js";
 import { fmtDate, addDays, startOfWeek, DOW_LETTER, parts, monthKey, addMonths, fmtMonth } from "../../core/dates.js";
 import { headline } from "../../core/model.js";
 import { SITES } from "../../core/codes.js";
@@ -17,6 +17,7 @@ import { inboxTodayCard } from "./inbox.js";
 import { aheadItems } from "./exams.js";
 import { calendarSubscribed } from "../me.js";
 import { goldenDays } from "../../core/daysoff.js";
+import { dayDecor } from "../../core/decor.js";
 import { dayTouch, celebrate, yearReviewCard, todayMilestones } from "../delight.js";
 import { casesTodayCard, procedureShortcut } from "./cases.js";
 
@@ -50,12 +51,13 @@ export function weekStrip(ctx, pid) {
   return h("div", { class: "week" }, Array.from({ length: 7 }, (_, i) => {
     const date = addDays(ws, i);
     const d = model.day(pid, date);
+    const decor = dayDecor(model, pid, date);
     return h("button", {
       class: `wday${date === state.date ? " sel" : ""}${date === state.today ? " today" : ""}${golden.has(date) ? " golden" : ""}`,
       vars: { "--c": markColor(d) },
-      "aria-label": `${fmtDate(date, "long")}: ${headline(d)}`,
+      "aria-label": `${fmtDate(date, "long")}: ${headline(d)}${decor ? `, ${decor.label}` : ""}`,
       onclick: () => ctx.setDate(date),
-    }, h("span", { class: "l" }, DOW_LETTER[i]), h("span", { class: "d" }, parts(date).d), h("span", { class: "c" }, shortCode(d)), h("i", { class: "bar" }));
+    }, decor ? h("span", { class: "decor", title: decor.label, "aria-hidden": "true" }, decor.emoji) : null, h("span", { class: "l" }, DOW_LETTER[i]), h("span", { class: "d" }, parts(date).d), h("span", { class: "c" }, shortCode(d)), h("i", { class: "bar" }));
   }));
 }
 
@@ -129,6 +131,9 @@ export function renderToday(ctx) {
   // Swaps waiting on you come before your own day: someone's waiting on an answer.
   const swapNews = state.date === state.today ? swapsTodayCard(ctx) : null;
   if (swapNews) root.append(swapNews);
+  // A reply owed (a party's RSVP): someone's counting heads.
+  const rsvp = rsvpTodayCard(ctx);
+  if (rsvp) root.append(rsvp);
 
   if (!model.hasCall(state.date) && d.source !== "intern") {
     root.append(notice("warn", "info", `The ${fmtMonth(monthKey(state.date))} call sheet hasn't been uploaded yet${d.rotation ? `. Planned rotation: ${d.rotation}.` : "."}`));
@@ -155,7 +160,10 @@ export function renderToday(ctx) {
       if (shine) local.set("goldFriday", state.date);
       if (touch?.confetti) setTimeout(() => celebrate(touch.confetti, null, { gold: touch.gold, style: touch.style }), 400);
       return h("section", { class: `card hero${shine ? " golden-fri" : ""}`, vars: { "--rot": d.color }, onclick: () => openDaySheet(ctx, pid, state.date), style: { cursor: "pointer" } },
-        h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`),
+        h("div", { class: "eyebrow" }, `${fmtDate(state.date, "long")}`, (() => {
+          const decor = dayDecor(model, pid, state.date);
+          return decor ? h("span", { class: "decor-inline", title: decor.label }, decor.emoji, h("span", { class: "decor-name" }, decor.label)) : null;
+        })()),
         h("h2", null, headline(d)),
         sub ? h("div", { class: "subtitle" }, sub) : null,
         h("div", { class: "chips" }, dayChips(d)),

@@ -5,6 +5,7 @@ import { monthGaps } from "../../core/gaps.js";
 import { subscribeBody } from "./common.js";
 import { calendarSubscribed } from "../me.js";
 import { aboutTaps } from "../delight.js";
+import { rsvpsSoon } from "./events.js";
 import { remindersFor } from "./reminders.js";
 import { openAlerts, ALERT_SUB } from "./alerts.js";
 import { alertStatus, turnOffAlerts } from "../push.js";
@@ -55,7 +56,15 @@ export function renderMore(ctx) {
       row("clock", "var(--accent)", "Duty hours", "Your real hours, and estimates for everyone", () => ctx.go("hours"), "hours"),
       me ? row("calendar", "var(--late)", "Days off", "Golden weekends, and days you're off with friends", () => ctx.go("off")) : null,
       me ? row("book", "var(--accent)", "Exams", exam ? `${exam.name}: ${countdownWord(exam)}` : "Your countdowns", () => ctx.go("exams")) : null,
-      row("event", "var(--accent)", "Events", next ? `Next: ${next.title}, ${fmtDate(next.date)}` : "Parties, lectures and conferences from the program office", () => ctx.go("events")),
+      (() => {
+        const owed = rsvpsSoon(ctx);
+        return h("li", { class: "row tap", onclick: () => ctx.go("events") },
+          h("div", { class: "avatar", style: { "--c": owed.length ? "var(--warn)" : "var(--accent)" } }, icon("event")),
+          h("div", { class: "main" }, h("div", { class: "name" }, "Events", owed.length ? h("span", { class: "pill todo" }, "To do") : null),
+            h("div", { class: "sub" }, owed.length ? `RSVP for ${owed[0].e.title} by ${fmtDate(owed[0].r.by)}${owed.length > 1 ? ` (and ${owed.length - 1} more)` : ""}`
+              : next ? `Next: ${next.title}, ${fmtDate(next.date)}` : "Parties, lectures and conferences from the program office")),
+          icon("right"));
+      })(),
     ]),
     group("Program", [
       row(gaps.length ? "alert" : "check", gaps.length ? "var(--gap)" : "var(--late)", "Coverage gaps", gaps.length ? `${gaps.length} from today to the end of ${fmtMonth(month)}` : "None flagged for the rest of the month", () => ctx.go("gaps")),

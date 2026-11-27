@@ -1078,6 +1078,52 @@ test("milestones: the 5th golden weekend, the 25th call, and ACGME's numbers mov
   assert.equal(acgmeNews(now, now), null, "nothing new, nothing said");
 });
 
+test("holiday and party pictures: the right day, the right picture, none for work", async () => {
+  const { holidayOf, eventPicture } = await import("../public/core/decor.js");
+  const name = (d) => holidayOf(d)?.name || null;
+  assert.equal(holidayOf("2026-12-25").emoji, "🎅");
+  assert.equal(holidayOf("2027-01-01").emoji, "🎆");
+  assert.equal(name("2026-11-26"), "Thanksgiving");
+  assert.equal(name("2027-11-25"), "Thanksgiving");
+  assert.equal(name("2027-05-31"), "Memorial Day");
+  assert.equal(name("2027-09-06"), "Labor Day");
+  assert.equal(name("2027-03-28"), "Easter");
+  assert.equal(name("2028-04-16"), "Easter");
+  assert.equal(name("2027-05-09"), "Mother's Day");
+  assert.equal(name("2027-06-20"), "Father's Day");
+  assert.equal(name("2026-11-27"), null);
+  const pic = (title, kind = "social") => eventPicture({ title, kind });
+  assert.equal(pic("Residents' Welcome Dinner"), "🍽️");
+  assert.equal(pic("Anesthesia Residency Party"), "🎊");
+  assert.equal(pic("Holiday Party"), "🎄");
+  assert.equal(pic("Graduation Banquet"), "🎓");
+  assert.equal(pic("Last Day of Recruitment Interviews Team Lunch", "other"), "🥪");
+  assert.equal(pic("Spring Social"), "🎉");
+  assert.equal(pic("City-Wide Grand Rounds", "lecture"), null);
+  assert.equal(pic("November Duty Hours Logging Deadline", "deadline"), null);
+  assert.equal(eventPicture({ title: "Holiday Party", kind: "social", cancelled: true }), null);
+});
+
+test("RSVPs: the deadline an email gives, a sensible one when it gives none, and what's owed", async () => {
+  const { rsvpFor, rsvpsDue, rsvpAlertsFor } = await import("../public/core/rsvp.js");
+  const today = "2026-11-26";
+  const ev = (id, rest) => ({ id, title: "Event", date: "2026-12-12", kind: "social", note: "", rsvpBy: "", rsvpLink: "", ...rest });
+  assert.deepEqual(rsvpFor(ev("a", { rsvpBy: "2026-11-29" }), today), { by: "2026-11-29", implied: false, left: 3, passed: false, link: "" });
+  assert.equal(rsvpFor(ev("b", { rsvpNeeded: true }), today).by, "2026-12-05", "a week before the event");
+  assert.equal(rsvpFor(ev("c", { date: "2026-11-30", note: "Please RSVP to the chiefs" }), today).by, "2026-11-29", "the day before, when a week is gone");
+  assert.equal(rsvpFor(ev("d", { title: "Grand Rounds", kind: "lecture" }), today), null, "nothing asked");
+  assert.equal(rsvpFor(ev("e", { rsvpBy: "2026-11-20" }), today).passed, true);
+  assert.equal(rsvpFor(ev("f", { rsvpBy: "2026-11-29", cancelled: true }), today), null);
+  const list = [ev("late", { rsvpBy: "2026-12-02" }), ev("soon", { rsvpBy: "2026-11-27" }), ev("far", { rsvpBy: "2026-12-20", date: "2026-12-30" }), ev("done", { rsvpBy: "2026-11-28" })];
+  assert.deepEqual(rsvpsDue(list, today, { done: new Set(["done"]) }).map((x) => x.e.id), ["soon", "late"]);
+  // Lock-screen reminders: 9a, three days out and on the last day.
+  const alerts = (date, min) => rsvpAlertsFor([ev("x", { title: "Holiday Party", rsvpBy: "2026-11-29" })], "p", date, min).map((n) => n.payload.title);
+  assert.deepEqual(alerts("2026-11-26", 9 * 60), ["RSVP for Holiday Party"]);
+  assert.deepEqual(alerts("2026-11-27", 9 * 60), []);
+  assert.deepEqual(alerts("2026-11-29", 9 * 60 + 30), ["Last day to RSVP: Holiday Party"]);
+  assert.deepEqual(alerts("2026-11-29", 11 * 60), []);
+});
+
 test("exams: ITE for everyone, the rest by resident, and the call sheet's own day wins", async () => {
   const { examsFor, sheetMarks, windowLabel } = await import("../public/core/exams.js");
   const today = "2026-11-08";

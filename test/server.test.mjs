@@ -1296,6 +1296,41 @@ test("case log nudges: after a case day with nothing logged, never twice, and we
   jane.close(); quiet.close();
 });
 
+test("RSVPs: reminders 3 days before and on the last day, for whoever it's for, until they've replied", async () => {
+  const { sendRsvpAlerts } = await import("../lib/rsvp-alerts.js");
+  const st = openStore();
+  const person = (id, cls) => ({ id, last: id.toUpperCase(), first: "Pat", preferred: "Pat", cls, canonical: `${id.toUpperCase()}, Pat`, aliases: [] });
+  const event = (id, rest) => ({ id, start: "", end: "", place: "", link: "", rsvpLink: "", rsvpBy: "", note: "", who: "", kind: "social", cancelled: false, movedFrom: "", ...rest });
+  await st.setJSON("dataset", {
+    people: [person("a", "CA-1"), person("b", "CA-2")], months: {}, daily: {}, settings: {}, rotations: {}, directory: { people: {}, places: [] },
+    events: [
+      event("party", { title: "Holiday Party", date: "2026-12-12", rsvpBy: "2026-12-04", rsvpLink: "https://example.com/rsvp" }),
+      event("sim", { title: "Simulation Day", date: "2026-12-20", rsvpBy: "2026-12-04", who: "CA-2s", kind: "didactic" }),
+    ],
+  });
+  for (const k of ["push/rsvp-alerts", "rsvp/done"]) await st.delete(k);
+  const [a, b] = await Promise.all([fakePhone(), fakePhone()]);
+  await st.setJSON("push/subs", { [push.phoneId(a.sub)]: { ...a.sub, pid: "a" }, [push.phoneId(b.sub)]: { ...b.sub, pid: "b" } });
+  const site = "https://dmc.example";
+  // Three days before, at 9a: everyone it's for; the CA-2s' simulation only to the CA-2.
+  assert.deepEqual(await sendRsvpAlerts(st, { now: zonedTime("2026-12-01", 8 * 60 + 50), site }), { due: 0, sent: 0 });
+  assert.deepEqual(await sendRsvpAlerts(st, { now: zonedTime("2026-12-01", 9 * 60 + 5), site }), { due: 3, sent: 3 });
+  assert.deepEqual(await sendRsvpAlerts(st, { now: zonedTime("2026-12-01", 9 * 60 + 20), site }), { due: 3, sent: 0 }, "never twice");
+  assert.equal(a.received.length, 1);
+  const first = a.open(a.received[0].body);
+  assert.equal(first.title, "RSVP for Holiday Party");
+  assert.equal(first.url, "/#/events/party");
+  // "I've replied" from the app: no last-day reminder for that one.
+  const replied = await call("POST", "/api/rsvp", { pid: "a", id: "party" }, viewer);
+  assert.equal(replied.status, 200);
+  assert.deepEqual((await call("GET", "/api/me/a", undefined, { ...viewer, "x-device-key": "k".repeat(40) })).body.rsvpDone, ["party"]);
+  assert.deepEqual(await sendRsvpAlerts(st, { now: zonedTime("2026-12-04", 9 * 60 + 5), site }), { due: 2, sent: 2 });
+  assert.equal(a.received.length, 1, "a replied");
+  assert.equal(b.open(b.received.at(-1).body).title, "Last day to RSVP: Simulation Day");
+  assert.equal((await call("POST", "/api/rsvp", { pid: "a", id: "nope" }, viewer)).status, 404);
+  a.close(); b.close();
+});
+
 test("the board runner's list, the Egress tab and a resident sent to a procedure are all read", async () => {
   const { readXlsx } = await import("../lib/xlsx.js");
   const { parseDailyWorkbook } = await import("../lib/daily-sheet.js");

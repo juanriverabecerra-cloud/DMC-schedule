@@ -855,3 +855,18 @@ details.minimums[open] > summary { border-bottom: 1px solid var(--border); }
 .hero .touch.gold { color: var(--gold-ink); }
 .about-sign { margin: 18px 0 0; text-align: center; font-size: 12.5px; color: var(--muted); }
 
+
+/* Holidays and get-togethers (core/decor.js): a large, faint picture behind the day, under its
+   own text (the look picked 2026-11-26). Inline on Today's card, Coming up and Events. */
+.decor { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px; line-height: 1; opacity: .24; pointer-events: none; z-index: 0; }
+:is(.mcell, .wday) > :not(.decor):not(.bar) { position: relative; z-index: 1; }
+.decor-icon { font-size: 15px; line-height: 1; margin-right: 6px; }
+.hero .eyebrow .decor-inline { margin-left: 8px; letter-spacing: 0; }
+.hero .eyebrow .decor-name { margin-left: 6px; text-transform: none; font-weight: 600; }
+
+/* RSVPs (core/rsvp.js): the reminder card on Today and the status on each event. */
+.rsvp-card .rsvp-item + .rsvp-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.rsvp-card .btnrow { margin-top: 8px; }
+.pill.rsvp { --c: var(--warn); margin-top: 6px; display: inline-flex; }
+.pill.rsvp.done { --c: var(--late); }
+.pill.rsvp.closed { --c: var(--muted); }

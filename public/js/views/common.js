@@ -7,6 +7,7 @@ import { openEventSheet } from "./events.js";
 import { SITES } from "../../core/codes.js";
 import { cleanAttending } from "../../core/attendings.js";
 import { isMobile } from "../../core/directory.js";
+import { eventPicture, holidayOf } from "../../core/decor.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
 import { api, local } from "../api.js";
 import { meStatus } from "../me.js";
@@ -247,9 +248,10 @@ export function upcomingList(ctx, pid, from, { extra = [], after = "" } = {}) {
     h("div", { class: "main" },
       // An event's title is a name, not a status: it gets its own line and wraps (two lines at
       // most) instead of a one-line chip that runs off the card.
+      // A party or a meal gets its picture in place of the calendar icon; a holiday shows its own.
       e.kind === "event"
-        ? h("div", { class: "evt" }, icon("event"), h("span", null, e.label))
-        : h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" || e.kind === "exam" ? "info" : e.kind}` }, e.label)),
+        ? h("div", { class: "evt" }, eventPicture(e.event) ? h("span", { class: "decor-icon", "aria-hidden": "true" }, eventPicture(e.event)) : icon("event"), h("span", null, e.label))
+        : h("div", { class: "chips" }, h("span", { class: `chip ${e.kind === "rot" || e.kind === "exam" ? "info" : e.kind}` }, holidayOf(e.date) && e.kind === "pc" ? `${holidayOf(e.date).emoji} ` : "", e.label)),
       e.end && e.end !== e.date ? h("div", { class: "sub" }, `${fmtDate(e.date)} – ${fmtDate(e.end)}`) : e.sub ? h("div", { class: "sub" }, e.sub) : null),
     // How far off, for the things people count down to.
     e.countdown ? h("b", { class: "small countdown" }, e.countdown) : e.kind === "event" || e.to ? icon("right") : null,

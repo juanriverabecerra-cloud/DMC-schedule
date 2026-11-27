@@ -1,10 +1,14 @@
-// Every 15 minutes through the day: case log nudges (see lib/caselog-nudges.js).
+// Every 15 minutes through the day: case log nudges (see lib/caselog-nudges.js) and RSVP reminders
+// (lib/rsvp-alerts.js), together so there's one schedule to pay for.
 import { openStore } from "../../lib/store.js";
 import { sendCaseNudges } from "../../lib/caselog-nudges.js";
+import { sendRsvpAlerts } from "../../lib/rsvp-alerts.js";
 
 export default async function handler() {
-  const result = await sendCaseNudges(openStore());
-  return new Response(JSON.stringify(result), { headers: { "content-type": "application/json" } });
+  const st = openStore();
+  const cases = await sendCaseNudges(st).catch((err) => ({ error: err.message }));
+  const rsvp = await sendRsvpAlerts(st).catch((err) => ({ error: err.message }));
+  return new Response(JSON.stringify({ cases, rsvp }), { headers: { "content-type": "application/json" } });
 }
 
 // 11:00 to 03:59 UTC: 7a to 11p in Detroit in summer, 6a to 10p in winter. The earliest nudge is

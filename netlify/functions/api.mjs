@@ -23,6 +23,7 @@ import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
 import { caseKey, ownsLog, logView, mergeLog, markEntered, helperPayload, SUPERVISORS_KEY, cleanSupervisorList } from "../../lib/caselog.js";
 import { devicesKey, isLinked, withDevice, elsewhere } from "../../lib/devices.js";
 import { minimumsFromFile } from "../../lib/acgme-report.js";
+import { RSVP_DONE, repliedBy } from "../../lib/rsvp-alerts.js";
 import crypto from "node:crypto";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -254,8 +255,8 @@ export default async function handler(req) {
       const key = linking ? (await req.json().catch(() => ({}))).key : req.headers.get("x-device-key") || "";
       if (!goodKey(key)) return fail(400, "Missing device key");
       const today = todayLocal();
-      const [devices, caseRec, swapData, hoursRec, calSeen] = await Promise.all([
-        st.getJSON(devicesKey(pid)), st.getJSON(caseKey(pid)), st.getJSON("swaps"), st.getJSON(`hours/${pid}`), st.getJSON(`calseen/${pid}`),
+      const [devices, caseRec, swapData, hoursRec, calSeen, replied] = await Promise.all([
+        st.getJSON(devicesKey(pid)), st.getJSON(caseKey(pid)), st.getJSON("swaps"), st.getJSON(`hours/${pid}`), st.getJSON(`calseen/${pid}`), st.getJSON(RSVP_DONE),
       ]);
       const swaps = (swapData?.list || []).filter((r) => r.end >= addDays(today, -1) && r.status !== "cancelled");
       let linked = isLinked(devices, key);
@@ -271,7 +272,28 @@ export default async function handler(req) {
         if (holds) { await linkDevice(pid, key); linked = true; }
       }
       const now = linked ? await st.getJSON(devicesKey(pid)) : devices;
-      return json({ linked, devices: (now?.keys || []).length, elsewhere: linked ? null : elsewhere({ caseRec, swaps, hoursRec, pid }), calendarAt: calSeen?.at || null });
+      return json({ linked, devices: (now?.keys || []).length, elsewhere: linked ? null : elsewhere({ caseRec, swaps, hoursRec, pid }), calendarAt: calSeen?.at || null, rsvpDone: [...repliedBy(replied, pid)] });
+    }
+
+    // ---- "I've replied" to an event's RSVP: its reminders stop (lib/rsvp-alerts.js) ----
+    if (path === "/api/rsvp" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const ds = await loadDataset(st);
+      if (!ds.people.some((p) => p.id === body.pid)) return fail(404, "No such resident");
+      const event = (ds.events || []).find((e) => e.id === body.id);
+      if (!event) return fail(404, "That event is gone.");
+      const done = body.done !== false;
+      await st.update(RSVP_DONE, (saved) => {
+        const rec = { ...(saved || {}) };
+        const pids = new Set(rec[event.id] || []);
+        if (done) pids.add(body.pid); else pids.delete(body.pid);
+        if (pids.size) rec[event.id] = [...pids]; else delete rec[event.id];
+        // Events more than a month gone take their replies with them.
+        const live = new Set((ds.events || []).map((e) => e.id));
+        for (const id of Object.keys(rec)) if (!live.has(id)) delete rec[id];
+        return rec;
+      });
+      return json({ ok: true, done });
     }
 
     const wtok = path.match(/^\/api\/widgettoken\/([\w-]+)$/);

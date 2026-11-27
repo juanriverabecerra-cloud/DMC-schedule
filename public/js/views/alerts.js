@@ -72,7 +72,7 @@ export function openAlerts(ctx) {
       status === "on" && !ctx.state.me ? h("p", { class: "tiny muted" }, "Pick yourself under More so the alert can say where you are. Lecture alerts need it too.") : null,
       h("p", { class: "tiny muted", style: { marginBottom: 0 } }, local.get("adminKey")
         ? "On an admin's phone this also covers residents' requests: sick calls right away and one evening summary of swaps and no-call lists. Change it in Admin › Requests."
-        : "Only posted OR schedules, didactics and your case log. Nothing else is sent."),
+        : "Only posted OR schedules, didactics, your case log and RSVP reminders (3 days before and on the last day, until you tap I've replied). Nothing else is sent."),
     ]);
   };
   draw();

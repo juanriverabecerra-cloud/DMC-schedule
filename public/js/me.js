@@ -55,3 +55,17 @@ export const linkButton = (pid, label = "Use it here too") => {
   } }, icon("check"), label);
   return btn;
 };
+
+// ---- RSVPs: the events someone has said they've replied to (Blobs rsvp/done, via /api/me) ----
+const replied = new Map(); // what this phone just said, until the server's answer catches up
+export function rsvpDone(pid) {
+  const out = new Set(meStatus(pid)?.rsvpDone || []);
+  for (const [id, done] of replied) if (done) out.add(id); else out.delete(id);
+  return out;
+}
+export async function markRsvp(pid, id, done = true) {
+  replied.set(id, done);
+  tell(status.data, status.data);
+  await api("/api/rsvp", { method: "POST", body: { pid, id, done } });
+  if (status.data) status.data = { ...status.data, rsvpDone: [...rsvpDone(pid)] };
+}

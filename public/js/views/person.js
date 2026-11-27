@@ -7,6 +7,7 @@ import { actualFor } from "../logged.js";
 import { openDaySheet, subscribeCard } from "./common.js";
 import { didacticsPersonCard } from "./didactics.js";
 import { goldenDays } from "../../core/daysoff.js";
+import { dayDecor } from "../../core/decor.js";
 
 // The call sheet's colors, under the month: where the colors are.
 const LEGEND = [
@@ -57,12 +58,14 @@ export function monthGrid(ctx, pid, month, onPick) {
     dates.map((date) => {
       const d = model.day(pid, date);
       const off = ["off", "holiday", "postcall"].includes(d.status);
+      const decor = dayDecor(model, pid, date); // Christmas, a party…
       return h("button", {
         class: `mcell${date === state.today ? " today" : ""}${date === state.date ? " sel" : ""}${off ? " off" : ""}${d.status === "vacation" ? " vac" : ""}${golden.has(date) ? " golden" : ""}`,
         vars: { "--c": d.status === "work" ? d.color : "transparent" },
-        "aria-label": `${date}: ${headline(d)}`,
+        "aria-label": `${date}: ${headline(d)}${decor ? `, ${decor.label}` : ""}`,
         onclick: () => onPick(date),
       },
+      decor ? h("span", { class: "decor", title: decor.label, "aria-hidden": "true" }, decor.emoji) : null,
       h("span", { class: "d" }, parts(date).d),
       h("span", { class: "c" }, cellCode(d)),
       h("span", { class: "marks" }, marks(d).map((c) => h("i", { vars: { "--m": c } }))));
