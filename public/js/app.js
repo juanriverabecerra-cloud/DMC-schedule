@@ -81,7 +81,7 @@ function screenShape() {
     screenSize: { width: screen.width, height: screen.height }, phone: /\biPhone\b/.test(navigator.userAgent),
   });
   const root = document.documentElement;
-  for (const name of ["strip", "corner", "rail", "cam"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
+  for (const name of ["strip", "corner", "rail", "cam", "dock"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
   for (const [name, value] of [["--strip-top", shape.stripTop], ["--strip-bottom", shape.stripBottom], ["--corner-width", shape.cornerWidth], ["--corner-height", shape.cornerHeight]]) {
     if (value) root.style.setProperty(name, `${value}px`); else root.style.removeProperty(name);
   }
@@ -230,7 +230,12 @@ function tabbar(r) {
     h("button", {
       class: "tab", "aria-current": r.name === id || (id === "more" && underMore(r.name)) ? "page" : null,
       "aria-label": label, title: label,
-      onclick: () => go(id),
+      // Shrunk while scrolling: the first tap brings the other tabs back.
+      onclick: () => {
+        const root = document.documentElement;
+        if (root.classList.contains("tabs-min")) { root.classList.remove("tabs-min"); return; }
+        go(id);
+      },
     }, icon(ic), h("span", { class: "tab-label" }, label),
     id === "more" && red ? h("i", { class: "dot", "aria-label": inbox.urgent ? "Sick call" : "Coverage gaps soon" }) : null,
     id === "more" && (toDo || inbox.open > 0) && !red ? h("i", { class: "dot soon", "aria-label": inbox.open ? "Requests waiting" : "Something to do" }) : null,
@@ -347,6 +352,17 @@ onMeChange((was, now) => {
 });
 // Scrolled down: the top bar's one-time note steps aside instead of covering cards.
 window.addEventListener("scroll", () => document.documentElement.classList.toggle("scrolled", window.scrollY > 40), { passive: true });
+// The glass tabs on the folding iPhone shrink to the one you're on while you scroll down, so more of
+// the schedule shows, and come back when you scroll up, reach the top, change screens or tap them.
+let tabsY = 0;
+window.addEventListener("scroll", () => {
+  const root = document.documentElement, y = window.scrollY, d = root.dataset;
+  if (!(d.strip || d.rail || d.dock) || y < 60) root.classList.remove("tabs-min");
+  else if (y > tabsY + 14 && document.querySelector('.tab[aria-current="page"]')) root.classList.add("tabs-min");
+  else if (y < tabsY - 14) root.classList.remove("tabs-min");
+  if (Math.abs(y - tabsY) > 14 || y < 60) tabsY = y;
+}, { passive: true });
+window.addEventListener("hashchange", () => document.documentElement.classList.remove("tabs-min"));
 // Turning or unfolding the phone changes which part of the screen it keeps.
 screenShape();
 let resizeTimer = null;

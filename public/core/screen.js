@@ -10,13 +10,13 @@ const STRIP_OTHER_MAX = 24; // an ordinary phone turned sideways has the same ma
 const NEAR = 2;
 // The unfolded phone held upright: wider than any phone, narrower than the left rail's 840px, with
 // the phone's clock band across the top (an iPad's status bar is under 40px).
-const UNFOLDED = { minWidth: 600, maxWidth: 840, minTop: 40 };
+const UNFOLDED = { minWidth: 600, maxWidth: 840, minTop: 40, minSide: 500 }; // other iPhones are under 450 across
 
 // insets: { top, left, right } in px. regions: [{ kind, x, y, width, height }] in page coordinates.
 // screenSize: the whole screen in px ({ width, height }, held upright); phone: an iPhone's browser.
 export function screenLayout({ width, height, insets = {}, regions = [], screenSize = null, phone = false }) {
   const { top = 0, left = 0, right = 0 } = insets;
-  const out = { strip: "", stripTop: 0, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "" };
+  const out = { strip: "", stripTop: 0, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "", dock: "" };
   const taken = regions.filter((r) => r && r.kind === "occlusion" && r.width > 0 && r.height > 0);
 
   // A strip down one side: the tabs go in it, clear of whatever the phone has at either end.
@@ -47,12 +47,14 @@ export function screenLayout({ width, height, insets = {}, regions = [], screenS
   // folding iPhone keeps it on the right.
   const unfolded = width >= UNFOLDED.minWidth && width < UNFOLDED.maxWidth && height > width;
   if (unfolded && (corner || (!taken.length && top >= UNFOLDED.minTop))) out.rail = out.corner || "right";
-  // The Home Screen web app on the folding iPhone: iOS keeps the camera strip outside the page
-  // altogether (the page is narrower than the screen and reports no margin), and unfolded the
-  // page is wider than any other iPhone's. The glass tabs float over the schedule on the right.
+  // The Home Screen web app on the folding iPhone, which can't use the camera strip (iOS keeps it
+  // outside the page). Unfolded, either way up, the page is at least 500 wide and tall, which no
+  // other iPhone's is: the glass tabs float down the right. Folded, the page is narrower than the
+  // screen: the side next to the strip has no room to spare, so they float along the bottom.
   if (!out.rail && phone && !taken.length) {
     const across = screenSize ? (width > height ? Math.max(screenSize.width, screenSize.height) : Math.min(screenSize.width, screenSize.height)) : width;
-    if (across - width >= STRIP_MIN || (width >= UNFOLDED.minWidth && height > width)) out.rail = "right";
+    if (Math.min(width, height) >= UNFOLDED.minSide) out.rail = "right";
+    else if (across - width >= STRIP_MIN) out.dock = "bottom";
   }
   return out;
 }

@@ -1230,7 +1230,7 @@ test("a strip down one side takes the tabs, clear of the phone's own things", ()
   const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
   // A folded iPhone Duo held upright: 85 down the right, with the camera and clock at the top.
   assert.deepEqual(screenLayout({ width: 466, height: 678, insets: { right: 85 }, regions: [taken(381, 0, 85, 153)] }),
-    { strip: "right", stripTop: 153, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "top" });
+    { strip: "right", stripTop: 153, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "top", dock: "" });
   // In a browser the phone says nothing about what's in the strip; the tabs still go there, and
   // upright the camera is taken to be at the top, about as tall as on the folding iPhone.
   const web = screenLayout({ width: 466, height: 678, insets: { right: 85 } });
@@ -1268,24 +1268,27 @@ test("unfolded and upright, the tabs move from the bottom to a column under the 
 
 test("the Home Screen web app on the folding iPhone gets the glass tabs too", () => {
   const phone = true;
-  // Folded: iOS keeps the camera strip outside the page, so the page is 84 narrower than the screen.
-  assert.equal(screenLayout({ width: 382, height: 678, screenSize: { width: 466, height: 678 }, phone }).rail, "right");
-  // Unfolded and turned: the same, along the long side (in place of the left rail).
-  assert.equal(screenLayout({ width: 867, height: 669, screenSize: { width: 669, height: 951 }, phone }).rail, "right");
-  // Unfolded and upright: wider than any other iPhone.
-  assert.equal(screenLayout({ width: 669, height: 951, screenSize: { width: 669, height: 951 }, phone }).rail, "right");
+  const at = (o) => { const r = screenLayout({ phone, ...o }); return [r.rail, r.dock]; };
+  // Folded: iOS keeps the camera strip outside the page, so the page is narrower than the screen.
+  // The side beside the strip has no room to spare: the tabs float along the bottom, either way up.
+  assert.deepEqual(at({ width: 382, height: 678, screenSize: { width: 466, height: 678 } }), ["", "bottom"]);
+  assert.deepEqual(at({ width: 593, height: 466, screenSize: { width: 466, height: 678 } }), ["", "bottom"]);
+  // Unfolded, either way up: down the right, whatever size the phone says its screen is.
+  assert.deepEqual(at({ width: 669, height: 951, screenSize: { width: 669, height: 951 } }), ["right", ""]);
+  assert.deepEqual(at({ width: 867, height: 669, screenSize: { width: 669, height: 951 } }), ["right", ""]);
+  assert.deepEqual(at({ width: 867, height: 580, screenSize: { width: 466, height: 678 } }), ["right", ""]);
   // Every other iPhone, upright or turned, keeps its tab bar; so does an iPad (not an iPhone).
-  assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 }, screenSize: { width: 393, height: 852 }, phone }).rail, "");
-  assert.equal(screenLayout({ width: 852, height: 393, insets: { left: 59, right: 59 }, screenSize: { width: 393, height: 852 }, phone }).rail, "");
+  assert.deepEqual(at({ width: 393, height: 852, insets: { top: 59 }, screenSize: { width: 393, height: 852 } }), ["", ""]);
+  assert.deepEqual(at({ width: 956, height: 440, insets: { left: 62, right: 62 }, screenSize: { width: 440, height: 956 } }), ["", ""]);
   assert.equal(screenLayout({ width: 744, height: 1133, insets: { top: 24 }, screenSize: { width: 744, height: 1133 } }).rail, "");
-  assert.equal(screenLayout({ width: 382, height: 678, screenSize: { width: 466, height: 678 } }).rail, ""); // not an iPhone
+  assert.equal(screenLayout({ width: 382, height: 678, screenSize: { width: 466, height: 678 } }).dock, ""); // not an iPhone
 });
 
 test("a clock in one corner of the top margin leaves the rest of the row to the header", () => {
   const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
   // An unfolded iPhone Duo held upright.
   assert.deepEqual(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 0, 144, 82)] }),
-    { strip: "", stripTop: 0, stripBottom: 0, corner: "right", cornerWidth: 144, cornerHeight: 82, rail: "right", cam: "" });
+    { strip: "", stripTop: 0, stripBottom: 0, corner: "right", cornerWidth: 144, cornerHeight: 82, rail: "right", cam: "", dock: "" });
   assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(0, 0, 144, 82)] }).corner, "left");
   // Not a corner: nothing reported, a status bar right across, something shorter than the
   // margin, something not at the top, or the fold rather than something in the way.
