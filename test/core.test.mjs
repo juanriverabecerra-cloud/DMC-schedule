@@ -1643,10 +1643,10 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   ds.daily[date] = {
     date, rooms: [{ or: "1", surgeon: "Surg", staff: "ResA", ja: "", breaks: "" }], opsc: {}, ob: {}, pat: [], night: [],
     procedures: [{ name: "Cath lab", count: "2", mda: "CathMda", staff: "ResC", ja: "" }, { name: "EP lab", count: "1", mda: "EpMda", staff: "", ja: "ResF" }],
-    people: [{ name: "ResA", where: "BA", call: "" }, { name: "ResC", where: "Cath lab", call: "" }, { name: "ResE", where: "NORA", call: "Late" }, { name: "ResD", where: "OB", call: "" }],
+    people: [{ name: "ResA", where: "BA", call: "" }, { name: "ResC", where: "Cath lab", call: "" }, { name: "ResE", where: "PACU", call: "Late" }, { name: "ResD", where: "OB", call: "" }],
     egress: {
       attendings: [{ slot: "H1 (MOR call)", name: "Callmda- 8AM" }, { slot: "OB 14 (OB call)", name: "obcall" }, { slot: "Board Runner", name: "Runner" }, { slot: "H13 (MOR pre call)", name: "Premda" }, { slot: "H15 (MOR post call)", name: "Postmda" }],
-      residents: [{ name: "ResE", where: "ELECT-J", note: "" }, { name: "ResB", where: "Vacation", note: "" }, { name: "ResA", where: "BR", note: "" }],
+      residents: [{ name: "ResE", where: "NORA", note: "" }, { name: "ResB", where: "Vacation", note: "" }, { name: "ResA", where: "BR", note: "" }, { name: "ResD", where: "OB CA-1", note: "" }],
     },
     notes: ["ResE to VA after lunch", "Room 9 closes at noon"],
   };
@@ -1657,13 +1657,14 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   assert.equal(c.roles.some((r) => r.kind === "where"), false); // the list saying "Cath lab" adds nothing more
   assert.equal(headline(c), "Cath lab · CathMda");
   assert.equal(headline(m.day("f", date)), "EP lab · JA · EpMda");
-  // Somewhere the call sheet doesn't say, from the board runner's own list (it wins over Egress).
+  // Somewhere the call sheet doesn't say, from the dated Egress tab (it wins over the side list's
+  // "PACU"), with the side list's Late/Call column beside it.
   const e = m.day("e", date);
   assert.deepEqual(e.roles.filter((r) => r.kind === "where").map((r) => [r.where, r.code]), [["NORA", "NORA"]]);
   assert.equal(e.sheetCall, "Late");
   assert.deepEqual(e.sheetNotes, ["ResE to VA after lunch"]);
   // Their own rotation, a status or a room already given: nothing added.
-  assert.equal(m.day("d", date).roles.some((r) => r.kind === "where"), false); // OB is their rotation
+  assert.equal(m.day("d", date).roles.some((r) => r.kind === "where"), false); // "OB CA-1" is their rotation
   assert.equal(m.day("b", date).roles.some((r) => r.kind === "where"), false); // "Vacation"
   assert.deepEqual(m.day("a", date).roles.map((r) => r.kind), ["room"]);
   assert.deepEqual(m.day("a", date).sheetNotes, []);
@@ -1682,6 +1683,45 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   assert.deepEqual(canonicalizeDaily(ds, date), []); // already in roster spelling
   assert.equal(ds.daily[date].procedures[0].staff, "ResC");
   assert.ok(changes.some((x) => x.where === "Cath lab" && x.to === "ResC"));
+});
+
+test("an old side list on the daily sheet doesn't move anyone off their rotation", () => {
+  // 11/30/26: the board runner's side list still held an old month's places (an Acute Pain resident
+  // in "Thoracic"), while the dated Egress tab had everyone right.
+  const ds = fairnessDataset();
+  const rows = ds.months["2026-11"].rows;
+  rows.a.rotation = "Acute Pain"; rows.a.days[2] = { t: "AP" };
+  const date = "2026-11-02";
+  const sheet = (withEgress) => ({
+    date, rooms: [], opsc: {}, ob: {}, pat: [], night: [], procedures: [],
+    people: [
+      { name: "ResA", where: "Thoracic", call: "" }, { name: "ResC", where: "VA", call: "LATE" }, { name: "ResD", where: "CHM", call: "" },
+      { name: "ResE", where: "OPSC", call: "" }, { name: "ResF", where: "SGICU", call: "" },
+    ],
+    egress: withEgress ? { attendings: [], residents: [{ name: "ResA", where: "APS CA-2", note: "" }, { name: "ResC", where: "BA", note: "" }, { name: "ResD", where: "OB CA-1", note: "" }] } : { attendings: [], residents: [] },
+  });
+  for (const withEgress of [true, false]) {
+    ds.daily[date] = sheet(withEgress);
+    const m = createModel(ds);
+    assert.equal(headline(m.day("a", date)), "Acute Pain", `egress: ${withEgress}`); // not "Thoracic"
+    assert.equal(m.day("c", date).roles.length, 0);
+    assert.equal(m.day("c", date).sheetCall, ""); // nor its stale "LATE"
+  }
+  // A side list that agrees with the call sheet is current, and counts when there's no Egress tab.
+  rows.a.rotation = "Basic Anesthesia"; rows.a.days[2] = { t: "BA" };
+  ds.daily[date] = { ...sheet(false), people: [
+    { name: "ResA", where: "NORA", call: "" }, { name: "ResB", where: "BA", call: "" }, { name: "ResC", where: "BA", call: "Late" },
+    { name: "ResD", where: "11-9", call: "" }, { name: "ResE", where: "ELECT", call: "" }, { name: "ResF", where: "BA", call: "" },
+  ] };
+  const m = createModel(ds);
+  assert.equal(headline(m.day("a", date)), "NORA");
+  assert.equal(m.day("c", date).sheetCall, "Late");
+});
+
+test("the daily sheet's own words for places", async () => {
+  const { placeCode } = await import("../public/core/model.js");
+  for (const [said, code] of [["APS CA-2", "AP"], ["BAV", "BA-V"], ["OB CA-3", "OB"], ["HC CA-2", "HC"], ["Neuro", "HN"], ["Chronic Pain", "CP"],
+    ["Elective", "ELECT"], ["11am-9pm", "11-9"], ["BR", "BD"], ["9 icu", "9-ICU"], ["SGICU", "SG-ICU"], ["Cath lab", ""]]) assert.equal(placeCode(said), code, said);
 });
 
 test("codes seen on the newer sheets", async () => {

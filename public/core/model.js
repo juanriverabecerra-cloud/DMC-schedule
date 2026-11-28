@@ -24,6 +24,16 @@ export const roleWord = (name) => ROLE_WORDS[String(name ?? "").trim().toLowerCa
 const KEEP_POST = new Set(Object.values(ROLE_WORDS));
 export const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
 
+// A place as the daily sheet writes it ("APS CA-2", "BAV", "OB CA-3", "Neuro", "9 icu", "BR") as the
+// app's code, or "" when it isn't one: the class after it is dropped, and the yearly plan's names count.
+const PLACE_ALIAS = { APS: "AP" };
+export function placeCode(raw) {
+  const t = String(raw ?? "").replace(/\s*\bCA-?\s*[123]\b/i, "").trim();
+  if (!t) return "";
+  for (const c of [normCode(t), rotationCode(t), normCode(t.replace(/\s+/g, "-")), PLACE_ALIAS[t.toUpperCase()]]) if (c && CODES[c]) return c;
+  return "";
+}
+
 export const BOARD_ORDER = [
   "Harper Main OR", "Procedures", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
   "Basic Anesthesia", "Board Runner", "Junior Attending", "9-ICU", "Obstetrics", "VA", "Pediatrics", "Regional",
@@ -306,25 +316,40 @@ export function createModel(ds) {
       for (const s of p.jaIds) if (s.id) add(s.id, { kind: "proc", name: p.name, mda: p.mda, proc: p, asJa: true });
     }
 
-    // The board runner's own list ("Location that day", "Late/Call"), and the Egress tab's
-    // assignments: where everyone is, including the people in no room. A place the call sheet
-    // already says (their rotation) adds nothing; anything else (cath lab, NORA...) becomes their
-    // role for the day when the sheet gives them no other.
+    // Where everyone is, including the people in no room: the Egress tab's assignments, and the
+    // board runner's own list beside the rooms ("Location that day", "Late/Call"). The Egress tab
+    // is dated and kept up. The side list is often an old one nobody updated (on 11/30/26 it
+    // matched the call sheet for 2 of 32 residents, and put an Acute Pain resident in Thoracic), so
+    // it only counts when most of its places agree with the call sheet, and only for people the
+    // Egress tab leaves out. A place the call sheet already says (their rotation) adds nothing;
+    // anything else (cath lab, NORA, PACU...) becomes their role for the day when the sheet gives
+    // them no other.
+    const egressList = sheet.egress?.residents || [];
+    const sideList = sheet.people || [];
+    const sideChecks = sideList.map((x) => {
+      const id = match(x.name, { prefer });
+      const b = id ? baseDay(id, date) : null;
+      const code = placeCode(x.where);
+      return b && b.status === "work" && !b.call && code && CODES[b.code] ? CODES[code].group === CODES[b.code].group : null;
+    }).filter((v) => v !== null);
+    const sideTrusted = sideChecks.length < 5 || sideChecks.filter(Boolean).length / sideChecks.length >= 0.5;
     const listed = new Map();
     const note = (name, where, call, from) => {
       const id = match(name, { prefer });
-      if (!id || !where && !call) return;
+      if (!id || (!where && !call)) return;
       const was = listed.get(id);
-      if (!was || (from === "list" && was.from !== "list")) listed.set(id, { where, call, from });
+      if (!was) listed.set(id, { where, call, from });
+      else if (call && !was.call) was.call = call; // the side list's Late/Call column, beside the Egress place
     };
-    for (const x of sheet.egress?.residents || []) note(x.name, x.where, "", "egress");
-    for (const x of sheet.people || []) note(x.name, x.where, x.call, "list");
+    for (const x of egressList) note(x.name, x.where, "", "egress");
+    if (sideTrusted) for (const x of sideList) note(x.name, x.where, x.call, "list");
     const listCall = new Map();
     for (const [id, x] of listed) {
       const b = baseDay(id, date);
-      const code = normCode(x.where);
-      const known = !!CODES[code];
-      const sameAsRotation = known && (code === b.code || (!!CODES[b.code] && CODES[code].group === CODES[b.code].group));
+      const code = placeCode(x.where);
+      const known = !!code;
+      // The same place as the call sheet's day or the month's rotation, in other words, adds nothing.
+      const sameAsRotation = known && [b.code, b.rotationCode].some((c) => c && (c === code || (!!CODES[c] && CODES[code].group === CODES[c].group)));
       const status = /^(vac|vacation|pc|post\s*call|off|nights?|nf)$/i.test(x.where);
       const procHere = procedures.find((p) => p.name.toLowerCase() === String(x.where).toLowerCase());
       const procLike = !!procHere || /\b(cath|ep lab|ct|mri|angio|tee|bedside|ir)\b/i.test(x.where);
@@ -354,7 +379,7 @@ export function createModel(ds) {
     // Who runs the board that day: the Egress tab's "Board Runner" MDA, and the resident beside
     // them ("BR"), or the one the board runner's own list puts on the board.
     const attendings = attendingsOf(sheet.egress?.attendings);
-    const brRow = [...(sheet.egress?.residents || []), ...(sheet.people || [])].find((x) => normCode(x.where) === "BD");
+    const brRow = [...egressList, ...(sideTrusted ? sideList : [])].find((x) => placeCode(x.where) === "BD");
     const runner = {
       mda: attendings.find((a) => a.kind === "runner") || null,
       resident: brRow ? { name: brRow.name, id: match(brRow.name, { prefer }) || null } : null,
