@@ -144,7 +144,7 @@ test("posting a day's sheet alerts everyone once, with where they are", async ()
   const msg = phone.open(phone.received[0].body);
   assert.equal(msg.title, "Tomorrow's OR schedule is posted");
   // The MDA, not the surgeon: they're who the day is spent with. Then who's in charge.
-  assert.equal(msg.body, "You're in OR 7 with Quill (MDA). Board runner Rook · MDA on call Sable.");
+  assert.equal(msg.body, "You're in OR 7 with Quill. Board runner Rook · On call Sable.");
   assert.equal(msg.url, `/#/day/${tomorrow}`);
   // A fix to the same day doesn't alert again, unless the admin asks.
   assert.equal((await call("PUT", `/api/daily/${tomorrow}`, sheet, admin)).body.alerted, 0);
@@ -540,7 +540,7 @@ test("the live sheet: updates quietly, alerts once it's ready, then only the peo
   assert.equal(pb.received.length, 2);
   const moved = pb.open(pb.received[1].body);
   assert.equal(moved.title, "Your assignment changed for tomorrow");
-  assert.match(moved.body, /OR 3 with M \(MDA\)/);
+  assert.match(moved.body, /OR 3 with M\./);
   // Moved again later: told again, each time, up to three corrections.
   for (const [i, v] of [v1, v2, v1].entries()) {
     bytes = await fakeWorkbook("2026-03-11", v);
@@ -966,7 +966,7 @@ test("widget feed: one resident's week, who's on, what's ahead, and when to show
   assert.equal(feed.days.length, 9);
   const [tue, wed, thu, fri] = feed.days;
   assert.equal(tue.title, "Basic Anesthesia");
-  assert.equal(wed.title, "OR 7 · MDA Jones"); // the MDA names the day; the surgeon is a detail
+  assert.equal(wed.title, "OR 7 · Jones"); // the MDA names the day; the surgeon is a detail
   assert.equal(wed.code, "OR 7");
   assert.deepEqual(wed.lines, ["Starts 7:30 · 2 cases", "Surgeon Smith", "Breaks ResB"]);
   assert.deepEqual(thu.chips, ["Late till 6p"]);

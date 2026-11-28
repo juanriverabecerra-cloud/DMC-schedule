@@ -13,7 +13,8 @@ const NEAR = 2;
 const UNFOLDED = { minWidth: 600, maxWidth: 840, minTop: 40 };
 
 // insets: { top, left, right } in px. regions: [{ kind, x, y, width, height }] in page coordinates.
-export function screenLayout({ width, height, insets = {}, regions = [] }) {
+// screenSize: the whole screen in px ({ width, height }, held upright); phone: an iPhone's browser.
+export function screenLayout({ width, height, insets = {}, regions = [], screenSize = null, phone = false }) {
   const { top = 0, left = 0, right = 0 } = insets;
   const out = { strip: "", stripTop: 0, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "" };
   const taken = regions.filter((r) => r && r.kind === "occlusion" && r.width > 0 && r.height > 0);
@@ -46,5 +47,12 @@ export function screenLayout({ width, height, insets = {}, regions = [] }) {
   // folding iPhone keeps it on the right.
   const unfolded = width >= UNFOLDED.minWidth && width < UNFOLDED.maxWidth && height > width;
   if (unfolded && (corner || (!taken.length && top >= UNFOLDED.minTop))) out.rail = out.corner || "right";
+  // The Home Screen web app on the folding iPhone: iOS keeps the camera strip outside the page
+  // altogether (the page is narrower than the screen and reports no margin), and unfolded the
+  // page is wider than any other iPhone's. The glass tabs float over the schedule on the right.
+  if (!out.rail && phone && !taken.length) {
+    const across = screenSize ? (width > height ? Math.max(screenSize.width, screenSize.height) : Math.min(screenSize.width, screenSize.height)) : width;
+    if (across - width >= STRIP_MIN || (width >= UNFOLDED.minWidth && height > width)) out.rail = "right";
+  }
   return out;
 }

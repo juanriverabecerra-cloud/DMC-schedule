@@ -646,10 +646,11 @@ body[data-layout] .view, body[data-layout] .topbar-inner { max-width: 1040px; }
 :root[data-cam="top"] body::after { top: 6px; height: calc(var(--strip-top, 0px) - 2px); }
 :root[data-cam="bottom"] body::after { bottom: 6px; height: calc(var(--strip-bottom, 0px) - 2px); }
 
-/* The unfolded phone held upright (data-rail, see core/screen.js): the tabs leave the bottom for a
-   floating glass column down the side under the clock, as when the phone is turned. The cards run
-   the full width beneath it, so they keep two roomy columns. */
-:root[data-rail] { --rail-w: 64px; }
+/* The unfolded phone held upright, and the Home Screen web app on the folding iPhone in any shape
+   (data-rail, see core/screen.js; iOS keeps that app out of the camera strip, so the tabs can't go
+   in it): the tabs leave the bottom, or the left rail, for a floating glass column on the right,
+   and the cards run the full width beneath it. */
+:root[data-rail] { --rail-w: 64px; --rail: 0px; } /* no left rail, even on a wide screen */
 :root[data-rail] .view { padding-bottom: calc(var(--safe-bottom) + 28px); }
 :root[data-rail] .tabbar {
   inset: 0 0 0 auto; width: var(--rail-w);

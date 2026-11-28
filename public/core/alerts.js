@@ -28,10 +28,11 @@ const ors = (rooms) => rooms.map((r) => r.or).join(", ");
 
 // "Quill", "Rook and Sable"
 const both = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] || "");
-// " with Quill (MDA)" for a room's MDA cell, or nothing when the sheet leaves it blank.
+// " with Quill" for a room's MDA cell (it's understood the name is the MDA), or nothing when the
+// sheet leaves it blank.
 const withMda = (raw) => {
   const names = Array.isArray(raw) ? raw : mdaNames(raw);
-  return names.length ? ` with ${both(names)} (${names.length > 1 ? "MDAs" : "MDA"})` : "";
+  return names.length ? ` with ${both(names)}` : "";
 };
 
 // Where someone is that day and the MDA they're with: the MDA is who the day is spent with.
@@ -62,13 +63,13 @@ export function whereLine(d) {
   return "";
 }
 
-// The day's board runner and the MDA on call tonight, in one line: "Board runner Quill · MDA on call Rook."
+// The day's board runner and the MDA on call that night, in one line: "Board runner Quill · On call Rook."
 export function chargeLine(dl, d = null) {
   const who = inCharge(dl, d);
   if (!who) return "";
   const bits = [
     who.runner ? `Board runner ${who.runner.name}` : who.resident ? `Board runner ${who.resident.name}` : "",
-    who.call ? `${who.ob ? "OB MDA" : "MDA"} on call ${who.call.name}` : "",
+    who.call ? `${who.ob ? "OB on call" : "On call"} ${who.call.name}` : "",
   ].filter(Boolean);
   return bits.length ? `${bits.join(" · ")}.` : "";
 }

@@ -858,7 +858,7 @@ test("the alert says which day and where you are", async () => {
   const m = createModel(ds);
   const a = dailyAlert(m, "2026-11-02", "a", "2026-11-01");
   // The MDAs, not the surgeon; no Egress tab, so no board runner line.
-  assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Quill and Sable (MDAs).", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
+  assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Quill and Sable.", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
   assert.equal(dailyAlert(m, "2026-11-02", "b", "2026-11-01"), null); // on night float: the day's rooms aren't theirs
   assert.equal(dailyAlert(m, "2026-11-02", null, "2026-11-01").body, "Tap to see the rooms and who's where.");
 });
@@ -1266,6 +1266,21 @@ test("unfolded and upright, the tabs move from the bottom to a column under the 
   assert.equal(screenLayout({ width: 900, height: 1200, insets: { top: 82 } }).rail, "");
 });
 
+test("the Home Screen web app on the folding iPhone gets the glass tabs too", () => {
+  const phone = true;
+  // Folded: iOS keeps the camera strip outside the page, so the page is 84 narrower than the screen.
+  assert.equal(screenLayout({ width: 382, height: 678, screenSize: { width: 466, height: 678 }, phone }).rail, "right");
+  // Unfolded and turned: the same, along the long side (in place of the left rail).
+  assert.equal(screenLayout({ width: 867, height: 669, screenSize: { width: 669, height: 951 }, phone }).rail, "right");
+  // Unfolded and upright: wider than any other iPhone.
+  assert.equal(screenLayout({ width: 669, height: 951, screenSize: { width: 669, height: 951 }, phone }).rail, "right");
+  // Every other iPhone, upright or turned, keeps its tab bar; so does an iPad (not an iPhone).
+  assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 }, screenSize: { width: 393, height: 852 }, phone }).rail, "");
+  assert.equal(screenLayout({ width: 852, height: 393, insets: { left: 59, right: 59 }, screenSize: { width: 393, height: 852 }, phone }).rail, "");
+  assert.equal(screenLayout({ width: 744, height: 1133, insets: { top: 24 }, screenSize: { width: 744, height: 1133 } }).rail, "");
+  assert.equal(screenLayout({ width: 382, height: 678, screenSize: { width: 466, height: 678 } }).rail, ""); // not an iPhone
+});
+
 test("a clock in one corner of the top margin leaves the rest of the row to the header", () => {
   const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
   // An unfolded iPhone Duo held upright.
@@ -1637,8 +1652,8 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   const c = m.day("c", date);
   assert.deepEqual(c.roles.filter((r) => r.kind === "proc").map((r) => [r.name, r.mda, !!r.asJa]), [["Cath lab", "CathMda", false]]);
   assert.equal(c.roles.some((r) => r.kind === "where"), false); // the list saying "Cath lab" adds nothing more
-  assert.equal(headline(c), "Cath lab · MDA CathMda");
-  assert.equal(headline(m.day("f", date)), "EP lab · JA · MDA EpMda");
+  assert.equal(headline(c), "Cath lab · CathMda");
+  assert.equal(headline(m.day("f", date)), "EP lab · JA · EpMda");
   // Somewhere the call sheet doesn't say, from the board runner's own list (it wins over Egress).
   const e = m.day("e", date);
   assert.deepEqual(e.roles.filter((r) => r.kind === "where").map((r) => [r.where, r.code]), [["NORA", "NORA"]]);

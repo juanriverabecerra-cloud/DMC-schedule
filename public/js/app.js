@@ -76,7 +76,10 @@ function screenShape() {
   probe.remove();
   // What the phone reported is for one size of screen: after a turn it is stale until it reports again.
   const current = reserved && Math.abs(reserved.width - innerWidth) <= 1 && Math.abs(reserved.height - innerHeight) <= 1;
-  const shape = screenLayout({ width: innerWidth, height: innerHeight, insets, regions: current ? reserved.regions : [] });
+  const shape = screenLayout({
+    width: innerWidth, height: innerHeight, insets, regions: current ? reserved.regions : [],
+    screenSize: { width: screen.width, height: screen.height }, phone: /\biPhone\b/.test(navigator.userAgent),
+  });
   const root = document.documentElement;
   for (const name of ["strip", "corner", "rail", "cam"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
   for (const [name, value] of [["--strip-top", shape.stripTop], ["--strip-bottom", shape.stripBottom], ["--corner-width", shape.cornerWidth], ["--corner-height", shape.cornerHeight]]) {

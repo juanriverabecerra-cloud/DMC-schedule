@@ -509,19 +509,20 @@ export function headline(d) {
     return `${post} · breaks OR ${br.rooms.map((x) => x.or).join(", ")}`;
   }
   const room = d.roles.find((r) => r.kind === "room");
-  // The MDA is who the day is spent with; the surgeon is on the room's line below it.
-  if (room) return `OR ${room.or}${mdaText(room.room.mda) ? ` · MDA ${mdaText(room.room.mda)}` : ""}`;
+  // The MDA is who the day is spent with (no "MDA" before the name: it's understood); the
+  // surgeon is on the room's line below it.
+  if (room) return `OR ${room.or}${mdaText(room.room.mda) ? ` · ${mdaText(room.room.mda)}` : ""}`;
   const br = d.roles.find((r) => r.kind === "breaks");
   if (br) return `Breaks · OR ${br.rooms.map((x) => x.or).join(", ")}`;
   const ja = d.roles.find((r) => r.kind === "ja");
   if (ja) return `Junior attending · OR ${ja.rooms.map((x) => x.or).join(", ")}`;
   const proc = d.roles.find((r) => r.kind === "proc");
-  if (proc) return `${proc.name}${proc.asJa ? " · JA" : ""}${mdaText(proc.mda) ? ` · MDA ${mdaText(proc.mda)}` : ""}`;
+  if (proc) return `${proc.name}${proc.asJa ? " · JA" : ""}${mdaText(proc.mda) ? ` · ${mdaText(proc.mda)}` : ""}`;
   if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
   if (d.roles.some((r) => r.kind === "ob")) return "OB @ Hutzel";
   if (d.roles.some((r) => r.kind === "pat")) return "PAT clinic";
   const placed = d.roles.find((r) => r.kind === "where");
-  if (placed) return `${placed.where}${mdaText(placed.mda) ? ` · MDA ${mdaText(placed.mda)}` : ""}`;
+  if (placed) return `${placed.where}${mdaText(placed.mda) ? ` · ${mdaText(placed.mda)}` : ""}`;
   return d.label || d.rotation || "—";
 }
 
