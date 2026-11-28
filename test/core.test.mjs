@@ -79,6 +79,20 @@ test("day resolution reads codes and fill colors", () => {
   assert.equal(m.day("doe-jane", "2026-12-02").status, "planned");
 });
 
+test("the CA-3 10-7 is an overnight shift, 10p to 7a, at Harper", async () => {
+  const { busyReason } = await import("../public/core/daysoff.js");
+  const { sheetConcerns } = await import("../public/core/alerts.js");
+  const ds = dataset();
+  const m = createModel(ds);
+  const d = m.day("ortiz-paul", "2026-11-02");
+  assert.deepEqual(d.shifts.map((s) => [s.start, s.end]), [[1320, 1860]]); // 10p, 7a the next morning
+  assert.equal(d.label, "CA-3 10p–7a");
+  assert.equal(d.site, "harper");
+  assert.equal(sheetConcerns(d), false); // asleep when the OR sheet comes out at 2p
+  assert.equal(m.day("ortiz-paul", "2026-11-03").status, "postcall"); // a blank weekday after it is the morning off
+  assert.equal(busyReason(m, "ortiz-paul", "2026-11-03"), "Post-call");
+});
+
 test("tonight lists night float, seniors and cardiac call", () => {
   const t = createModel(dataset()).tonight("2026-11-02");
   assert.deepEqual(t.night.map((d) => d.pid), ["lee-sam"]);
@@ -330,6 +344,41 @@ test("logged hours: reads the page however it was copied, and checks the total",
 F 11/6/2026 6:00 AM 11/6/2026 3:00 PM 9 Rotation`).entries;
   assert.equal(mergeEntries(first, spread).length, 5); // days between the file's first and last stay
   assert.equal(mergeEntries(mergeEntries(first, older), older).length, 6); // the same file twice changes nothing
+});
+
+test("logged hours: copies saved by other apps, two entries starting together, and gaps between files", async () => {
+  const { parseLoggedHours, mergeRanges, rangesOf, monthlyHistory, actualHours } = await import("../public/core/logged.js");
+  // Seconds, a two-digit year, a 24-hour clock, a comma after the date: all the same rows.
+  const p = parseLoggedHours(`M\t11/2/26 6:00:00 AM\t11/2/26 4:30:00 PM\t10.5\tRotation Daily Duties
+Tu\t11/3/2026, 18:00\t11/4/2026, 06:00\t12\tCall
+W\t11/4/2026 6:00 a.m.\t11/4/2026 7:00 a.m.\t1\tConference/Didactics
+W\t11/4/2026 6:00 AM\t11/4/2026 2:00 PM\t8\tRotation Daily Duties
+W\t11/4/2026 6:00 AM\t11/4/2026 2:00 PM\t8\tRotation Daily Duties
+\t\t\t\t1,031.50`);
+  assert.deepEqual(p.entries.map((e) => [e.date, e.start, e.endDate, e.end, e.hours]), [
+    ["2026-11-02", 360, "2026-11-02", 990, 10.5],
+    ["2026-11-03", 1080, "2026-11-04", 360, 12],
+    ["2026-11-04", 360, "2026-11-04", 420, 1], // a conference that starts with the shift still counts
+    ["2026-11-04", 360, "2026-11-04", 840, 8], // and the same row twice counts once
+  ]);
+  assert.equal(p.total, 1031.5); // a total written with a comma
+
+  // Two files a month apart: the month between is unknown, not a month off.
+  assert.deepEqual(mergeRanges([["2026-10-01", "2026-10-10"]], [["2026-10-11", "2026-10-20"]], [["2026-12-01", "2026-12-05"]]), [["2026-10-01", "2026-10-20"], ["2026-12-01", "2026-12-05"]]);
+  assert.deepEqual(rangesOf([{ date: "2026-10-01" }, { date: "2026-10-09" }]), [["2026-10-01", "2026-10-09"]]); // saved before spans were kept
+  const ds = fairnessDataset();
+  const m = createModel(ds);
+  const day = (date, hours) => ({ date, start: 360, endDate: date, end: 360 + hours * 60, hours, type: "Rotation Daily Duties", rotation: "ANES-OR-HAR" });
+  const entries = [day("2026-10-05", 10), day("2026-10-06", 10), day("2026-12-01", 11)];
+  const actual = actualHours(m, "c", entries, [["2026-10-05", "2026-10-09"], ["2026-12-01", "2026-12-02"]]);
+  assert.equal(actual.covers("2026-10-08"), true); // inside a file with no entry: not worked
+  assert.equal(actual.covers("2026-11-10"), false); // between files: estimated
+  assert.equal(actualHours(m, "c", entries).covers("2026-11-10"), true); // without spans, as before
+
+  // The whole record, month by month.
+  const months = monthlyHistory([...entries, { ...day("2026-10-07", 24), type: "Vacation" }], [["2026-10-05", "2026-10-11"], ["2026-12-01", "2026-12-07"]]);
+  assert.deepEqual(months.map((x) => [x.month, x.hours, x.days, x.away, x.covered]), [["2026-12", 11, 1, 0, 7], ["2026-10", 20, 2, 1, 7]]);
+  assert.equal(months[1].perWeek, null); // six days at work isn't enough to call a week
 });
 
 test("logged hours: the export file, vacation, rotations and years with no call sheet", async () => {
@@ -805,10 +854,11 @@ test("the alert says which day and where you are", async () => {
   assert.equal(dayWord("2026-11-16", "2026-11-13"), "Monday's"); // posted Friday for Monday
   assert.equal(shouldAlert("2026-11-08", "2026-11-09"), false); // never for a past day
   const ds = fairnessDataset();
-  ds.daily["2026-11-02"] = { date: "2026-11-02", rooms: [{ or: "4", surgeon: "Surgeon", staff: "ResA", ja: "", breaks: "" }], opsc: {}, ob: {}, pat: [], night: [] };
+  ds.daily["2026-11-02"] = { date: "2026-11-02", rooms: [{ or: "4", surgeon: "Surgeon", mda: "Quill/Sable", staff: "ResA", ja: "", breaks: "" }], opsc: {}, ob: {}, pat: [], night: [] };
   const m = createModel(ds);
   const a = dailyAlert(m, "2026-11-02", "a", "2026-11-01");
-  assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Surgeon.", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
+  // The MDAs, not the surgeon; no Egress tab, so no board runner line.
+  assert.deepEqual(a, { title: "Tomorrow's OR schedule is posted", body: "You're in OR 4 with Quill and Sable (MDAs).", url: "/#/day/2026-11-02", tag: "daily-2026-11-02" });
   assert.equal(dailyAlert(m, "2026-11-02", "b", "2026-11-01"), null); // on night float: the day's rooms aren't theirs
   assert.equal(dailyAlert(m, "2026-11-02", null, "2026-11-01").body, "Tap to see the rooms and who's where.");
 });
@@ -1180,13 +1230,16 @@ test("a strip down one side takes the tabs, clear of the phone's own things", ()
   const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
   // A folded iPhone Duo held upright: 85 down the right, with the camera and clock at the top.
   assert.deepEqual(screenLayout({ width: 466, height: 678, insets: { right: 85 }, regions: [taken(381, 0, 85, 153)] }),
-    { strip: "right", stripTop: 153, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0 });
-  // In a browser the phone says nothing about what's in the strip; the tabs still go there.
-  assert.equal(screenLayout({ width: 466, height: 678, insets: { right: 85 } }).strip, "right");
+    { strip: "right", stripTop: 153, stripBottom: 0, corner: "", cornerWidth: 0, cornerHeight: 0, rail: "", cam: "top" });
+  // In a browser the phone says nothing about what's in the strip; the tabs still go there, and
+  // upright the camera is taken to be at the top, about as tall as on the folding iPhone.
+  const web = screenLayout({ width: 466, height: 678, insets: { right: 85 } });
+  assert.deepEqual([web.strip, web.stripTop, web.cam], ["right", 153, "top"]);
+  assert.equal(screenLayout({ width: 678, height: 466, insets: { right: 85 } }).cam, ""); // sideways it could be either end
   // Turned one way the strip is on the left; turned the other, the camera is at the bottom end.
   assert.equal(screenLayout({ width: 678, height: 466, insets: { left: 85 } }).strip, "left");
   const turned = screenLayout({ width: 678, height: 466, insets: { right: 85 }, regions: [taken(593, 313, 85, 153)] });
-  assert.deepEqual([turned.strip, turned.stripTop, turned.stripBottom], ["right", 0, 153]);
+  assert.deepEqual([turned.strip, turned.stripTop, turned.stripBottom, turned.cam], ["right", 0, 153, "bottom"]);
   // Unfolded and turned sideways, the clock moves into a strip of its own.
   const wide = screenLayout({ width: 951, height: 669, insets: { right: 84 }, regions: [taken(867, 0, 84, 124)] });
   assert.deepEqual([wide.strip, wide.stripTop], ["right", 124]);
@@ -1197,11 +1250,27 @@ test("a strip down one side takes the tabs, clear of the phone's own things", ()
   assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 } }).strip, "");
 });
 
+test("unfolded and upright, the tabs move from the bottom to a column under the clock", () => {
+  const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
+  // The app knows where the clock is; the column goes on that side.
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 0, 144, 82)] }).rail, "right");
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(0, 0, 144, 82)] }).rail, "left");
+  // The Home Screen web app only sees the band across the top: the folding iPhone's clock is on the right.
+  assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 } }).rail, "right");
+  // Not for a phone, an iPad (its status bar is short), Safari (its own toolbar is up top), the
+  // unfolded phone turned sideways (that's the strip), or a screen wide enough for the left rail.
+  assert.equal(screenLayout({ width: 393, height: 852, insets: { top: 59 } }).rail, "");
+  assert.equal(screenLayout({ width: 744, height: 1133, insets: { top: 24 } }).rail, "");
+  assert.equal(screenLayout({ width: 669, height: 819, insets: { top: 0, bottom: 34 } }).rail, "");
+  assert.equal(screenLayout({ width: 951, height: 669, insets: { right: 84 }, regions: [taken(867, 0, 84, 124)] }).rail, "");
+  assert.equal(screenLayout({ width: 900, height: 1200, insets: { top: 82 } }).rail, "");
+});
+
 test("a clock in one corner of the top margin leaves the rest of the row to the header", () => {
   const taken = (x, y, width, height) => ({ kind: "occlusion", x, y, width, height });
   // An unfolded iPhone Duo held upright.
   assert.deepEqual(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(525, 0, 144, 82)] }),
-    { strip: "", stripTop: 0, stripBottom: 0, corner: "right", cornerWidth: 144, cornerHeight: 82 });
+    { strip: "", stripTop: 0, stripBottom: 0, corner: "right", cornerWidth: 144, cornerHeight: 82, rail: "right", cam: "" });
   assert.equal(screenLayout({ width: 669, height: 951, insets: { top: 82 }, regions: [taken(0, 0, 144, 82)] }).corner, "left");
   // Not a corner: nothing reported, a status bar right across, something shorter than the
   // margin, something not at the top, or the fold rather than something in the way.
@@ -1227,7 +1296,10 @@ test("didactics alerts follow each resident's own day", async () => {
   assert.equal(D.conflict("lee-sam", "2026-11-03", 1020), "You're on night float that night");
   assert.equal(D.conflict("doe-jane", "2026-11-03", 1020), "You're the late resident until 6p");
   assert.equal(D.conflict("doe-jane", "2026-11-03", 360), null); // the late shift doesn't touch 6a
-  assert.equal(D.conflict("ortiz-paul", "2026-11-02", 1020), "You're on the 10a–7p then");
+  // The CA-3 10-7 runs 10p to 7a: resting for it that day, in the building for a 6a session after it.
+  assert.equal(D.conflict("ortiz-paul", "2026-11-02", 1020), "You're on the 10p–7a shift that night");
+  assert.equal(D.where("ortiz-paul", "2026-11-03", 360), null);
+  assert.equal(D.conflict("ortiz-paul", "2026-11-03", 1020), "You're post-call that day"); // gone home to sleep by 5p
   assert.equal(D.conflict("doe-jane", "2026-11-08", 1020), "You're on 12-hr call then");
   assert.equal(D.conflict("lee-sam", "2026-11-07", 1020), "You're on 24-hr call then");
   assert.equal(D.where("lee-sam", "2026-11-08", 360), null); // post-call at 6a: still in the building
@@ -1240,9 +1312,11 @@ test("didactics alerts follow each resident's own day", async () => {
   assert.deepEqual(wed.payload(350), {
     title: "Wednesday conference starts in 10 minutes", body: "6a PBLD · Dr. Lee, then 6:30a Grand Rounds: Airway Fires. Main Auditorium.", url: "/#/didactics", tag: "did-2026-11-04-360",
   });
-  // The late resident is in a case at 5p; someone on an elective day joins the Zoom 5 minutes ahead.
+  // The late resident is in a case at 5p; someone on an ordinary day joins the Zoom 5 minutes ahead.
+  // (Not the CA-3 coming off the 10p–7a that morning: they're home asleep.)
   assert.deepEqual(alertsFor(m, "doe-jane", "2026-11-03"), []);
-  const [tue] = alertsFor(m, "ortiz-paul", "2026-11-03");
+  assert.deepEqual(alertsFor(m, "ortiz-paul", "2026-11-03"), []);
+  const [tue] = alertsFor(m, "garcia-lopez-maria", "2026-11-03");
   assert.equal(tue.at, 1015);
   assert.deepEqual([tue.payload(1015).title, tue.payload(1016).title, tue.payload(1015).body],
     ["Board review starts in 5 minutes", "Board review starts in 4 minutes", "5p Board review · Dr. Smith. On Zoom: tap to join."]);
@@ -1563,8 +1637,8 @@ test("the daily sheet places everyone: a procedure, the board runner's list, not
   const c = m.day("c", date);
   assert.deepEqual(c.roles.filter((r) => r.kind === "proc").map((r) => [r.name, r.mda, !!r.asJa]), [["Cath lab", "CathMda", false]]);
   assert.equal(c.roles.some((r) => r.kind === "where"), false); // the list saying "Cath lab" adds nothing more
-  assert.equal(headline(c), "Cath lab · CathMda");
-  assert.equal(headline(m.day("f", date)), "EP lab · JA · EpMda");
+  assert.equal(headline(c), "Cath lab · MDA CathMda");
+  assert.equal(headline(m.day("f", date)), "EP lab · JA · MDA EpMda");
   // Somewhere the call sheet doesn't say, from the board runner's own list (it wins over Egress).
   const e = m.day("e", date);
   assert.deepEqual(e.roles.filter((r) => r.kind === "where").map((r) => [r.where, r.code]), [["NORA", "NORA"]]);

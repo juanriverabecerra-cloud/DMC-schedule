@@ -1,6 +1,6 @@
 // What the codes and colors on the DMC call sheet mean.
 // Hours confirmed by the residents: H1 = 24 h (6a-6a), H2 = 12 h (6a-6p), NF = 6p-6a,
-// "10-7" = 10a-7p, green = late resident (finishes at their site, then helps at Harper until 6p),
+// "10-7" = 10p-7a (the CA-3 overnight, the third name under Night coverage), green = late resident (finishes at their site, then helps at Harper until 6p),
 // blue on a Friday = 24-hour call (same as H1), magenta week = cardiac call, "X" in an OR = CRNA room.
 // The week: 24-hr call only Friday and Saturday (each covers its own night), 12-hr call only Saturday
 // and Sunday, night float Sunday to Thursday nights. Holiday weekends are the exception.
@@ -64,7 +64,7 @@ export const CALL_CODES = {
   "H1": { label: "24-hr call", short: "H1 24h", kind: "call24", start: 360, end: 1800 },
   "H2": { label: "12-hr call", short: "H2 12h", kind: "call12", start: 360, end: 1080 },
   "NF": { label: "Night float", short: "NF", kind: "night", start: 1080, end: 1800 },
-  "10-7": { label: "CA-3 10a–7p", short: "10–7", kind: "senior", start: 600, end: 1140 },
+  "10-7": { label: "CA-3 10p–7a", short: "10–7", kind: "senior", start: 1320, end: 1860 },
 };
 export const FRIDAY_24 = { label: "24-hr call", short: "24h", kind: "call24", start: 360, end: 1800 };
 
@@ -110,7 +110,7 @@ const CODE_ALIASES = [
   [/^BR$/, "BD"], // the Egress tab's resident board runner
   [/^(BA|BA-V|AP|OPSC|PACU|CP|VA|HC|TH|HN|ACC|BD|JA|NORA|VASC)1$/, null], // the rotation with a Friday 24-hr marker: "BA1"
   [/^11\s*A?M?\s*(?:-|–|TO)\s*9\s*P?M?$|^9-NOV$/, "11-9"],
-  [/^10\s*A?M?\s*(?:-|–|TO)\s*7\s*P?M?$|^7-OCT$/, "10-7"],
+  [/^10\s*[AP]?M?\s*(?:-|–|TO)\s*7\s*[AP]?M?$|^7-OCT$/, "10-7"],
 ];
 
 export function normCode(raw) {
@@ -193,7 +193,7 @@ export const DEFAULT_SETTINGS = {
   staffing: [
     { id: "late", label: "Late resident (until 6p)", days: [1, 2, 3, 4, 5], min: 1, match: "late" },
     { id: "nf", label: "Night float (6p–6a)", days: [0, 1, 2, 3, 4], min: 2, match: "NF" },
-    { id: "senior", label: "CA-3 10a–7p", days: [0, 1, 2, 3, 4, 5, 6], min: 1, match: "10-7" },
+    { id: "senior", label: "CA-3 10p–7a", days: [0, 1, 2, 3, 4, 5, 6], min: 1, match: "10-7" },
     { id: "fri24", label: "Friday 24-hr call", days: [5], min: 2, match: "call24" },
     { id: "sat24", label: "Saturday 24-hr call (H1)", days: [6], min: 2, match: "call24" },
     { id: "sat12", label: "Saturday 12-hr call (H2)", days: [6], min: 1, match: "H2" },

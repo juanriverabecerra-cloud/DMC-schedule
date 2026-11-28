@@ -199,18 +199,19 @@ export function createDidactics(ds, model) {
   // Where someone is when a session starts, from their own shifts (hours in codes.js), or null
   // when they're simply there. `excused`: not expected at all. `away`: at another site, so Zoom is
   // how they'd join.
-  //   - Coming off an overnight shift (night float or 24-hr call, both end at 6a): still in the
-  //     building for a session before 7a, so they come; gone home to sleep for anything later.
-  //   - On night float tonight: resting for it, so nothing that day.
-  //   - From 3p on, anyone still on call, on the late shift or on the CA-3 10a–7p is working
-  //     through it.
+  //   - Coming off an overnight shift (night float or 24-hr call end at 6a, the CA-3 10p–7a at 7a):
+  //     still in the building for a session before 7a, so they come; gone home to sleep for
+  //     anything later.
+  //   - On night float or the 10p–7a tonight: resting for it, so nothing that day.
+  //   - From 3p on, anyone still on call or on the late shift is working through it.
   function where(pid, date, start = 360) {
     const d = model.day(pid, date);
     const before = model.day(pid, addDays(date, -1));
-    const overnight = before.call === "NF" ? "night float" : before.call === "H1" || before.call === "24" ? "24-hr call" : "";
+    const overnight = before.call === "NF" ? "night float" : before.call === "10-7" ? "the 10p–7a shift" : before.call === "H1" || before.call === "24" ? "24-hr call" : "";
     if (d.status === "vacation") return { text: "You're on vacation that day", excused: true };
     if (overnight && start < 420) return null;
     if (d.call === "NF") return { text: "You're on night float that night", excused: true };
+    if (d.call === "10-7") return { text: "You're on the 10p–7a shift that night", excused: true };
     if (d.status === "postcall") return { text: "You're post-call that day", excused: true };
     if (overnight) return { text: `You're off ${overnight} that morning`, excused: true };
     if ((d.status === "off" || d.status === "holiday") && !d.weekend) return { text: "You're off that day", excused: true };

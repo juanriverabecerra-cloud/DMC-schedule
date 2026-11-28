@@ -168,7 +168,7 @@ export function dayChips(d, { withTime = true } = {}) {
   if (d.call === "H1" || d.call === "24") chips.push(h("span", { class: "chip call24" }, d.call === "H1" ? "H1 · 24h" : "24h call"));
   if (d.call === "H2") chips.push(h("span", { class: "chip call12" }, "H2 · 12h"));
   if (d.call === "NF") chips.push(h("span", { class: "chip night" }, "Night float"));
-  if (d.call === "10-7") chips.push(h("span", { class: "chip senior" }, "10a–7p"));
+  if (d.call === "10-7") chips.push(h("span", { class: "chip senior" }, "10p–7a"));
   if (d.cardiac) chips.push(h("span", { class: "chip cardiac" }, "Cardiac call"));
   if (d.status === "vacation") chips.push(h("span", { class: "chip vac" }, "Vacation"));
   if (d.status === "postcall") chips.push(h("span", { class: "chip pc" }, "Post-call"));

@@ -33,7 +33,6 @@ export function openDailySheet(ctx, date) {
     h("div", { class: "main" },
       h("div", { class: "name" }, h("span", { class: "n" }, roomSummary(room) || "—")),
       h("div", { class: "roomline" }, [
-        room.mda ? `MDA ${room.mda}` : null,
         room.crna ? "CRNA" : room.staffIds.map(nm).join(" & "),
         room.ja ? `JA ${room.jaIds.map(nm).join(", ")}` : null,
         room.breaks ? `Breaks ${room.breakIds.map(nm).join(", ")}` : null,
@@ -43,7 +42,7 @@ export function openDailySheet(ctx, date) {
   const res = dl.runner?.resident;
   const lines = [
     dl.runner?.mda || res ? ["Board runner", [runnerName(model, dl.runner), res ? `resident ${res.id ? nm(res) : res.name}` : ""].filter(Boolean).join(" · ")] : null,
-    s.opsc?.residents?.length || s.opsc?.mdas?.length ? ["OPSC", `${s.opsc.rooms ? `${s.opsc.rooms} rooms · ` : ""}MDAs ${s.opsc.mdas.join(", ")} · ${dl.opsc.map(nm).join(", ")}`] : null,
+    s.opsc?.residents?.length || s.opsc?.mdas?.length ? ["OPSC", [s.opsc.rooms ? `${s.opsc.rooms} rooms` : "", s.opsc.mdas?.length ? `MDAs ${s.opsc.mdas.join(", ")}` : "", dl.opsc.map(nm).join(", ")].filter(Boolean).join(" · ")] : null,
     s.procedures?.length ? ["Procedures", s.procedures.map((p) => `${p.name}${p.count ? ` (${p.count})` : ""}${p.mda ? ` ${p.mda}` : ""}${p.staff ? ` · ${p.staff}` : ""}`).join(", ")] : null,
     s.meyers?.mda ? ["Meyers lab", `${s.meyers.rooms ? `${s.meyers.rooms} rooms · ` : ""}${s.meyers.mda}`] : null,
     s.pat?.length ? ["PAT", dl.pat.map(nm).join(", ")] : null,

@@ -11,17 +11,18 @@ import { addDays, toUTC, startOfWeek, range } from "./dates.js";
 const DAY = 1440;
 
 // `actual` (core/logged.js) swaps in logged shifts for dates someone recorded, and their own
-// averages for the days after that. Inside the logged dates, a day with no entry wasn't worked.
+// averages for the days after that (and for gaps between files). Inside a logged file's days, a
+// day with no entry wasn't worked.
 export function intervals(model, pid, from, to, actual = null) {
   const raw = [];
   for (const date of range(addDays(from, -2), to)) {
     const base = toUTC(date) / 60000;
-    if (actual && date >= actual.first && date <= actual.last) {
+    if (actual && actual.covers(date)) {
       for (const e of actual.byDate[date] || []) raw.push({ start: base + e.start, end: toUTC(e.endDate) / 60000 + e.end, kinds: ["logged"], dates: [date] });
       continue;
     }
     const d = model.day(pid, date);
-    const avg = actual && date > actual.last && d.shifts.length === 1 ? actual.expected(d) : null;
+    const avg = actual && date > actual.first && d.shifts.length === 1 ? actual.expected(d) : null;
     for (const s of d.shifts) raw.push({ start: base + s.start, end: base + (avg ? s.start + avg * 60 : s.end), kinds: [s.kind], dates: [date] });
   }
   raw.sort((a, b) => a.start - b.start);
@@ -66,7 +67,7 @@ export function hoursReport(model, pid, from, to, { actual = null } = {}) {
     for (let i = 0; i < 7; i++) {
       const date = addDays(ws, i);
       const d = model.day(pid, date);
-      const logged = actual && date >= actual.first && date <= actual.last;
+      const logged = actual && actual.covers(date);
       if (d.source !== "call" && !logged) known = false; // a logged day needs no call sheet
       if (d.status === "vacation" || (logged && actual.away.has(date))) away++;
       if (d.call === "H1" || d.call === "24") calls++;
@@ -111,7 +112,7 @@ export function hoursReport(model, pid, from, to, { actual = null } = {}) {
       if (len >= 24 && gap < 14) flags.push({ level: "gap", rule: "6.21.a", date: next.dates[0], text: `Only ${Math.round(gap)} h off after 24-h call before ${next.dates[0].slice(5)} (need 14)` });
       else if (gap < 8) flags.push({ level: "warn", rule: "6.21", date: next.dates[0], text: `Only ${Math.round(gap)} h off before the shift on ${next.dates[0].slice(5)} (should be 8)` });
     }
-    if (iv.kinds.includes("night")) {
+    if (iv.kinds.includes("night") || iv.kinds.includes("senior")) { // night float or the CA-3 10p–7a
       nights = nightStart && (iv.start - ivs[i - 1]?.start) <= DAY + 60 ? nights + 1 : 1;
       if (nights === 1) nightStart = date;
       if (nights === 7) flags.push({ level: "info", date: nightStart, text: `More than 6 nights in a row starting ${nightStart.slice(5)}` });

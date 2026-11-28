@@ -15,7 +15,7 @@ const LEGEND = [
   ["call24", "24-hr call", "Friday (blue) and Saturday (H1) only. 6a to 6a, so it covers that night."],
   ["call12", "12-hr call", "H2. Saturday and Sunday only, 6a to 6p."],
   ["night", "Night float", "NF. 6p to 6a, Sunday to Thursday nights. Friday and Saturday nights belong to the 24."],
-  ["senior", "CA-3 10a–7p", "\"10-7\" on the call sheet."],
+  ["senior", "CA-3 10p–7a", "\"10-7\" on the call sheet: 10p to 7a."],
   ["ob", "11 to 9", "CA-1 OB rotation at Hutzel. Monday to Friday, 11a to 9p (\"11-9\" on the call sheet)."],
   ["cardiac", "Cardiac call", "Magenta week on the call sheet."],
   ["vac", "Vacation", "Vac, or the peach block around it."],

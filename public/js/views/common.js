@@ -5,7 +5,7 @@ import { fmtDate, addDays, relDay, monthKey, fmtMonth, diffDays, dow, DOW_SHORT,
 import { headline } from "../../core/model.js";
 import { openEventSheet } from "./events.js";
 import { SITES } from "../../core/codes.js";
-import { cleanAttending } from "../../core/attendings.js";
+import { cleanAttending, inCharge, mdaNames, mdaText, spotOf, SPOTS } from "../../core/attendings.js";
 import { isMobile } from "../../core/directory.js";
 import { eventPicture, holidayOf } from "../../core/decor.js";
 import { swapCandidates, swappableShift } from "../../core/swap.js";
@@ -62,8 +62,9 @@ export function roomCallChips(ctx, room, { residents = false } = {}) {
   return list.length ? h("div", { class: "callchips" }, list) : null;
 }
 
+// A room in one line, the MDA first: they're who the day is spent with. The surgeon follows.
 export function roomSummary(room) {
-  return [room.surgeon, room.time, room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+  return [mdaText(room.mda) ? `MDA ${mdaText(room.mda)}` : "", room.surgeon ? `Surgeon ${room.surgeon}` : "", room.time, room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ");
 }
 
 function staffLine(ctx, room) {
@@ -78,10 +79,11 @@ export function assignmentList(ctx, d) {
   const roomRow = (room, extra) => h("li", { class: "row" },
     h("div", { class: "avatar", style: { borderRadius: "12px", "--c": "var(--accent)" } }, room.or),
     h("div", { class: "main" },
-      h("div", { class: "name" }, h("span", { class: "n" }, room.surgeon || `OR ${room.or}`), room.time ? h("span", { class: "pill" }, room.time) : null),
+      // The MDA names the row; the surgeon is one of the room's details.
+      h("div", { class: "name" }, h("span", { class: "n" }, mdaText(room.mda) ? `MDA ${mdaText(room.mda)}` : `OR ${room.or}`), room.time ? h("span", { class: "pill" }, room.time) : null),
       h("div", { class: "roomline" }, [
+        room.surgeon ? h("span", null, "Surgeon ", h("b", null, room.surgeon)) : null,
         room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : null,
-        room.mda ? h("span", null, "MDA ", h("b", null, room.mda)) : null,
         h("span", null, room.crna ? "CRNA room" : h("b", null, staffLine(ctx, room))),
         room.ja ? h("span", null, "JA ", h("b", null, room.jaIds.map((s) => (s.id ? model.name(s.id) : s.name)).join(", "))) : null,
         room.breaks ? h("span", null, "Breaks ", h("b", null, room.breakIds.map((s) => (s.id ? model.name(s.id) : s.name)).join(", "))) : null,
@@ -94,7 +96,7 @@ export function assignmentList(ctx, d) {
     if (r.kind === "room") items.push(roomRow(r.room));
     if (r.kind === "breaks") for (const room of r.rooms) items.push(roomRow(room, d.alsoBreaks ? "Also giving breaks here" : "You give breaks here"));
     if (r.kind === "ja") for (const room of r.rooms) items.push(roomRow(room, "You're the junior attending"));
-    if (r.kind === "opsc") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, `OPSC${r.roomCount ? ` · ${r.roomCount} rooms` : ""}`), r.mdas?.length ? h("div", { class: "sub" }, `MDAs: ${r.mdas.join(", ")}`) : null)));
+    if (r.kind === "opsc" && !spotOf(d)) items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, `OPSC${r.roomCount ? ` · ${r.roomCount} rooms` : ""}`), r.mdas?.length ? h("div", { class: "sub" }, `MDAs: ${r.mdas.join(", ")}`) : null)));
     if (r.kind === "ob") items.push(h("li", { class: "row" }, h("div", { class: "main" }, h("div", { class: "name" }, "OB @ Hutzel"), r.mda ? h("div", { class: "sub" }, `MDA: ${r.mda}`) : null)));
     if (r.kind === "pat") {
       const pat = model.dir.place(/^pat clinic/i);
@@ -118,8 +120,9 @@ export function assignmentList(ctx, d) {
           ].filter(Boolean).flatMap((x, i) => (i ? [" · ", x] : [x]))),
           mdaChips(ctx, p.mda))));
     }
-    // Where the board runner's list puts them when no room or block does (NORA, PACU...).
-    if (r.kind === "where") {
+    // Where the board runner's list puts them when no room or block does (NORA, cath lab...). The
+    // PACU, OPSC and the VA get their own card instead (spotCard).
+    if (r.kind === "where" && !spotOf(d)) {
       items.push(h("li", { class: "row" },
         h("div", { class: "main" },
           h("div", { class: "name" }, r.where),
@@ -210,7 +213,7 @@ export function upcoming(model, pid, from, days = 45, max = 7) {
     prevRot = rot;
     let kind = null, label = null;
     if (d.call === "NF") { kind = "night"; label = "Night float"; }
-    else if (d.call === "10-7") { kind = "senior"; label = "CA-3 10a–7p"; }
+    else if (d.call === "10-7") { kind = "senior"; label = "CA-3 10p–7a"; }
     else if (d.status === "vacation") { kind = "vac"; label = "Vacation"; }
     else if (d.call === "H1" || d.call === "24") { kind = "call24"; label = d.call === "H1" ? "H1 · 24-hr call" : "24-hr call"; }
     else if (d.call === "H2") { kind = "call12"; label = "H2 · 12-hr call"; }
@@ -265,10 +268,25 @@ export function runnerName(model, runner) {
   if (!runner?.mda) return "";
   return model.dir.staff(runner.mda.name)?.name || runner.mda.name;
 }
-export function runnerCard(ctx, date, { when, span = false } = {}) {
+// The day's board runner (MDA, with the resident beside them) and the MDA on call tonight, each
+// one tap from a call. `d`: the resident's day, so an OB resident sees OB's on-call MDA. `call`:
+// false where the screen lists the on-call attendings itself (Tonight).
+export function runnerCard(ctx, date, { when, span = false, d = null, call = true } = {}) {
+  const { model } = ctx;
+  const dl = model.daily(date);
+  const who = inCharge(dl, d);
+  const runner = dl?.runner;
+  const onCall = call ? who?.call : null;
+  if (!runner?.mda && !runner?.resident && !onCall) return null;
+  const el = h("section", { class: `card runner${span ? " span-all" : ""}` },
+    runner?.mda || runner?.resident ? runnerBlock(ctx, date, runner, when) : null,
+    onCall ? callBlock(ctx, date, onCall, who.ob) : null);
+  el.dataset.call = onCall ? "1" : "";
+  return el;
+}
+
+function runnerBlock(ctx, date, runner, when) {
   const { model, state } = ctx;
-  const runner = model.daily(date)?.runner;
-  if (!runner?.mda && !runner?.resident) return null;
   const dir = model.dir;
   const res = runner.resident;
   const resName = res ? (res.id ? model.name(res.id) : res.name) : "";
@@ -279,14 +297,91 @@ export function runnerCard(ctx, date, { when, span = false } = {}) {
     runner.mda && mdaPhone ? callChip(dir, "Board runner", mdaPhone.numbers) : null,
     resName && resPhone ? callChip(dir, "Resident BR", resPhone.numbers) : null,
   ].filter(Boolean);
-  return h("section", { class: `card runner${span ? " span-all" : ""}` },
-    h("div", { class: "runner-top" },
-      h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("grid")),
-      h("div", { class: "main" },
-        h("div", { class: "eyebrow" }, `Board runner${day ? ` · ${day}` : ""}`),
-        h("div", { class: "runner-name" }, runner.mda ? runnerName(model, runner) : resName),
-        runner.mda && (resName || runner.mda.note) ? h("div", { class: "sub" }, [runner.mda.note, resName ? `Resident: ${resName}` : ""].filter(Boolean).join(" · ")) : null),
-      pills.length ? h("div", { class: "runner-calls" }, pills) : null));
+  return h("div", { class: "runner-top" },
+    h("div", { class: "avatar", style: { "--c": "var(--accent)" } }, icon("grid")),
+    h("div", { class: "main" },
+      h("div", { class: "eyebrow" }, `Board runner${day ? ` · ${day}` : ""}`),
+      h("div", { class: "runner-name" }, runner.mda ? runnerName(model, runner) : resName),
+      runner.mda && (resName || runner.mda.note) ? h("div", { class: "sub" }, [runner.mda.note, resName ? `Resident: ${resName}` : ""].filter(Boolean).join(" · ")) : null),
+    pills.length ? h("div", { class: "runner-calls" }, pills) : null);
+}
+
+// The MDA on call that night (H1 for the main OR, OB 14 at Hutzel), with their own numbers.
+function callBlock(ctx, date, a, ob) {
+  const { model, state } = ctx;
+  const dir = model.dir;
+  const staff = dir.staff(a.name, { site: ob ? "hutzel" : "harper" });
+  const night = date === state.today ? "tonight" : `${relDay(date, state.today).toLowerCase()} night`;
+  const obLine = ob ? dir.place(/^mda ob$/i) : null;
+  const pills = [
+    ...(staff ? numberButtons(dir, staff.numbers) : []),
+    obLine ? callChip(dir, "MDA OB", obLine.numbers) : null,
+  ].filter(Boolean);
+  return h("div", { class: "runner-top" },
+    h("div", { class: "avatar", style: { "--c": "var(--call24)" } }, icon("moon")),
+    h("div", { class: "main" },
+      h("div", { class: "eyebrow" }, `${ob ? "OB MDA" : "MDA"} on call · ${night}`),
+      h("div", { class: "runner-name" }, staff?.name || a.name),
+      a.note ? h("div", { class: "sub" }, a.note) : null),
+    pills.length ? h("div", { class: "runner-calls" }, pills) : null);
+}
+
+// A day the OR sheet doesn't place them by room (PACU, OPSC, the VA): what that means, and the
+// people who matter instead: OPSC's MDAs, the VA's anesthesiologists, Harper's board runner and the
+// MDA on call, and who else is there that day. Each with one tap to call.
+export function spotCard(ctx, d, date) {
+  const spot = spotOf(d);
+  if (!spot) return null;
+  const { model, state } = ctx;
+  const dir = model.dir;
+  const dl = model.daily(date);
+  const info = SPOTS[spot];
+  const rows = [];
+  const person = (name, sub, numbers, { lead = false } = {}) => rows.push(h("li", { class: `row contact${lead ? " runner" : ""}` },
+    h("div", { class: "avatar", style: lead ? { "--c": "var(--accent)" } : null }, name.replace(/^dr\.?\s+/i, "").slice(0, 2).toUpperCase()),
+    h("div", { class: "main" },
+      h("div", { class: "name" }, h("span", { class: "n" }, name)),
+      sub ? h("div", { class: "sub" }, sub) : null,
+      numbers?.length ? h("div", { class: "numrow" }, numberButtons(dir, numbers)) : null)));
+
+  if (spot === "OPSC") {
+    // The MDAs in OPSC's box on the sheet, and anyone the Egress tab puts in an OPSC slot.
+    const names = [...(dl?.sheet?.opsc?.mdas || []).flatMap(mdaNames)];
+    for (const a of dl?.attendings || []) if (a.kind === "site" && /opsc/i.test(a.where) && !names.includes(a.name)) names.push(a.name);
+    const rooms = dl?.sheet?.opsc?.rooms;
+    for (const n of names) {
+      const s = dir.staff(n);
+      person(s?.name || n, `OPSC MDA${rooms ? ` · ${rooms} rooms today` : ""}`, s?.numbers);
+    }
+  }
+  if (spot === "VA") {
+    for (const s of dir.raw.staff.filter((x) => x.site === "va")) person(s.name, "VA anesthesiologist", s.numbers);
+  }
+
+  // Others there that day: classmates on the same rotation, or sent there by the board runner.
+  const others = model.roster(date).filter((x) => x.pid !== d.pid && spotOf(x) === spot).map((x) => model.name(x.pid));
+
+  const places = {
+    PACU: [[/^pacu harper/i, "PACU desk"], [/^pacu resident/i, "PACU resident line"]],
+    OPSC: [[/^pacu outpatient/i, "OPSC PACU"]],
+    VA: [],
+  }[spot].map(([re, label]) => { const p = dir.place(re); return p ? callChip(dir, label, p.numbers) : null; }).filter(Boolean);
+
+  // Harper's board runner and the MDA on call: not the VA's, unless they're on call at Harper.
+  const charge = spot !== "VA" || d.call ? runnerCard(ctx, date, { d }) : null;
+  const sheetOut = !!dl;
+  return [
+    h("section", { class: "card" },
+      h("div", { class: "card-pad", style: { paddingBottom: rows.length ? "4px" : undefined } },
+        h("h3", { class: "card-title" }, info.title, h("span", { class: "right muted" }, "no daily sheet")),
+        h("p", { class: "small", style: { margin: "0 0 8px" } }, info.line),
+        others.length ? h("p", { class: "small muted", style: { margin: "0 0 8px" } }, `Also there${date === state.today ? " today" : ""}: ${others.join(", ")}`) : null,
+        places.length ? h("div", { class: "callchips", style: { margin: "0 0 6px" } }, places) : null,
+        spot === "VA" && !rows.length ? h("p", { class: "tiny muted", style: { margin: 0 } }, "The phone directory has no VA numbers yet.") : null,
+        spot !== "VA" && !sheetOut ? h("p", { class: "tiny muted", style: { margin: 0 } }, "The board runner and the MDA on call show here once the day's sheet is posted.") : null),
+      rows.length ? h("ul", { class: "list" }, rows) : null),
+    charge,
+  ].filter(Boolean);
 }
 
 // ---- the day's attendings (MDAs) ----

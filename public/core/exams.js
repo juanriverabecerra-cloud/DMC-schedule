@@ -74,7 +74,7 @@ function registration(s, today) {
   return null;
 }
 
-const callWord = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "night float", "10-7": "the 10a–7p shift" };
+const callWord = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "night float", "10-7": "the 10p–7a shift" };
 
 // Anything on the schedule that gets in the way of the exam.
 function scheduleNotes(model, pid, item) {

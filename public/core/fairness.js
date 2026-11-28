@@ -16,8 +16,8 @@ export const WEIGHT_ROWS = [
   ["h2sun", "12-hr call, Sunday", 6, "A full weekend day, then work Monday. A 12 on a holiday counts here too"],
   ["h2sat", "12-hr call, Saturday", 5, "A full weekend day"],
   ["nf", "Night float, per night (Sun–Thu)", 2.5, "A 5-night week is 12.5: hours match a day week, but nights wear you down"],
-  ["seniorWe", "CA-3 10a–7p, weekend day", 4, "A weekend day worked"],
-  ["senior", "CA-3 10a–7p, weekday", 1, "Late finish"],
+  ["seniorWe", "CA-3 10p–7a, weekend night", 4, "A weekend night, and the morning after"],
+  ["senior", "CA-3 10p–7a, weeknight", 2.5, "An overnight shift, scored like a night of night float"],
   ["cardiacWe", "Cardiac home call, weekend day", 1.5, "Tied to your phone on your days off"],
   ["cardiac", "Cardiac home call, weekday", 0.5, "On call after a normal day"],
   ["lateFri", "Late day, Friday", 2, "Runs into the weekend: it starts later and you start it tired"],
@@ -104,12 +104,14 @@ export function residentLoad(model, pid, from, to, W = weightsOf(model)) {
       items.push({ ...it, date });
     }
   }
-  // Heavy shifts close together: a block of nights counts as one, ending on its last night.
+  // Heavy shifts close together: a block of nights (night float, the CA-3 10p–7a) counts as one,
+  // ending on its last night.
+  const night = (key) => key === "nf" || key === "senior" || key === "seniorWe";
   const blocks = [];
   for (const it of items) {
-    if (it.key !== "nf" && it.pts < HEAVY) continue;
+    if (!night(it.key) && it.pts < HEAVY) continue;
     const last = blocks[blocks.length - 1];
-    if (last?.key === "nf" && it.key === "nf" && diffDays(last.end, it.date) <= 1) last.end = it.date;
+    if (last && night(last.key) && night(it.key) && diffDays(last.end, it.date) <= 1) last.end = it.date;
     else blocks.push({ key: it.key, start: it.date, end: it.date });
   }
   for (let i = 1; i < blocks.length; i++) {
@@ -230,7 +232,7 @@ export function samePointLastYear(model, today) {
 
 // ---------- coverage: who could take a shift ----------
 
-const SHIFT_LABEL = { sat24: "Weekend 24-hr call", fri24: "Friday 24-hr call", h2sat: "Saturday 12-hr call", h2sun: "Weekend 12-hr call", nf: "Night float", senior: "CA-3 10a–7p", seniorWe: "CA-3 10a–7p", late: "Late" };
+const SHIFT_LABEL = { sat24: "Weekend 24-hr call", fri24: "Friday 24-hr call", h2sat: "Saturday 12-hr call", h2sun: "Weekend 12-hr call", nf: "Night float", senior: "CA-3 10p–7a", seniorWe: "CA-3 10p–7a", late: "Late" };
 
 // The shift someone holds that day, or their regular day.
 export function shiftOf(d, W) {

@@ -22,12 +22,12 @@ export function shiftName(d) {
   if (d.call === "24") return "24-hr call";
   if (d.call === "H2") return "12-hr call (H2)";
   if (d.call === "NF") return "Night float";
-  if (d.call === "10-7") return "CA-3 10a–7p";
+  if (d.call === "10-7") return "CA-3 10p–7a";
   if (d.late) return "Late day (until 6p)";
   return null;
 }
 
-// A shift name inside a sentence: "night float", but "12-hr call (H2)" and "CA-3 10a–7p" as is.
+// A shift name inside a sentence: "night float", but "12-hr call (H2)" and "CA-3 10p–7a" as is.
 export const lc = (label) => String(label || "").replace(/^(Night float|Late day)/, (m) => m.toLowerCase());
 
 // The shift on a date, as one piece: nights run on to the end of that night-float week.

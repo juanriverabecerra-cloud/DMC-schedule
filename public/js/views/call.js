@@ -1,5 +1,6 @@
 // Call: search everyone and everything with a number, a "Right now" list built from your
 // assignment today, one-tap essentials, and OR room tiles.
+import { inCharge, mdaNames, mdaText } from "../../core/attendings.js";
 import { h, icon, avatar, classPill, numberButtons, emptyState, card, copyText } from "../ui.js";
 import { fmtDate } from "../../core/dates.js";
 import { CLASS_ORDER } from "../../core/model.js";
@@ -39,7 +40,7 @@ function residentItem(model, pid, why) {
 
 function roomItem(dir, room, why) {
   const p = dir.room(room.or);
-  return p ? { key: `place:${p.id}`, title: `OR ${room.or}`, sub: why || [room.surgeon, room.time].filter(Boolean).join(" · "), numbers: p.numbers } : null;
+  return p ? { key: `place:${p.id}`, title: `OR ${room.or}`, sub: why || [mdaText(room.mda) ? `MDA ${mdaText(room.mda)}` : "", room.surgeon, room.time].filter(Boolean).join(" · "), numbers: p.numbers } : null;
 }
 
 // Who you're most likely to need to call today, in order.
@@ -53,8 +54,8 @@ export function quickContacts(ctx, pid, date) {
 
   for (const r of d.roles) {
     if (r.kind === "room") {
-      add(roomItem(dir, r.room, `Your room · ${[r.room.surgeon, r.room.time].filter(Boolean).join(" ")}`));
-      add(staffItem(dir, r.room.mda, `Your MDA · OR ${r.or}`));
+      for (const name of mdaNames(r.room.mda)) add(staffItem(dir, name, `Your MDA · OR ${r.or}`));
+      add(roomItem(dir, r.room, `Your room · ${[r.room.time, r.room.surgeon ? `Surgeon ${r.room.surgeon}` : ""].filter(Boolean).join(" · ")}`));
       add(techItem(ctx, "For anything your room needs"));
       r.room.jaIds.forEach((s) => s.id && add(residentItem(model, s.id, `JA for OR ${r.or}`)));
       r.with.forEach((s) => s.id && add(residentItem(model, s.id, `In OR ${r.or} with you`)));
@@ -64,7 +65,7 @@ export function quickContacts(ctx, pid, date) {
       for (const room of r.rooms) {
         add(roomItem(dir, room, `${r.kind === "ja" ? "JA" : "Breaks"} · ${room.staffIds.map(nm).join(" & ") || (room.crna ? "CRNA" : "")}`));
         room.staffIds.forEach((s) => s.id && add(residentItem(model, s.id, `In OR ${room.or}`)));
-        add(staffItem(dir, room.mda, `MDA · OR ${room.or}`));
+        for (const name of mdaNames(room.mda)) add(staffItem(dir, name, `MDA · OR ${room.or}`));
         add(techItem(ctx, "For anything a room needs"));
         if (r.kind === "breaks") room.jaIds.forEach((s) => s.id && add(residentItem(model, s.id, `JA for OR ${room.or}`)));
       }
@@ -75,7 +76,7 @@ export function quickContacts(ctx, pid, date) {
       add(placeItem(dir, /^pre-op outpatient/i, "OPSC"));
     }
     if (r.kind === "ob") {
-      add(staffItem(dir, r.mda, "OB MDA today"));
+      for (const name of mdaNames(r.mda)) add(staffItem(dir, name, "OB MDA today"));
       add(placeItem(dir, /^mda ob$/i, "OB"));
       add(placeItem(dir, /^ob vocera/i, "OB"));
     }
@@ -101,8 +102,11 @@ export function quickContacts(ctx, pid, date) {
     }
   }
   if (d.call || d.late) {
+    // The MDA on call tonight (OB's for an OB day), from the Egress tab.
+    const boss = inCharge(model.daily(date), d);
+    if (boss?.call) add(staffItem(dir, boss.call.name, `${boss.ob ? "OB MDA" : "MDA"} on call tonight`));
     const t = model.tonight(date);
-    for (const x of [...t.night, ...t.senior, ...t.call24]) if (x.pid !== pid) add(residentItem(model, x.pid, x.call === "NF" ? "Night float tonight" : x.call === "10-7" ? "CA-3 10a–7p" : "24-hr call"));
+    for (const x of [...t.night, ...t.senior, ...t.call24]) if (x.pid !== pid) add(residentItem(model, x.pid, x.call === "NF" ? "Night float tonight" : x.call === "10-7" ? "CA-3 10p–7a" : "24-hr call"));
     add(placeItem(dir, /^harper or main desk/i, "OR desk"));
   }
   return items;

@@ -2,11 +2,12 @@
 // residents are all off together. Everything comes from the uploaded call sheets.
 import { academicYearOf, addDays, dow, monthDates, range } from "./dates.js";
 
-const SHIFT = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "Night float", "10-7": "10a–7p" };
+const SHIFT = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "Night float", "10-7": "10p–7a" };
 export const NO_SHEET = "No call sheet";
 
 // Why someone isn't free on a date, or null if they are. A blank weekend cell after a 24 reads
-// as off on the call sheet, but that person is post-call.
+// as off on the call sheet, but that person is post-call; after a night shift (10p–7a, night
+// float) they're coming off it that morning.
 export function busyReason(model, pid, date) {
   const d = model.day(pid, date);
   if (d.source !== "call") return NO_SHEET;
@@ -14,7 +15,8 @@ export function busyReason(model, pid, date) {
   if (d.status === "work") return SHIFT[d.call] || d.label || "Working";
   if (d.cardiac) return "Cardiac call";
   const before = model.day(pid, addDays(date, -1));
-  return before.call === "H1" || before.call === "24" ? "Post-call" : null;
+  if (before.call === "H1" || before.call === "24") return "Post-call";
+  return before.call === "10-7" || before.call === "NF" ? "After the night shift" : null;
 }
 
 // Every weekend from `from` to `to` that the call sheets cover, including one already under way.

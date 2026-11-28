@@ -8,7 +8,9 @@ import { SITES } from "../../core/codes.js";
 import { weekHours, hoursReport } from "../../core/hours.js";
 import { actualFor, hoursBasis } from "../logged.js";
 import { dayGaps } from "../../core/gaps.js";
-import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine, runnerCard, runnerName, tomorrowActions } from "./common.js";
+import { assignmentList, teammates, upcomingList, subscribeCard, openDaySheet, draftNote, postedLine, runnerCard, runnerName, tomorrowActions, spotCard } from "./common.js";
+import { chargeLine } from "../../core/alerts.js";
+import { spotOf } from "../../core/attendings.js";
 import { didacticsDayCard } from "./didactics.js";
 import { quickContacts, contactRow } from "./call.js";
 import { installCard, reminderCard } from "./reminders.js";
@@ -82,12 +84,12 @@ export function hoursCard(ctx, pid) {
   );
 }
 
-function tonightMini(ctx, { runner = true } = {}) {
+function tonightMini(ctx, { runner = true, mdaCall = true } = {}) {
   const t = ctx.model.tonight(ctx.state.date);
   const names = (list) => list.map((d) => ctx.model.person(d.pid)?.last || ctx.model.name(d.pid)).join(", ");
   const rows = [
     ["late", "Late till 6p", t.late],
-    ["senior", "10a–7p", t.senior],
+    ["senior", "10p–7a", t.senior],
     ["night", "Night float", t.night],
     ["call24", "24-hr call", t.call24],
     ["call12", "12-hr call", t.call12],
@@ -96,7 +98,7 @@ function tonightMini(ctx, { runner = true } = {}) {
   // Who's running the board, unless Today already shows them in their own card.
   if (runner && t.runner?.mda) rows.unshift(["info", "Board runner", runnerName(ctx.model, t.runner)]);
   // Attendings on call tonight, from the daily sheet's egress list.
-  for (const a of t.mdaCall) rows.push(["info", `MDA ${a.label.replace(/ call$/, "")}`, a.name]);
+  for (const a of mdaCall ? t.mdaCall : t.mdaCall.filter((x) => x.label !== "Main OR call" && x.label !== "OB call")) rows.push(["info", `MDA ${a.label.replace(/ call$/, "")}`, a.name]);
   if (!rows.length) return null;
   return h("section", { class: "card card-pad", onclick: () => ctx.go("tonight"), style: { cursor: "pointer" } },
     h("h3", { class: "card-title" }, "Who's on", h("span", { class: "right" }, "See all ›")),
@@ -149,7 +151,12 @@ export function renderToday(ctx) {
   setTimeout(() => todayMilestones(ctx, pid), 600);
   const tomorrow = addDays(state.today, 1);
   const mates = teammates(ctx, d);
-  let runnerShown = false;
+  // The PACU, OPSC and the VA have no room on the sheet: their card says what that means and who
+  // matters instead, including the board runner and the MDA on call (spotCard).
+  const spot = spotOf(d);
+  const spotEls = spot ? spotCard(ctx, d, state.date) : null;
+  const spotCharge = spotEls?.find((el) => el.classList.contains("runner"));
+  let runnerShown = !!spotCharge, callShown = spotCharge?.dataset.call === "1";
   const sections = {
     day: () => {
       const site = SITES[d.site]?.name;
@@ -175,6 +182,11 @@ export function renderToday(ctx) {
     },
     review: () => yearReviewCard(ctx, pid),
     or: () => {
+      // The PACU, OPSC and the VA have no room on the sheet: what that means and who matters instead.
+      if (spotEls) {
+        const rooms = assignmentList(ctx, d);
+        return [...spotEls, rooms.length ? card("OR sheet", h("ul", { class: "list" }, rooms), { pad: false }) : null];
+      }
       const rooms = assignmentList(ctx, d);
       if (rooms.length) return card(state.date === tomorrow ? "Tomorrow's OR sheet" : "OR sheet", h("ul", { class: "list" }, rooms), { pad: false });
       if (state.date === tomorrow && !model.daily(tomorrow) && d.status === "work" && ["harper", "opsc", "hutzel"].includes(d.site)) {
@@ -184,10 +196,13 @@ export function renderToday(ctx) {
     },
     // On a day at the main OR or OPSC, or on call: who's running the board, one tap to call.
     // Not for night float, who starts at 6p, after the day's board runner.
+    // Plus the MDA on call tonight (OB's for an OB day).
     runner: () => {
-      const relevant = d.status === "work" && d.call !== "NF" && (d.roles.length || ["harper", "opsc"].includes(d.site) || d.call || d.late);
-      const el = relevant ? runnerCard(ctx, state.date) : null;
+      if (spot) return null; // the PACU, OPSC or VA card has them
+      const relevant = d.status === "work" && d.call !== "NF" && d.call !== "10-7" && (d.roles.length || ["harper", "opsc", "hutzel"].includes(d.site) || d.call || d.late);
+      const el = relevant ? runnerCard(ctx, state.date, { d }) : null;
       runnerShown = !!el;
+      callShown = el?.dataset.call === "1";
       return el;
     },
     // After an OR day: the day's cases, already laid out from the sheet, one tap away.
@@ -196,13 +211,15 @@ export function renderToday(ctx) {
     tomorrow: () => {
       if (state.date !== state.today || !model.daily(tomorrow)) return null;
       const t = model.day(pid, tomorrow);
-      if (!t.roles.length) return null;
+      if (!t.roles.length && !spotOf(t)) return null;
       const first = t.roles.find((r) => r.room || r.rooms);
       const room = first?.room || first?.rooms?.[0];
       return h("section", { class: "card hero", vars: { "--rot": t.color }, onclick: () => ctx.setDate(tomorrow), style: { cursor: "pointer" } },
         h("div", { class: "eyebrow" }, `Tomorrow · ${fmtDate(tomorrow, "long")}`),
         h("h2", { style: { fontSize: "20px" } }, headline(t)),
-        room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.mda ? `MDA ${room.mda}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : ""].filter(Boolean).join(" · ")) : null,
+        room ? h("div", { class: "subtitle" }, [room.time ? `Starts ${room.time}` : "", room.cases ? `${room.cases} case${room.cases === "1" ? "" : "s"}` : "", room.surgeon ? `Surgeon ${room.surgeon}` : ""].filter(Boolean).join(" · ")) : null,
+        // Who runs the board tomorrow and who's on call tomorrow night.
+        chargeLine(model.daily(tomorrow), t) ? h("p", { class: "small", style: { margin: "8px 0 0" } }, chargeLine(model.daily(tomorrow), t)) : null,
         h("div", { class: "chips" }, dayChips(t, { withTime: false })),
         tomorrowActions(ctx, pid, tomorrow, first),
         // Whether tomorrow's sheet is out yet, and since when.
@@ -213,10 +230,12 @@ export function renderToday(ctx) {
     events: () => eventsTodayCard(ctx),
     team: () => (mates.length ? card("Working with", h("ul", { class: "list" }, mates.map((m) => personRow(ctx, model.day(m.id, state.date), { sub: m.why, chips: false }))), { pad: false }) : null),
     quick: () => {
-      const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key) && !(runnerShown && /board runner/i.test(x.title))).slice(0, 5);
+      // Nobody twice: the PACU, OPSC or VA card already lists its own people and lines.
+      const inSpotCard = (x) => (spot === "VA" && x.sub === "VA attending") || (spot === "OPSC" && /^OPSC/.test(x.sub)) || (spot === "PACU" && x.key.startsWith("place:") && /pacu/i.test(x.title));
+      const quick = quickContacts(ctx, pid, state.date).filter((x) => !mates.some((m) => `res:${m.id}` === x.key) && !(runnerShown && /board runner/i.test(x.title)) && !(callShown && /on call tonight$/.test(x.sub)) && !inSpotCard(x)).slice(0, 5);
       return quick.length ? card("Quick call", h("ul", { class: "list" }, quick.map((x) => contactRow(ctx, x))), { pad: false, right: h("a", { href: "#/call" }, "All numbers ›") }) : null;
     },
-    tonight: () => tonightMini(ctx, { runner: !runnerShown }),
+    tonight: () => tonightMini(ctx, { runner: !runnerShown, mdaCall: !callShown }),
     week: () => card("This week", weekStrip(ctx, pid), { pad: false }),
     gaps: () => {
       const gaps = dayGaps(model, state.date).filter((g) => g.level === "gap" && (g.people || []).length === 0);

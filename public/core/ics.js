@@ -76,7 +76,8 @@ function roomLine(model, r) {
     const ph = s ? phoneOf(model, s.numbers) : "";
     return ph ? `${n} ${ph}` : n;
   }).join(" / ");
-  const bits = [r.surgeon, r.time, r.cases ? `${r.cases} case${r.cases === "1" ? "" : "s"}` : "", mdas ? `MDA ${mdas}` : ""].filter(Boolean);
+  // The MDA first: they're who the day is spent with.
+  const bits = [mdas ? `MDA ${mdas}` : "", r.surgeon ? `surgeon ${r.surgeon}` : "", r.time, r.cases ? `${r.cases} case${r.cases === "1" ? "" : "s"}` : ""].filter(Boolean);
   const roomPhone = rm ? phoneOf(model, rm.numbers) : "";
   return `OR ${r.or}${roomPhone ? ` (${roomPhone})` : ""}${bits.length ? ` – ${bits.join(", ")}` : ""}`;
 }
@@ -106,7 +107,7 @@ export function dayDescription(model, d, appUrl) {
   const t = model.tonight(d.date);
   const team = [];
   if (t.late.length) team.push(`Late: ${t.late.map((x) => withPhone(model, x.pid)).join(", ")}`);
-  if (t.senior.length) team.push(`10a–7p: ${t.senior.map((x) => withPhone(model, x.pid)).join(", ")}`);
+  if (t.senior.length) team.push(`10p–7a: ${t.senior.map((x) => withPhone(model, x.pid)).join(", ")}`);
   if (t.night.length) team.push(`Night float: ${t.night.map((x) => withPhone(model, x.pid)).join(", ")}`);
   if (t.call24.length) team.push(`24-hr call: ${t.call24.map((x) => withPhone(model, x.pid)).join(", ")}`);
   if (t.call12.length) team.push(`12-hr call: ${t.call12.map((x) => withPhone(model, x.pid)).join(", ")}`);
@@ -121,7 +122,7 @@ function summaryFor(d) {
   if (d.call === "NF") return "Night float";
   if (d.call === "H1") return "H1 · 24-hr call";
   if (d.call === "H2") return "H2 · 12-hr call";
-  if (d.call === "10-7") return "CA-3 10a–7p";
+  if (d.call === "10-7") return "CA-3 10p–7a";
   const head = headline(d);
   if (d.call === "24") return `${head} + 24-hr call`;
   if (d.late) return `${head} · Late till 6p`;

@@ -135,13 +135,16 @@ test("posting a day's sheet alerts everyone once, with where they are", async ()
   const phone = await fakePhone();
   // Stored directly: the subscribe route only accepts real push services.
   await st.setJSON("push/subs", { a: { ...phone.sub, pid: "doe-jane" } });
-  const sheet = { rooms: [{ or: "7", surgeon: "Smith", staff: "Doe" }], opsc: {}, ob: {}, pat: [], night: [] };
+  // The Egress tab names the day's board runner and the MDA on call tonight.
+  const egress = { attendings: [{ slot: "Board Runner", name: "Rook" }, { slot: "H1 (MOR call)", name: "Sable" }], residents: [] };
+  const sheet = { rooms: [{ or: "7", surgeon: "Smith", mda: "Quill", staff: "Doe" }], opsc: {}, ob: {}, pat: [], night: [], egress };
   const first = await call("PUT", `/api/daily/${tomorrow}`, sheet, admin);
   assert.equal(first.status, 200);
   assert.equal(first.body.alerted, 1);
   const msg = phone.open(phone.received[0].body);
   assert.equal(msg.title, "Tomorrow's OR schedule is posted");
-  assert.equal(msg.body, "You're in OR 7 with Smith.");
+  // The MDA, not the surgeon: they're who the day is spent with. Then who's in charge.
+  assert.equal(msg.body, "You're in OR 7 with Quill (MDA). Board runner Rook · MDA on call Sable.");
   assert.equal(msg.url, `/#/day/${tomorrow}`);
   // A fix to the same day doesn't alert again, unless the admin asks.
   assert.equal((await call("PUT", `/api/daily/${tomorrow}`, sheet, admin)).body.alerted, 0);
@@ -172,6 +175,90 @@ test("shared hours: the sharing device owns them, only admins read them, and the
   assert.equal((await call("DELETE", "/api/hours/doe-jane", { key: "z".repeat(40) }, viewer)).status, 403);
   assert.equal((await call("DELETE", "/api/hours/doe-jane", {}, admin)).status, 200);
   assert.deepEqual((await call("GET", "/api/hours", undefined, admin)).body.people, {});
+});
+
+test("hours files: the export, and the same hours saved again by Excel, Numbers or another browser", async () => {
+  const { hoursFileText, cellText } = await import("../public/core/hoursfile.js");
+  const { parseLoggedHours } = await import("../public/core/logged.js");
+  const { zipSync, strToU8 } = await import("fflate");
+  const head = ["", "", "Start", "End", "Hrs", "Work Type", "Source"];
+  const rows = [
+    ["", "M", "11/2/2026 6:00 AM", "11/2/2026 4:30 PM", "10.5", "Rotation Daily Duties & Assignments", "Res"],
+    ["", "Tu", "11/3/2026 6:00 AM", "11/4/2026 6:30 AM", "24.5", "Call", "Res"],
+    ["", "W", "11/4/2026 12:00 AM", "11/5/2026 12:00 AM", "24", "Vacation", "Res"],
+  ];
+  const check = async (bytes, label) => {
+    const got = await hoursFileText(bytes);
+    assert.ok(got.text, `${label}: ${got.error}`);
+    const p = parseLoggedHours(got.text);
+    assert.equal(p.entries.length, 3, label);
+    assert.deepEqual(p.entries.map((e) => [e.date, e.start, e.endDate, e.end, e.hours, e.type]), [
+      ["2026-11-02", 360, "2026-11-02", 990, 10.5, "Rotation Daily Duties & Assignments"],
+      ["2026-11-03", 360, "2026-11-04", 390, 24.5, "Call"],
+      ["2026-11-04", 0, "2026-11-05", 0, 24, "Vacation"],
+    ], label);
+    return p;
+  };
+  // New Innovations' own file: a web page with an .xls name.
+  const html = `<html><body><table><tr>${head.map((c) => `<td>${c}</td>`).join("")}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${c.replace("&", "&amp;")}</td>`).join("")}</tr>`).join("")}<tr><td></td><td></td><td></td><td></td><td></td><td>59.00</td></tr></table></body></html>`;
+  assert.equal((await check(Buffer.from(html), "export")).total, 59);
+  // The same page saved by a browser as UTF-16.
+  await check(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(html, "utf16le")]), "utf-16");
+  // Re-saved by Excel as .xlsx: dates become numbers, and the hours too.
+  const serial = (date, min) => Date.parse(`${date}T00:00:00Z`) / 864e5 + 25569 + min / 1440;
+  const numeric = rows.map((r, i) => [r[1], serial(["2026-11-02", "2026-11-03", "2026-11-04"][i], [360, 360, 0][i]), serial(["2026-11-02", "2026-11-04", "2026-11-05"][i], [990, 390, 0][i]), Number(r[4]), r[5]]);
+  assert.equal(cellText(numeric[0][1]), "11/2/2026 6:00 AM");
+  const strs = [...new Set(numeric.flat().filter((v) => typeof v === "string"))];
+  const col = (i) => String.fromCharCode(65 + i);
+  const sheet = `<worksheet><sheetData>${numeric.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => (typeof v === "number" ? `<c r="${col(ci)}${ri + 1}"><v>${v}</v></c>` : `<c r="${col(ci)}${ri + 1}" t="s"><v>${strs.indexOf(v)}</v></c>`)).join("")}</row>`).join("")}</sheetData></worksheet>`;
+  const xlsx = zipSync({
+    "xl/workbook.xml": strToU8('<workbook><sheets><sheet name="Hours" sheetId="1" r:id="rId1"/></sheets></workbook>'),
+    "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    "xl/sharedStrings.xml": strToU8(`<sst>${strs.map((x) => `<si><t>${x.replace("&", "&amp;")}</t></si>`).join("")}</sst>`),
+    "xl/worksheets/sheet1.xml": strToU8(sheet),
+  });
+  await check(xlsx, "xlsx");
+  // Re-saved by an older Excel as a real .xls.
+  await check(xlsOf(numeric), "xls");
+  // Exported as .csv by Numbers, with quotes and ISO times.
+  const csv = ["Day,Start,End,Hrs,Work Type", ...numeric.map((r) => `${r[0]},"${new Date((r[1] - 25569) * 864e5).toISOString().slice(0, 16).replace("T", " ")}",${new Date((r[2] - 25569) * 864e5).toISOString().slice(0, 16).replace("T", " ")},${r[3]},"${r[4]}"`)].join("\n");
+  await check(Buffer.from(csv), "csv");
+  // A Numbers file or a PDF gets a plain answer instead of "no hours found".
+  assert.match((await hoursFileText(zipSync({ "Index/Document.iwa": new Uint8Array(4) }))).error, /Numbers/);
+  assert.match((await hoursFileText(Buffer.from("%PDF-1.4"))).error, /PDF/);
+  assert.match((await hoursFileText(new Uint8Array(0))).error, /empty/);
+});
+
+test("hours: a device gets the whole record back only once it shows it's the resident's", async () => {
+  const entry = (date, hours = 12) => ({ date, start: 360, endDate: date, end: 360 + hours * 60, hours, type: "Rotation Daily Duties & Assignments", rotation: "TEST" });
+  const days = (from, n) => Array.from({ length: n }, (_, i) => entry(addDays(from, i), 10 + (i % 3)));
+  const safari = "s".repeat(40), app = "a".repeat(40), classmate = "c".repeat(40);
+  const put = (key, entries, ranges) => call("PUT", "/api/hours/doe-jane", { key, entries, ...(ranges ? { ranges } : {}) }, viewer);
+  await call("DELETE", "/api/hours/doe-jane", {}, admin);
+  // The whole residency, added in Safari.
+  const year = days("2025-07-01", 300);
+  let res = await put(safari, year);
+  assert.equal(res.body.history.entries.length, 300);
+  // The Home Screen app is another device: linking it is one tap, but that alone reveals nothing.
+  await call("POST", "/api/me/doe-jane/link", { key: app }, viewer);
+  res = await put(app, days("2026-11-20", 5));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.history, undefined);
+  assert.equal(res.body.held.entries, 300);
+  // Its next file overlaps days already saved (the resident's own export): everything comes back.
+  // The phone sends what it holds and the days each of its files covered.
+  res = await put(app, [...year.slice(-10), ...days("2026-11-20", 7)], [["2026-04-17", "2026-04-26"], ["2026-11-20", "2026-11-26"]]);
+  assert.equal(res.body.history.entries.length, 307);
+  assert.deepEqual(res.body.history.ranges, [["2025-07-01", "2026-04-26"], ["2026-11-20", "2026-11-26"]]); // the gap between files stays a gap
+  // A classmate who links as them and sends made-up hours learns nothing, and can't become the owner.
+  await call("POST", "/api/me/doe-jane/link", { key: classmate }, viewer);
+  res = await put(classmate, [entry("2026-11-27", 13)]);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.history, undefined);
+  assert.equal((await put(classmate, [entry("2026-11-28", 13)])).body.history, undefined); // its own earlier upload proves nothing
+  // The devices that showed it's theirs still get everything.
+  assert.equal((await put(safari, [entry("2026-11-29")])).body.history.entries.length, 310);
+  await call("DELETE", "/api/hours/doe-jane", {}, admin);
 });
 
 test("swap requests: post, offer within the class, accept only by the asker, then cancel", async () => {
@@ -453,7 +540,7 @@ test("the live sheet: updates quietly, alerts once it's ready, then only the peo
   assert.equal(pb.received.length, 2);
   const moved = pb.open(pb.received[1].body);
   assert.equal(moved.title, "Your assignment changed for tomorrow");
-  assert.match(moved.body, /OR 3 with Lee/);
+  assert.match(moved.body, /OR 3 with M \(MDA\)/);
   // Moved again later: told again, each time, up to three corrections.
   for (const [i, v] of [v1, v2, v1].entries()) {
     bytes = await fakeWorkbook("2026-03-11", v);
@@ -879,9 +966,9 @@ test("widget feed: one resident's week, who's on, what's ahead, and when to show
   assert.equal(feed.days.length, 9);
   const [tue, wed, thu, fri] = feed.days;
   assert.equal(tue.title, "Basic Anesthesia");
-  assert.equal(wed.title, "OR 7 · Smith");
+  assert.equal(wed.title, "OR 7 · MDA Jones"); // the MDA names the day; the surgeon is a detail
   assert.equal(wed.code, "OR 7");
-  assert.deepEqual(wed.lines, ["Starts 7:30 · 2 cases", "MDA Jones", "Breaks ResB"]);
+  assert.deepEqual(wed.lines, ["Starts 7:30 · 2 cases", "Surgeon Smith", "Breaks ResB"]);
   assert.deepEqual(thu.chips, ["Late till 6p"]);
   assert.equal(fri.title, "24-hr call"); // the call is the news, not the rotation
   assert.deepEqual(fri.chips, []);
@@ -1215,6 +1302,11 @@ function minimumsReport() {
     label(9, 0, 9), number(9, 3, 20), rk(9, 4, 4), label(10, 1, 10), label(11, 1, 11), rk(11, 3, 5), number(11, 4, 0),
     rec(0x000a, Buffer.alloc(0)),
   ]);
+  return oleFile(book);
+}
+
+// A BIFF8 workbook stream inside the smallest OLE2 compound file Excel would open.
+function oleFile(book) {
   const stream = Buffer.concat([book, Buffer.alloc(Math.max(4096, Math.ceil(book.length / 512) * 512) - book.length)]);
   const n = stream.length / 512;
   const header = Buffer.alloc(512, 0);
@@ -1234,6 +1326,20 @@ function minimumsReport() {
   entry(0, "Root Entry", 5, 0xfffffffe, 0);
   entry(128, "Workbook", 2, 2, stream.length);
   return Buffer.concat([header, fat, dir, stream]);
+}
+
+// Rows of strings and numbers as an old-style .xls, the way Excel saves one.
+function xlsOf(rows) {
+  const le = (n, size) => { const b = Buffer.alloc(size); if (size === 2) b.writeUInt16LE(n); else b.writeUInt32LE(n >>> 0); return b; };
+  const rec = (type, data) => Buffer.concat([le(type, 2), le(data.length, 2), data]);
+  const strings = [...new Set(rows.flat().filter((v) => typeof v === "string"))];
+  const sst = Buffer.concat([le(strings.length, 4), le(strings.length, 4), ...strings.map((x) => Buffer.concat([le(x.length, 2), Buffer.from([0]), Buffer.from(x, "latin1")]))]);
+  const bof = (kind) => rec(0x0809, Buffer.concat([le(0x0600, 2), le(kind, 2), Buffer.alloc(12)]));
+  const cells = rows.flatMap((row, r) => row.map((v, c) => {
+    if (typeof v === "number") { const d = Buffer.alloc(14); d.writeUInt16LE(r); d.writeUInt16LE(c, 2); d.writeDoubleLE(v, 6); return rec(0x0203, d); }
+    return rec(0x00fd, Buffer.concat([le(r, 2), le(c, 2), le(0, 2), le(strings.indexOf(v), 4)]));
+  }));
+  return oleFile(Buffer.concat([bof(0x0005), rec(0x00fc, sst), rec(0x000a, Buffer.alloc(0)), bof(0x0010), ...cells, rec(0x000a, Buffer.alloc(0))]));
 }
 
 test("case log nudges: after a case day with nothing logged, never twice, and weekly when cases wait", async () => {

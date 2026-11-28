@@ -28,6 +28,10 @@
   --pgy1: #d97706;
   --radius: 16px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 4px 16px rgba(15, 23, 42, .04);
+  /* Glass, for what floats over the schedule (the iPhone Duo's tabs and clock capsule): tint 40%,
+     blur 5px, the level the user picked. */
+  --glass: rgba(255, 255, 255, .4); --glass-blur: 5px; --glass-rim: rgba(255, 255, 255, .9); --glass-edge: rgba(15, 23, 42, .14);
+  --glass-on: rgba(15, 23, 42, .07); --glass-shadow: 0 10px 28px rgba(15, 23, 42, .16), 0 2px 6px rgba(15, 23, 42, .08);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -67,7 +71,7 @@
     --ca2: #34d399;
     --ca3: #c4b5fd;
     --pgy1: #fbbf24;
-    --shadow: none;
+    --shadow: none; --glass: rgba(34, 42, 54, .4); --glass-rim: rgba(255, 255, 255, .16); --glass-edge: rgba(0, 0, 0, .45); --glass-on: rgba(255, 255, 255, .13); --glass-shadow: 0 10px 28px rgba(0, 0, 0, .5);
   }
 }
 
@@ -75,7 +79,7 @@
   --bg: #0b0f14; --surface: #131a22; --surface-2: #1b2430; --text: #e6edf3; --muted: #9aa7b4; --faint: #6f7c89;
   --border: #263241; --accent: #6ea0ff; --accent-ink: #0b0f14; --late: #4ade80; --call24: #7aa7ff; --call12: #34d399;
   --night: #a5b4fc; --senior: #67e8f9; --cardiac: #f0abfc; --vac: #fdba74; --gold: #f2c14e; --gold-ink: #f7d47a; --ob: #f9a8d4; --pc: #a3b1c2; --gap: #f87171; --warn: #fbbf24;
-  --info: #7aa7ff; --ca1: #7aa7ff; --ca2: #34d399; --ca3: #c4b5fd; --pgy1: #fbbf24; --shadow: none;
+  --info: #7aa7ff; --ca1: #7aa7ff; --ca2: #34d399; --ca3: #c4b5fd; --pgy1: #fbbf24; --shadow: none; --glass: rgba(34, 42, 54, .4); --glass-rim: rgba(255, 255, 255, .16); --glass-edge: rgba(0, 0, 0, .45); --glass-on: rgba(255, 255, 255, .13); --glass-shadow: 0 10px 28px rgba(0, 0, 0, .5);
 }
 
 * { box-sizing: border-box; }
@@ -193,6 +197,8 @@ svg { display: block; }
 .runner-name { font-weight: 700; font-size: 17px; letter-spacing: -.01em; line-height: 1.25; }
 .card.runner .sub { color: var(--muted); font-size: 13px; margin-top: 1px; }
 .runner-calls { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The board runner, then the MDA on call: one card, two people. */
+.card.runner .runner-top + .runner-top { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .row.contact.runner { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pill { display: inline-block; white-space: nowrap; flex: none; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; color: var(--c, var(--muted)); background: color-mix(in srgb, var(--c, var(--muted)) 14%, transparent); letter-spacing: .02em; vertical-align: 1px; }
 .pill.CA-1 { --c: var(--ca1); } .pill.CA-2 { --c: var(--ca2); } .pill.CA-3 { --c: var(--ca3); } .pill.PGY-1 { --c: var(--pgy1); }
@@ -601,13 +607,14 @@ body[data-layout] .view, body[data-layout] .topbar-inner { max-width: 1040px; }
 
 /* A strip down one side of the screen (see sideStrip in app.js). The phone keeps its camera and
    clock at one end of it, so the tabs take the rest as a floating column, the way the phone's
-   own apps do, and the schedule gets the full height. Upright, the camera is at the top, so the
-   tabs sit at the bottom under the thumb. Sideways it can be at either end, so they sit in the
-   middle. These rules win over the bottom bar and the left rail above. */
-:root[data-strip] { --strip: var(--safe-right); --rail: 0px; --edge-left: max(16px, var(--safe-left)); --edge-right: 4px; }
-:root[data-strip="left"] { --strip: var(--safe-left); --edge-left: 4px; --edge-right: max(16px, var(--safe-right)); }
-:root[data-strip] body { padding: 0 var(--strip) 0 0; }
-:root[data-strip="left"] body { padding: 0 0 0 var(--strip); }
+   own apps do. Upright, the camera is at the top, so the tabs sit at the bottom under the thumb.
+   Sideways it can be at either end, so they sit in the middle. The schedule runs the full width,
+   under the glass tabs and the frosted capsule behind the clock (further down); only the header
+   keeps clear of the camera. These rules win over the bottom bar and the left rail above. */
+:root[data-strip] { --strip: var(--safe-right); --rail: 0px; --edge-left: max(16px, var(--safe-left)); --edge-right: 10px; }
+:root[data-strip="left"] { --strip: var(--safe-left); --edge-left: 10px; --edge-right: max(16px, var(--safe-right)); }
+:root[data-strip] .topbar { padding-right: calc(var(--strip) + 6px); }
+:root[data-strip="left"] .topbar { padding-left: calc(var(--strip) + 6px); padding-right: max(16px, var(--safe-right)); }
 :root[data-strip] .tabbar {
   /* A little wider than the strip, so the column lines up under the camera, which sits inboard. */
   inset: 0 0 0 auto; width: calc(var(--strip) * 1.13);
@@ -620,20 +627,58 @@ body[data-layout] .view, body[data-layout] .topbar-inner { max-width: 1040px; }
 @media (orientation: landscape) {
   :root[data-strip] .tabbar { justify-content: center; padding-bottom: calc(var(--strip-bottom, 0px) + 12px); }
 }
-:root[data-strip] .tabbar-inner {
-  flex-direction: column; gap: 2px; width: 58px; max-width: none; padding: 5px; pointer-events: auto;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
-  border: 1px solid var(--border); border-radius: 29px; box-shadow: var(--shadow);
-}
-:root[data-strip] .tab { flex: none; padding: 8px 0 6px; border-radius: 24px; font-size: 10px; }
-:root[data-strip] .tab[aria-current="page"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 :root[data-strip] .view { padding-bottom: calc(var(--safe-bottom) + 28px); }
 :root[data-strip] .toast { bottom: calc(var(--safe-bottom) + 24px); left: calc(50% - var(--strip) / 2); max-width: calc(100vw - var(--strip) - 32px); }
 :root[data-strip="left"] .toast { left: calc(50% + var(--strip) / 2); }
 /* Sheets stop at the strip, so a tall one never runs under the camera. */
 :root[data-strip] .sheet { right: var(--strip); padding-right: 16px; }
 :root[data-strip="left"] .sheet { right: 0; left: var(--strip); padding-left: 16px; padding-right: var(--edge-right); }
+
+/* A frosted capsule behind the phone's camera and clock (data-cam: which end of the strip they're
+   at), so the clock stays readable while the schedule scrolls under it. */
+:root[data-cam] body::after {
+  content: ""; position: fixed; z-index: 21; pointer-events: none;
+  right: calc(var(--strip) * 1.13 / 2 - 28px); width: 56px; border-radius: 28px;
+  background: var(--glass); backdrop-filter: blur(var(--glass-blur)) saturate(1.9); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.9);
+  border: .5px solid var(--glass-edge); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim);
+}
+:root[data-strip="left"][data-cam] body::after { right: auto; left: calc(var(--strip) * 1.13 / 2 - 28px); }
+:root[data-cam="top"] body::after { top: 6px; height: calc(var(--strip-top, 0px) - 2px); }
+:root[data-cam="bottom"] body::after { bottom: 6px; height: calc(var(--strip-bottom, 0px) - 2px); }
+
+/* The unfolded phone held upright (data-rail, see core/screen.js): the tabs leave the bottom for a
+   floating glass column down the side under the clock, as when the phone is turned. The cards run
+   the full width beneath it, so they keep two roomy columns. */
+:root[data-rail] { --rail-w: 64px; }
+:root[data-rail] .view { padding-bottom: calc(var(--safe-bottom) + 28px); }
+:root[data-rail] .tabbar {
+  inset: 0 0 0 auto; width: var(--rail-w);
+  flex-direction: column; align-items: center; justify-content: flex-end;
+  padding: calc(var(--safe-top) + 12px) 0 max(24px, calc(var(--safe-bottom) + 10px));
+  background: none; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none;
+}
+:root[data-rail="left"] .tabbar { inset: 0 auto 0 0; }
+:root[data-rail] .toast { bottom: calc(var(--safe-bottom) + 24px); }
+
+/* The floating tabs themselves, in both: a see-through glass capsule (blurred and brightened
+   behind, a light rim on top, a soft shadow below), icons only, the current tab in a glass bubble.
+   The names stay for VoiceOver and as each button's label. */
+:root:is([data-strip], [data-rail]) .tabbar-inner {
+  flex-direction: column; gap: 4px; width: 56px; max-width: none; padding: 5px; pointer-events: auto;
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.9); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.9);
+  border: .5px solid var(--glass-edge); border-radius: 28px;
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 -1px 0 color-mix(in srgb, var(--glass-rim) 35%, transparent);
+}
+:root:is([data-strip], [data-rail]) .tab {
+  flex: none; height: 46px; padding: 0; justify-content: center; border-radius: 23px;
+  color: color-mix(in srgb, var(--text) 82%, transparent); -webkit-tap-highlight-color: transparent;
+}
+:root:is([data-strip], [data-rail]) .tab svg { width: 25px; height: 25px; }
+:root:is([data-strip], [data-rail]) .tab[aria-current="page"] { color: var(--accent); background: var(--glass-on); box-shadow: inset 0 1px 0 var(--glass-rim); }
+:root:is([data-strip], [data-rail]) .tab:active { transform: scale(.94); }
+:root:is([data-strip], [data-rail]) .tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+:root:is([data-strip], [data-rail]) .tab .dot { top: 7px; left: auto; right: 8px; }
 
 /* A clock in one corner of the top margin, with the rest of that row free (an unfolded iPhone
    Duo held upright): the header moves up into the row beside it, as the phone's own apps do,
@@ -803,6 +848,9 @@ button.tap.mono { font-size: 13px; }
 
 /* Coming up: how far off a golden weekend or an exam is, at the end of its row. */
 .row .countdown { flex: none; white-space: nowrap; color: var(--muted); }
+/* In a narrow column a long chip ("Golden weekend") shortens instead of running under the countdown. */
+.row .main .chips .chip { max-width: 100%; min-width: 0; overflow: hidden; }
+.row .main .chips .chip:not(:has(svg)) { display: block; text-overflow: ellipsis; line-height: 24px; }
 
 /* Once, on Today: a note pointing at the initials in the top bar (app.js). */
 .me-hint { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; max-width: 260px; display: flex; align-items: center; gap: 10px;
@@ -870,3 +918,6 @@ details.minimums[open] > summary { border-bottom: 1px solid var(--border); }
 .pill.rsvp { --c: var(--warn); margin-top: 6px; display: inline-flex; }
 .pill.rsvp.done { --c: var(--late); }
 .pill.rsvp.closed { --c: var(--muted); }
+
+/* Hours › Add my hours: a nudge under what the file holds (a first file that covers only weeks). */
+.hint-line { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); }

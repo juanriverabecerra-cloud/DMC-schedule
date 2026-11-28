@@ -5,7 +5,7 @@ import { dow, monthKey, parts, addMonths, addDays, ymd, isFixedHoliday } from ".
 import { createMatcher, displayName, splitNames, isCrnaMark } from "./names.js";
 import { createDirectory } from "./directory.js";
 import { createDidactics } from "./didactics.js";
-import { attendingsOf } from "./attendings.js";
+import { attendingsOf, mdaText } from "./attendings.js";
 
 const VAC_RE = /^vac(ation)?\b/i;
 const OFF_RE = /^(loa|off)\b/i;
@@ -27,7 +27,7 @@ export const NOT_A_NAME = /^(same team|cardiac team|night team|tbd\b)/i;
 export const BOARD_ORDER = [
   "Harper Main OR", "Procedures", "OPSC", "NORA", "PACU", "PAT", "Acute Pain", "Cardiac", "Neuro / ACC", "Thoracic", "Vascular",
   "Basic Anesthesia", "Board Runner", "Junior Attending", "9-ICU", "Obstetrics", "VA", "Pediatrics", "Regional",
-  "Sinai-Grace ICU", "Chronic Pain", "Elective", "CA-3 10a–7p", "On call", "Night float", "Interns (off-service)",
+  "Sinai-Grace ICU", "Chronic Pain", "Elective", "CA-3 10p–7a", "On call", "Night float", "Interns (off-service)",
   "Other", "Post-call", "Vacation", "Off", "No schedule",
 ];
 
@@ -181,12 +181,13 @@ export function createModel(ds) {
       info.call = key;
       info.status = "work";
       info.label = CALL_CODES[key].label;
-      if (key !== "10-7") info.site = "harper";
+      info.site = "harper"; // the CA-3 10p–7a is on the sheet's night coverage at Harper
     } else if (!raw) {
       if (holidays(month).has(d)) Object.assign(info, { status: "holiday", label: "Holiday (CRNA coverage)" });
       else if (tag === "off") Object.assign(info, { status: hasVacNear(row, d) ? "vacation" : "off", label: hasVacNear(row, d) ? "Vacation" : "Off" });
       else if (weekend) Object.assign(info, { status: "off", label: "Off" });
       else if (normCode(cellBefore(pid, date)?.t) === "NF") Object.assign(info, { status: "postcall", label: "Off after night float" });
+      else if (normCode(cellBefore(pid, date)?.t) === "10-7") Object.assign(info, { status: "postcall", label: "Off after the night shift" });
       else if (after24(pid, date)) Object.assign(info, { status: "postcall", label: "Post-call day off" });
       else info.status = "work";
     } else {
@@ -413,7 +414,7 @@ export function createModel(ds) {
     if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
     if (d.roles.some((r) => r.kind === "ob")) return "Obstetrics";
     if (d.roles.some((r) => r.kind === "pat")) return "PAT";
-    if (d.call === "10-7") return "CA-3 10a–7p";
+    if (d.call === "10-7") return "CA-3 10p–7a";
     if (d.source === "intern" && d.site === "offservice") return "Interns (off-service)";
     return BOARD_ORDER.includes(d.group) ? d.group : "Other";
   }
@@ -508,18 +509,19 @@ export function headline(d) {
     return `${post} · breaks OR ${br.rooms.map((x) => x.or).join(", ")}`;
   }
   const room = d.roles.find((r) => r.kind === "room");
-  if (room) return `OR ${room.or}${room.room.surgeon ? ` · ${room.room.surgeon}` : ""}`;
+  // The MDA is who the day is spent with; the surgeon is on the room's line below it.
+  if (room) return `OR ${room.or}${mdaText(room.room.mda) ? ` · MDA ${mdaText(room.room.mda)}` : ""}`;
   const br = d.roles.find((r) => r.kind === "breaks");
   if (br) return `Breaks · OR ${br.rooms.map((x) => x.or).join(", ")}`;
   const ja = d.roles.find((r) => r.kind === "ja");
   if (ja) return `Junior attending · OR ${ja.rooms.map((x) => x.or).join(", ")}`;
   const proc = d.roles.find((r) => r.kind === "proc");
-  if (proc) return `${proc.name}${proc.asJa ? " · JA" : ""}${proc.mda ? ` · ${proc.mda}` : ""}`;
+  if (proc) return `${proc.name}${proc.asJa ? " · JA" : ""}${mdaText(proc.mda) ? ` · MDA ${mdaText(proc.mda)}` : ""}`;
   if (d.roles.some((r) => r.kind === "opsc")) return "OPSC";
   if (d.roles.some((r) => r.kind === "ob")) return "OB @ Hutzel";
   if (d.roles.some((r) => r.kind === "pat")) return "PAT clinic";
   const placed = d.roles.find((r) => r.kind === "where");
-  if (placed) return `${placed.where}${placed.mda ? ` · ${placed.mda}` : ""}`;
+  if (placed) return `${placed.where}${mdaText(placed.mda) ? ` · MDA ${mdaText(placed.mda)}` : ""}`;
   return d.label || d.rotation || "—";
 }
 

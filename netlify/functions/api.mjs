@@ -16,7 +16,7 @@ import { readXlsx } from "../../lib/xlsx.js";
 import { parseDailyWorkbook } from "../../lib/daily-sheet.js";
 import { readLog, liveItems, upsert, markDone, sickItem, noCallItem, swapItem, swapUndone, alertSick, keepNoCallList, noCallHistory, forgetNoCallLists } from "../../lib/reqlog.js";
 import { cleanScores, summarizeSurvey } from "../../public/core/survey.js";
-import { cleanEntries, mergeEntries } from "../../public/core/logged.js";
+import { cleanEntries, mergeEntries, mergeRanges, rangesOf, sharedEntries } from "../../public/core/logged.js";
 import { dailyAlert, shouldAlert } from "../../public/core/alerts.js";
 import { cleanSubscription, phoneId, vapidKeys, sendToPhone, pushSubject, sendToSubs, REQUEST_MODES } from "../../lib/push.js";
 import { apnsConfigured, cleanDeviceToken } from "../../lib/apns.js";
@@ -536,14 +536,26 @@ export default async function handler(req) {
       const takeover = saved && !mine;
       if (takeover && body.replace !== true) return fail(409, "These hours were first added from another device. Update them there, or replace them from this one.");
       const incoming = cleanEntries(body.entries);
-      if (!incoming.length) return fail(400, "No hours found");
+      if (!incoming.length) return fail(400, "No hours found in what was sent.");
       // Taking over starts from this device's hours alone; otherwise new days add to the record.
       const entries = takeover ? incoming : mergeEntries(saved?.entries, incoming);
+      const ranges = takeover ? rangesOf(incoming, body.ranges) : mergeRanges(rangesOf(saved?.entries, saved?.ranges), rangesOf(incoming, body.ranges));
       const now = new Date().toISOString();
       const moves = [...(saved?.moves || []), ...(takeover ? [now] : [])].slice(-5);
-      await st.setJSON(`hours/${pid}`, { keyHash: keyHash(body.key), entries, sharedAt: saved?.sharedAt || now, updatedAt: now, moves });
+      // The whole record goes back only to a device that has shown it's theirs: the one that started
+      // it, or one that brought some of the very same entries (their own New Innovations export,
+      // which takes their password to get). Linking a device alone isn't enough, so a classmate who
+      // picks your name can't read your hours.
+      const hash = keyHash(body.key);
+      const owners = [...new Set([...(saved?.owners || []), ...(saved?.keyHash ? [saved.keyHash] : [])])];
+      const proven = !saved || owners.includes(hash) || sharedEntries(saved.entries, incoming) >= Math.min(3, saved.entries?.length || 0);
+      await st.setJSON(`hours/${pid}`, {
+        keyHash: proven ? hash : saved.keyHash, owners: (proven ? [...owners.filter((x) => x !== hash), hash] : owners).slice(-8),
+        entries, ranges, sharedAt: saved?.sharedAt || now, updatedAt: now, moves,
+      });
       await linkDevice(pid, body.key);
-      return json({ ok: true, entries: entries.length, updatedAt: now });
+      const held = saved && !proven ? { entries: saved.entries?.length || 0, from: rangesOf(saved.entries, saved.ranges)[0]?.[0] || null } : null;
+      return json({ ok: true, entries: entries.length, updatedAt: now, ...(proven ? { history: { entries, ranges } } : { held }) });
     }
 
     // ---- each resident's ACGME case log (only the devices it lists can read or change it) ----

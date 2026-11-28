@@ -78,7 +78,7 @@ function screenShape() {
   const current = reserved && Math.abs(reserved.width - innerWidth) <= 1 && Math.abs(reserved.height - innerHeight) <= 1;
   const shape = screenLayout({ width: innerWidth, height: innerHeight, insets, regions: current ? reserved.regions : [] });
   const root = document.documentElement;
-  for (const name of ["strip", "corner"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
+  for (const name of ["strip", "corner", "rail", "cam"]) if (shape[name]) root.dataset[name] = shape[name]; else delete root.dataset[name];
   for (const [name, value] of [["--strip-top", shape.stripTop], ["--strip-bottom", shape.stripBottom], ["--corner-width", shape.cornerWidth], ["--corner-height", shape.cornerHeight]]) {
     if (value) root.style.setProperty(name, `${value}px`); else root.style.removeProperty(name);
   }
@@ -226,8 +226,9 @@ function tabbar(r) {
   const inner = h("div", { class: "tabbar-inner" }, tabList().map(([id, label, ic]) =>
     h("button", {
       class: "tab", "aria-current": r.name === id || (id === "more" && underMore(r.name)) ? "page" : null,
+      "aria-label": label, title: label,
       onclick: () => go(id),
-    }, icon(ic), label,
+    }, icon(ic), h("span", { class: "tab-label" }, label),
     id === "more" && red ? h("i", { class: "dot", "aria-label": inbox.urgent ? "Sick call" : "Coverage gaps soon" }) : null,
     id === "more" && (toDo || inbox.open > 0) && !red ? h("i", { class: "dot soon", "aria-label": inbox.open ? "Requests waiting" : "Something to do" }) : null,
     id === "didactics" && didToday ? h("i", { class: `dot${didToday === "live" ? "" : " soon"}`, "aria-label": didToday === "live" ? "Session live now" : "Session today" }) : null)));

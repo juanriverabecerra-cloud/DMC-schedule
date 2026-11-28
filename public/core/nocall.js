@@ -4,7 +4,7 @@
 import { addDays } from "./dates.js";
 import { isNoCallRotation } from "./fairness.js";
 
-const CALL = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "Night float", "10-7": "10a–7p shift" };
+const CALL = { H1: "24-hr call", 24: "24-hr call", H2: "12-hr call", NF: "Night float", "10-7": "10p–7a shift" };
 
 export function noCallOutcome(model, pid, date) {
   const d = model.day(pid, date);

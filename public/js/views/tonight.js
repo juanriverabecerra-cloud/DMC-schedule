@@ -19,7 +19,8 @@ export function renderTonight(ctx) {
   const t = model.tonight(date);
   const root = h("div");
   // Who's running the board first, named, with its phones; then the other numbers for the night.
-  const runner = runnerCard(ctx, date, { span: true });
+  // (The attendings on call have their own card below.)
+  const runner = runnerCard(ctx, date, { span: true, call: false });
   if (runner) root.append(runner);
   const lines = [[/^resident board runner/i, "Resident BR"], [/^mda board runner/i, "MDA BR"], [/^harper or main desk/i, "OR desk"], [/^pacu harper/i, "PACU"], [/^mda ob$/i, "MDA OB"]]
     .filter(([, label]) => !runner || !/BR$/.test(label))
@@ -33,9 +34,9 @@ export function renderTonight(ctx) {
   const wd = dow(date);
   append(root, [
     group(ctx, "Late resident", "until 6p", "late", t.late, (d) => `${where(d)} → Harper until 6p`),
-    group(ctx, "CA-3 senior", "10a–7p", "senior", t.senior, where),
     group(ctx, "11 to 9 (OB)", "11a – 9p", "ob", t.elevenNine, (d) => (d.roles.length ? headline(d) : "Hutzel OB")),
     group(ctx, "Night float", `6p – 6a ${fmtDate(tomorrow, "md")}`, "night", t.night),
+    group(ctx, "CA-3 overnight", `10p – 7a ${fmtDate(tomorrow, "md")}`, "senior", t.senior),
     // Friday's and Saturday's 24 cover the night; there's no night float those nights.
     group(ctx, "24-hour call", `6a – 6a ${fmtDate(tomorrow, "md")}${t.night.length ? "" : " · has the night"}`, "call24", t.call24, (d) => (d.call === "24" ? `${d.rotation || d.label} + 24-hr call` : "H1")),
     group(ctx, "12-hour call", "6a – 6p", "call12", t.call12, () => "H2"),
